@@ -5,22 +5,34 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github PaulRaUnite/mrtccsl))
 
-(authors "Author Name")
+(authors "Pavlo Tokariev")
 
-(maintainers "Maintainer Name")
+(maintainers "Pavlo Tokariev")
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
+(documentation https://github.com/PaulRaUnite/mrtccsl)
+
+(version 0.1)
 
 (package
  (name mrtccsl)
- (synopsis "A short synopsis")
- (description "A longer description")
- (depends ocaml dune)
+ (synopsis "A collection of tools implementing MRTCCSL")
+ (description
+  "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention.")
+ (depends
+  ocaml
+  dune
+  camllib
+  bddapron
+  ppx_sexp_conv
+  (odoc :with-doc)
+  (alcotest :with-test)
+  (ppx_assert :with-test)
+  (ppx_inline_test :with-test))
  (tags
-  (topics "to describe" your project)))
+  (simulation "model checking" "abstract interpretation" induction)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

@@ -1,2 +1,7 @@
 (test
- (name mrtccsl))
+ (name mrtccsl)
+ (modules mrtccsl))
+
+(test
+ (name interval)
+ (modules interval))
