@@ -40,9 +40,9 @@ module Make (N : Num) = struct
       let compare x y =
         match x, y with
         | None, None -> 0
-        | Some _, None -> -1
-        | None, Some _ -> 1
-        | Some x, Some y -> -N.compare x y
+        | Some _, None -> 1
+        | None, Some _ -> -1
+        | Some x, Some y -> N.compare x y
       ;;
     end)
 
@@ -64,7 +64,7 @@ module Make (N : Num) = struct
   [@@deriving sexp]
 
   let make left right =
-    if N.compare left right = 1 then Empty else Bound (Some left, Some right)
+    if N.compare left right > 0 then Empty else Bound (Some left, Some right)
   ;;
 
   let return n = Bound (Some n, Some n)
@@ -77,36 +77,37 @@ module Make (N : Num) = struct
     | Empty -> None
   ;;
 
-  let normalize = function
-    | Bound (x, y) -> if RightBound.less_eq x y then Bound (x, y) else Empty
-    | Empty -> Empty
+  let normalize i =
+    match i with
+    | Bound (Some x, Some y) ->
+      if N.compare x y <= 0 then Bound (Some x, Some y) else Empty
+    | _ -> i
   ;;
 
   let inter x y =
     match x, y with
     | Bound (a, b), Bound (c, d) ->
-      let left = min a c
-      and right = min b d in
+      let left = LeftBound.max a c
+      and right = RightBound.min b d in
       normalize @@ Bound (left, right)
     | _ -> Empty
   ;;
 
   let subset x y =
     match x, y with
-    | Bound (a, b), Bound (c, d) -> LeftBound.less_eq a c && RightBound.less_eq b d
+    | Bound (a, b), Bound (c, d) -> LeftBound.more_eq a c && RightBound.less_eq b d
     | Empty, _ -> true
     | _, Empty -> false
   ;;
 
   let compare x y =
-    match x, y with
-    | Bound (a, b), Bound (c, d) ->
-      let r1 = LeftBound.compare a b in
-      let r2 = RightBound.compare c d in
-      if r1 * r2 >= 0 then r1 * r2 else failwith "incomparable intervals"
-    | Empty, Bound _ -> -1
-    | Bound _, Empty -> 1
-    | Empty, Empty -> 0
+    if x = y
+    then 0
+    else if subset x y
+    then -1
+    else if subset y x
+    then 1
+    else failwith "incomparable intervals"
   ;;
 
   let is_empty = function
@@ -134,6 +135,10 @@ let%test_module _ =
     let%test _ = II.contains II.inf 0
     let%test _ = II.contains (II.pinf 0) 0
     let%test _ = II.contains (II.ninf 0) 0
-    let%test _ = (II.compare (II.inter (II.ninf 0) (II.pinf 0)) (II.return 0)) = 0
+    let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf 0) (II.pinf 0)) (II.return 0)
+
+    let%test_unit _ =
+      [%test_eq: II.t] (II.inter (II.make ~-1 1) (II.make 0 2)) (II.make 0 1)
+    ;;
   end)
 ;;

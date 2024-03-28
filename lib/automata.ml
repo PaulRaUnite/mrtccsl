@@ -55,7 +55,6 @@ module MakeSimple (C : ID) (N : Num) = struct
   type trace = solution list
   type t = (unit -> guard) * (solution -> bool) * label
 
-  (*TODO: add printing of traces*)
   let empty : t = (fun () -> [ L.empty, I.inf ]), (fun _ -> true), L.empty
 
   let step s (a : t) : solution option =
@@ -86,16 +85,13 @@ module MakeSimple (C : ID) (N : Num) = struct
       if I.is_empty res then None else Some res
     in
     let guard_solver ((l, c), (l', c')) =
-      let l = sat_solver l l'
-      and c = linear_solver c c' in
-      match l, c with
-      | Some l, Some c -> Some (l, c)
-      | _ -> None
+      let* l = sat_solver l l'
+      and* c = linear_solver c c' in
+      Some (l, c)
     in
-    let empty_label = L.empty, I.inf in
     let g () =
-      let g1 = empty_label :: g1 () in
-      let g2 = empty_label :: g2 () in
+      let g1 = g1 () in
+      let g2 = g2 () in
       List.filter_map guard_solver @@ cartesian g1 g2
     in
     let t l = t1 l && t2 l in
@@ -208,11 +204,31 @@ module MakeSimple (C : ID) (N : Num) = struct
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
 end
 
+module MakeSimpleDebug
+    (C : sig
+       include ID
+       include Sexplib0.Sexpable.S with type t := t
+     end)
+    (N : Num) =
+struct
+  include MakeSimple (C) (N)
+  open Sexplib0.Sexp_conv
+
+  let sexp_of_label label = sexp_of_list C.sexp_of_t @@ L.elements label
+  let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
+  let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
+end
+
 let%test_module _ =
   (module struct
     module A =
-      MakeSimple
-        (String)
+      MakeSimpleDebug
+        (struct
+          include String
+
+          let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_string
+          let t_of_sexp = Sexplib0.Sexp_conv.string_of_sexp
+        end)
         (struct
           include ExpOrder.Make (Int)
 
@@ -229,6 +245,8 @@ let%test_module _ =
       let strat = A.Strategy.first @@ A.Strategy.slow (A.I.make 1 2) in
       let steps = 10 in
       let trace = A.bisimulate strat empty1 empty2 steps in
+      match trace with
+      | Ok l | Error l -> Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l;
       Result.is_ok trace
     ;;
   end)
