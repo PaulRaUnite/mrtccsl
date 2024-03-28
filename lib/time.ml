@@ -1,8 +1,6 @@
-open Misc
+open Prelude
 
-module Duration = struct
-  include MakeCompare (Float)
-end
+module Duration = ExpOrder.Make (Float)
 
 module Interval = struct
   type t = Duration.t * Duration.t

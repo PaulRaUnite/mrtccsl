@@ -1,3 +1,5 @@
+open Prelude
+
 module type ID = sig
   include Set.OrderedType
 end
@@ -7,76 +9,76 @@ module type Simple = sig
   type num
   type label
   type num_cond
-  type guard = (label list * num_cond) list
+  type guard = (label * num_cond) list
   type solution = label * num
-  type strategy = guard -> solution
+  type strategy = guard -> solution option
   type trace = solution list
-  type t = (unit -> guard) * (solution -> unit) * label
+  type t = (unit -> guard) * (solution -> bool) * label
+
+  module I : Interval.I
+  module L : Set.S
 
   val empty : t
-  val step : t -> strategy -> solution option
-  val run : t -> strategy -> int -> trace
-  val synchronize : t -> t -> t
-  val constr_to_automata : clock Rtccsl.constr -> t
-  val spec_to_automata : clock Rtccsl.specification -> t
-end
+  val step : strategy -> t -> solution option
+  val run : strategy -> t -> int -> trace
+  val bisimulate : strategy -> t -> t -> int -> (trace, trace) result
+  val sync : t -> t -> t
+  val of_constr : clock Rtccsl.constr -> t
+  val of_spec : clock Rtccsl.specification -> t
 
-let ( let* ) = Option.bind
+  module Strategy : sig
+    val first : (num_cond -> num option) -> strategy
+    val slow : num_cond -> num_cond -> num option
+    val fast : num_cond -> num_cond -> num option
+  end
+end
 
 module type Num = sig
   include Interval.Num
+  include ExpOrder.T with type t := t
 
   val zero : t
 end
 
-module MakeSimple (C : ID) (N : Num) : Simple = struct
+module MakeSimple (C : ID) (N : Num) = struct
   type clock = C.t
   type num = N.t
 
-  module ClockSet = Set.Make (C)
+  module L = Set.Make (C)
   module I = Interval.Make (N)
 
-  type label = ClockSet.t
+  type label = L.t
   type num_cond = I.t
-  type guard = (label list * num_cond) list
+  type guard = (label * num_cond) list
   type solution = label * num
-  type strategy = guard -> solution
+  type strategy = guard -> solution option
   type trace = solution list
-  type t = (unit -> guard) * (solution -> unit) * label
+  type t = (unit -> guard) * (solution -> bool) * label
 
-  let empty = (fun () -> [ [ ClockSet.empty ], I.inf ]), (fun _ -> ()), ClockSet.empty
+  (*TODO: add printing of traces*)
+  let empty : t = (fun () -> [ L.empty, I.inf ]), (fun _ -> true), L.empty
 
-  let step (a : t) (s : strategy) : solution option =
+  let step s (a : t) : solution option =
     let guards, transition, _ = a in
     let possible = guards () in
-    if Misc.empty possible
+    if is_empty possible
     then None
-    else (
-      let sol = s possible in
-      let () = transition sol in
-      Some sol)
+    else
+      let* sol = s possible in
+      if transition sol then Some sol else None
   ;;
 
-  let run a s n : solution list =
-    let rec aux a s n l =
-      if n = 0
-      then l
-      else (
-        match step a s with
-        | None -> l
-        | Some r -> aux a s (n - 1) (l @ [ r ]))
-    in
-    aux a s n []
-  ;;
+  let run s (a : t) n : solution list = collect n (fun () -> step s a)
 
-  let synchronize (a1 : t) (a2 : t) : t =
+  let sync (a1 : t) (a2 : t) : t =
     let g1, t1, c1 = a1 in
     let g2, t2, c2 = a2 in
-    let c = ClockSet.union c1 c2 in
-    let conf_surface = ClockSet.inter c1 c2 in
-    let sat_solver (l, l') =
-      if ClockSet.equal (ClockSet.inter conf_surface l) (ClockSet.inter conf_surface l')
-      then Some (ClockSet.union l l')
+    let c = L.union c1 c2 in
+    let conf_surface = L.inter c1 c2 in
+    let sat_solver l l' =
+      if L.is_empty conf_surface
+         || L.equal (L.inter conf_surface l) (L.inter conf_surface l')
+      then Some (L.union l l')
       else None
     in
     let linear_solver c c' =
@@ -84,66 +86,107 @@ module MakeSimple (C : ID) (N : Num) : Simple = struct
       if I.is_empty res then None else Some res
     in
     let guard_solver ((l, c), (l', c')) =
-      match linear_solver c c' with
-      | None -> None
-      | Some s ->
-        let r = List.filter_map sat_solver (Misc.cartesian l l') in
-        if Misc.empty r then None else Some (r, s)
+      let l = sat_solver l l'
+      and c = linear_solver c c' in
+      match l, c with
+      | Some l, Some c -> Some (l, c)
+      | _ -> None
     in
-    let g () = List.filter_map guard_solver (Misc.cartesian (g1 ()) (g2 ())) in
-    let t l =
-      t1 l;
-      t2 l
+    let empty_label = L.empty, I.inf in
+    let g () =
+      let g1 = empty_label :: g1 () in
+      let g2 = empty_label :: g2 () in
+      List.filter_map guard_solver @@ cartesian g1 g2
     in
+    let t l = t1 l && t2 l in
     g, t, c
   ;;
 
   open Rtccsl
 
-  (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
-  let rec powerset = function
-    | [] -> [ [] ]
-    | x :: xs ->
-      let ps = powerset xs in
-      ps @ List.map (fun ss -> x :: ss) ps
+  let simple_guard l : guard = List.map (fun l -> l, I.pinf N.zero) l
+
+  let stateless labels clocks : t =
+    let g = simple_guard labels in
+    ( (fun () -> g)
+    , (fun (l', n) -> List.mem l' labels && N.more n N.zero)
+    , L.of_list clocks )
   ;;
 
-  let simple_guard l = [ l, I.inf ]
-
-  let prec c1 c2 strict =
+  let prec c1 c2 strict : t =
     let c = ref 0 in
+    let l1 = List.map L.of_list (powerset [ c1; c2 ]) in
+    let l2 =
+      List.filter
+        (fun x ->
+          if strict then not @@ L.mem c2 x else not ((not @@ L.mem c1 x) && L.mem c2 x))
+        l1
+    in
     ( (fun () ->
-        let l = List.map ClockSet.of_list (powerset [ c1; c2 ]) in
-        let l =
-          if !c = 0
-          then
-            List.filter
-              (fun x ->
-                if strict
-                then not @@ ClockSet.mem c2 x
-                else not ((not @@ ClockSet.mem c1 x) && ClockSet.mem c2 x))
-              l
-          else l
-        in
+        let l = if !c = 0 then l1 else l2 in
         simple_guard l)
     , (fun (l, _) ->
-        let delta = if ClockSet.mem c1 l then 1 else 0 in
-        let delta = delta - if ClockSet.mem c2 l then 1 else 0 in
-        c := !c + delta)
-    , ClockSet.of_list [ c1; c2 ] )
+        let delta = if L.mem c1 l then 1 else 0 in
+        let delta = delta - if L.mem c2 l then 1 else 0 in
+        c := !c + delta;
+        !c >= 0)
+      (*FIXME*)
+    , L.of_list [ c1; c2 ] )
   ;;
 
-  let constr_to_automata (c : clock Rtccsl.constr) : t =
+  let of_constr (c : clock Rtccsl.constr) : t =
     match c with
     | Precedence (c1, c2) -> prec c1 c2 true
     | Causality (c1, c2) -> prec c1 c2 false
+    | Exclusion clocks ->
+      let l = List.map L.of_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
+      stateless l clocks
+    | Coincidence clocks ->
+      let l = List.map L.of_list [ clocks; [] ] in
+      stateless l clocks
     | _ -> failwith "not implemented"
   ;;
 
+  module Strategy = struct
+    let first num_decision : strategy =
+      fun guard ->
+      List.find_map
+        (fun (l, c) ->
+          let* n = num_decision c in
+          Some (l, n))
+        guard
+    ;;
+
+    let bounded bound lin_cond =
+      assert (I.subset bound (I.pinf N.zero));
+      let choice = I.inter lin_cond bound in
+      if I.is_empty choice then None else Some choice
+    ;;
+
+    let slow bound lin_cond =
+      let* choice = bounded bound lin_cond in
+      let* a, _ = I.destr choice in
+      a
+    ;;
+
+    let fast bound lin_cond =
+      let* choice = bounded bound lin_cond in
+      let* _, b = I.destr choice in
+      b
+    ;;
+  end
+
+  let bisimulate s a1 a2 n =
+    let _, trans, _ = a2 in
+    let result =
+      collect n (fun () ->
+        let* sol = step s a1 in
+        if trans sol then Some sol else None)
+    in
+    if List.length result = n then Ok result else Error result
+  ;;
+
   (*
-     | Causality (_, _) -> _
-     | Exclusion _ -> _
-     | Coincidence _ -> _
      | Subclocking (_, _) -> _
      | Minus (_, _, _) -> _
      | Delay (_, _, _, _) -> _
@@ -162,7 +205,31 @@ module MakeSimple (C : ID) (N : Num) : Simple = struct
      | Forbid (_, _, _) -> _
      | Allow (_, _, _) -> _
      | Sporadic (_, _) -> _ *)
-  let spec_to_automata spec =
-    List.fold_left synchronize empty (List.map constr_to_automata spec)
-  ;;
+  let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
 end
+
+let%test_module _ =
+  (module struct
+    module A =
+      MakeSimple
+        (String)
+        (struct
+          include ExpOrder.Make (Int)
+
+          let zero = 0
+          let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_int
+          let t_of_sexp = Sexplib0.Sexp_conv.int_of_sexp
+        end)
+
+    open Rtccsl
+
+    let%test _ =
+      let empty1 = A.of_spec [ Coincidence [ "a"; "b" ]; Exclusion [ "a"; "b" ] ] in
+      let empty2 = A.empty in
+      let strat = A.Strategy.first @@ A.Strategy.slow (A.I.make 1 2) in
+      let steps = 10 in
+      let trace = A.bisimulate strat empty1 empty2 steps in
+      Result.is_ok trace
+    ;;
+  end)
+;;
