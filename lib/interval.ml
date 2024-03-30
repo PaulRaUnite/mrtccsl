@@ -1,15 +1,27 @@
 open Prelude
 
 module type I = sig
-  type t
   type num
 
-  val make : num -> num -> t
+  type bound =
+    | Exclude of num
+    | Include of num
+    | Inf
+
+  type t =
+    | Bound of bound * bound
+    | Empty
+
+  val make_include : num -> num -> t
+  val make_exclude : num -> num -> t
   val return : num -> t
   val pinf : num -> t
   val ninf : num -> t
+  val pinf_strict : num -> t
+  val ninf_strict : num -> t
+  val empty: t
   val inf : t
-  val destr : t -> num option * num option
+  val destr : t -> (bound * bound) option
   val inter : t -> t -> t
 
   (**x is subset of y**)
@@ -21,68 +33,112 @@ module type I = sig
   (**does interval contains a value**)
   val contains : t -> num -> bool
 
+  val shift_by : t -> num -> t
+
   include Sexplib0.Sexpable.S with type t := t
 end
 
 module type Num = sig
   include Set.OrderedType
   include Sexplib0.Sexpable.S with type t := t
+
+  val ( + ) : t -> t -> t
 end
 
 module Make (N : Num) = struct
   type num = N.t
 
+  type bound =
+    | Exclude of N.t
+    | Include of N.t
+    | Inf
+  [@@deriving sexp]
+
   open Sexplib0.Sexp_conv
 
+  module Bound = struct
+    type t = bound
+
+    let shift_by x n =
+      match x with
+      | Exclude x -> Exclude N.(x + n)
+      | Include x -> Include N.(x + n)
+      | Inf -> Inf
+    ;;
+
+    let neg = function
+      | Exclude x -> Some (Include x)
+      | Include x -> Some (Exclude x)
+      | Inf -> None
+    ;;
+  end
+
   module LeftBound = ExpOrder.Make (struct
-      type t = N.t option
+      type t = Bound.t
 
       let compare x y =
         match x, y with
-        | None, None -> 0
-        | Some _, None -> 1
-        | None, Some _ -> -1
-        | Some x, Some y -> N.compare x y
+        | Exclude x, Exclude y | Include x, Include y -> N.compare x y
+        | Exclude x, Include y ->
+          let comp = N.compare x y in
+          if comp = 0 then 1 else comp
+        | Include x, Exclude y ->
+          let comp = N.compare x y in
+          if comp = 0 then -1 else comp
+        | Inf, Inf -> 0
+        | Inf, _ -> -1
+        | _, Inf -> 1
       ;;
     end)
 
   module RightBound = ExpOrder.Make (struct
-      type t = N.t option
+      type t = Bound.t
 
       let compare x y =
         match x, y with
-        | None, None -> 0
-        | Some _, None -> -1
-        | None, Some _ -> 1
-        | Some x, Some y -> N.compare x y
+        | Exclude x, Exclude y | Include x, Include y -> N.compare x y
+        | Exclude x, Include y ->
+          let comp = N.compare x y in
+          if comp = 0 then -1 else comp
+        | Include x, Exclude y ->
+          let comp = N.compare x y in
+          if comp = 0 then 1 else comp
+        | Inf, Inf -> 0
+        | Inf, _ -> 1
+        | _, Inf -> -1
       ;;
     end)
 
   type t =
-    | Bound of N.t option * N.t option
+    | Bound of bound * bound
     | Empty
   [@@deriving sexp]
 
-  let make left right =
-    if N.compare left right > 0 then Empty else Bound (Some left, Some right)
+  let normalize i =
+    let pass =
+      match i with
+      | Bound (Include x, Include y) -> N.compare x y <= 0
+      | Bound (Exclude x, Exclude y) -> N.compare x y < 0
+      | _ -> true
+    in
+    if pass then i else Empty
   ;;
 
-  let return n = Bound (Some n, Some n)
-  let pinf left = Bound (Some left, None)
-  let ninf right = Bound (None, Some right)
-  let inf = Bound (None, None)
+  let make_include left right = normalize (Bound (Include left, Include right))
+  let make_exclude left right = normalize (Bound (Exclude left, Exclude right))
+  let return n = Bound (Include n, Include n)
+  let pinf left = Bound (Include left, Inf)
+  let ninf right = Bound (Inf, Include right)
+  let pinf_strict left = Bound (Exclude left, Inf)
+  let ninf_strict right = Bound (Inf, Exclude right)
+  let inf = Bound (Inf, Inf)
 
   let destr = function
     | Bound (a, b) -> Some (a, b)
     | Empty -> None
   ;;
 
-  let normalize i =
-    match i with
-    | Bound (Some x, Some y) ->
-      if N.compare x y <= 0 then Bound (Some x, Some y) else Empty
-    | _ -> i
-  ;;
+  let empty = Empty
 
   let inter x y =
     match x, y with
@@ -116,29 +172,57 @@ module Make (N : Num) = struct
   ;;
 
   let contains i n = subset (return n) i
+
+  let shift_by i n =
+    match i with
+    | Bound (a, b) -> Bound (Bound.(shift_by a n), Bound.(shift_by b n))
+    | Empty -> Empty
+  ;;
+
+  let complement_left = function
+    | Bound (left, _) ->
+      let* bound = Bound.neg left in
+      Some (Bound (Inf, bound))
+    | Empty -> Some (Bound (Inf, Inf))
+  ;;
+
+  let complement_right = function
+    | Bound (_, right) ->
+      let* bound = Bound.neg right in
+      Some (Bound (bound, Inf))
+    | Empty -> Some (Bound (Inf, Inf))
+  ;;
+
+  let ( <-> ) x y = Bound (Exclude x, Exclude y)
+  let ( =-> ) x y = Bound (Include x, Exclude y)
+  let ( <-= ) x y = Bound (Exclude x, Include y)
+  let ( =-= ) x y = Bound (Include x, Include y)
 end
 
 let%test_module _ =
   (module struct
-    module II = Make (struct
+    module II : I with type num = int = Make (struct
         include Int
 
+        let ( + ) = Int.add
         let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_int
         let t_of_sexp = Sexplib0.Sexp_conv.int_of_sexp
       end)
 
     let%test_unit _ =
-      [%test_eq: II.t] (II.make ~-1 1) (II.inter (II.pinf ~-1) (II.ninf 1))
+      [%test_eq: II.t] (II.make_include ~-1 1) (II.inter (II.pinf ~-1) (II.ninf 1))
     ;;
 
-    let%test _ = II.subset (II.make ~-1 1) II.inf
+    let%test _ = II.subset (II.make_include ~-1 1) II.inf
     let%test _ = II.contains II.inf 0
     let%test _ = II.contains (II.pinf 0) 0
     let%test _ = II.contains (II.ninf 0) 0
     let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf 0) (II.pinf 0)) (II.return 0)
-
     let%test_unit _ =
-      [%test_eq: II.t] (II.inter (II.make ~-1 1) (II.make 0 2)) (II.make 0 1)
-    ;;
+    [%test_eq: II.t]
+    (II.inter (II.make_include ~-1 1) (II.make_include 0 2))
+    (II.make_include 0 1)
+  ;;
+  let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf_strict 0) (II.pinf_strict 0)) II.empty
   end)
 ;;
