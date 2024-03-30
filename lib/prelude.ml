@@ -50,8 +50,8 @@ let ( and* ) x y =
   Some (x, y)
 ;;
 
-let rec collect n f : 'a list = if n = 0 then [] else
-  match f () with
-  | Some r -> r :: collect (n - 1) f
+let rec collect n init f : 'a list = if n = 0 then [] else
+  match f init with
+  | Some (r, v) -> r :: collect (n - 1) v f
   | None -> []
 ;;
