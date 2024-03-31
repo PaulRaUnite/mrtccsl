@@ -87,6 +87,10 @@ module MakeSimple (C : ID) (N : Num) = struct
       Some ((l, now), now))
   ;;
 
+  (*TODO: add CSV output*)
+
+  (*TODO: add visualization?*)
+
   let sync (a1 : t) (a2 : t) : t =
     let g1, t1, c1 = a1 in
     let g2, t2, c2 = a2 in
@@ -248,12 +252,19 @@ module MakeSimple (C : ID) (N : Num) = struct
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
 
   module Strategy = struct
-    let first num_decision guard =
-      List.find_map
-        (fun (l, c) ->
+    let rec first num_decision = function
+      | [] -> None
+      | (l, c) :: tail ->
+        if L.is_empty l
+        then (
+          match first num_decision tail with
+          | None ->
+            let* n = num_decision c in
+            Some (l, n)
+          | Some x -> Some x)
+        else
           let* n = num_decision c in
-          Some (l, n))
-        guard
+          Some (l, n)
     ;;
 
     let bounded bound lin_cond =
@@ -350,20 +361,20 @@ let%test_module _ =
       not (is_empty (A.run strat a 10))
     ;;
 
-    (* let%test _ =
+    let%test _ =
       let g, _, _ = A.of_constr (Coincidence [ "a"; "b" ]) in
-      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
+      (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0); *)
       not (is_empty (g 0.0))
-    ;; *)
+    ;;
 
     let%test _ =
       let empty1 = A.of_spec [ Coincidence [ "a"; "b" ]; Exclusion [ "a"; "b" ] ] in
       let empty2 = A.empty in
       let steps = 10 in
       let trace = A.bisimulate strat empty1 empty2 steps in
-      (* match trace with
+      match trace with
       | Ok l | Error l ->
-        Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
+        Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l;
       Result.is_ok trace
     ;;
   end)
