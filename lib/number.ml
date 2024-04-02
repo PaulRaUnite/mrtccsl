@@ -15,15 +15,15 @@ module Float = struct
   let round_up step x y =
     let v = x +. step in
     let r = if v >= y then (x +. y) /. 2. else v in
-    let _ = Printf.printf "%f" r in
+    (* let _ = Printf.printf "%f\n" r in *)
     r
   ;;
 
   let round_down step x y =
     let v = y -. step in
-    let _ = Printf.printf "v: %f %f %f" x y v in
+    (* let _ = Printf.printf "v: %f %f %f\n" x y v in *)
     let r = if v <= x then (x +. y) /. 2. else v in
-    let _ = Printf.printf "round_down: %f\n" r in
+    (* let _ = Printf.printf "round_down: %f\n" r in *)
     r
   ;;
 
@@ -41,7 +41,7 @@ module Ratio = struct
       let compare = compare_num
     end)
 
-  let zero = Num.Int 0
+  let zero = num_of_int 0
   let ( + ) = add_num
   let ( - ) = sub_num
   let neg = minus_num
@@ -65,15 +65,15 @@ module Ratio = struct
   let round_up step x y =
     let v = x +/ step in
     let r = if v >=/ y then (x +/ y) // num_of_int 2 else v in
-    let _ = Printf.printf "%s" (t_to_string r) in
+    (* let _ = Printf.printf "%s" (t_to_string r) in *)
     r
   ;;
 
   let round_down step x y =
     let v = y -/ step in
-    let _ = Printf.printf "v: %s %s %s" (t_to_string x) (t_to_string y) (t_to_string v) in
+    (* let _ = Printf.printf "v: %s %s %s" (t_to_string x) (t_to_string y) (t_to_string v) in *)
     let r = if v <=/ x then (x +/ y) // num_of_int 2 else v in
-    let _ = Printf.printf "round_down: %s\n" (t_to_string r) in
+    (* let _ = Printf.printf "round_down: %s\n" (t_to_string r) in *)
     r
   ;;
 
@@ -82,6 +82,6 @@ module Ratio = struct
     let nom = Random.int (Int.add denom 1) in
     let nom = num_of_int nom
     and denom = num_of_int denom in
-    l +/ ((l -/ r) */ (nom // denom))
+    l +/ ((r -/ l) */ (nom // denom))
   ;;
 end
