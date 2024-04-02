@@ -50,8 +50,35 @@ let ( and* ) x y =
   Some (x, y)
 ;;
 
-let rec collect n init f : 'a list = if n = 0 then [] else
-  match f init with
-  | Some (r, v) -> r :: collect (n - 1) v f
-  | None -> []
+let rec collect n init f : 'a list =
+  if n = 0
+  then []
+  else (
+    match f init with
+    | Some (r, v) -> r :: collect (n - 1) v f
+    | None -> [])
 ;;
+
+module type Stringable = sig
+  type t
+
+  val t_to_string : t -> string
+end
+
+module String = struct
+  include String
+
+  let init_char n c = init n (fun _ -> c)
+end
+
+module Buffer = struct
+  include Buffer
+
+  let add_chars b n c:unit =
+    for _ = 0 to (n-1) do
+      add_char b c
+    done
+  ;;
+end
+
+let rec ints n : int Seq.t = fun () -> Seq.Cons (n, ints (n + 1))

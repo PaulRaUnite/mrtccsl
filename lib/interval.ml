@@ -19,7 +19,7 @@ module type I = sig
   val ninf : num -> t
   val pinf_strict : num -> t
   val ninf_strict : num -> t
-  val empty: t
+  val empty : t
   val inf : t
   val destr : t -> (bound * bound) option
   val inter : t -> t -> t
@@ -34,6 +34,10 @@ module type I = sig
   val contains : t -> num -> bool
 
   val shift_by : t -> num -> t
+  val ( <-> ) : num -> num -> t
+  val ( =-> ) : num -> num -> t
+  val ( <-= ) : num -> num -> t
+  val ( =-= ) : num -> num -> t
 
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -218,11 +222,15 @@ let%test_module _ =
     let%test _ = II.contains (II.pinf 0) 0
     let%test _ = II.contains (II.ninf 0) 0
     let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf 0) (II.pinf 0)) (II.return 0)
+
     let%test_unit _ =
-    [%test_eq: II.t]
-    (II.inter (II.make_include ~-1 1) (II.make_include 0 2))
-    (II.make_include 0 1)
-  ;;
-  let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf_strict 0) (II.pinf_strict 0)) II.empty
+      [%test_eq: II.t]
+        (II.inter (II.make_include ~-1 1) (II.make_include 0 2))
+        (II.make_include 0 1)
+    ;;
+
+    let%test_unit _ =
+      [%test_eq: II.t] (II.inter (II.ninf_strict 0) (II.pinf_strict 0)) II.empty
+    ;;
   end)
 ;;

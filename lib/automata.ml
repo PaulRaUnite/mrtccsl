@@ -29,8 +29,17 @@ module type Simple = sig
 
   module Strategy : sig
     val first : (num_cond -> num option) -> strategy
-    val slow : num_cond -> (I.bound -> I.bound -> num) -> num_cond -> num option
-    val fast : num_cond -> (I.bound -> I.bound -> num) -> num_cond -> num option
+    val slow : num_cond -> (num -> num -> num) -> num_cond -> num option
+    val fast : num_cond -> (num -> num -> num) -> num_cond -> num option
+    val random_label : (num_cond -> num option) -> strategy
+
+    val random_leap
+      :  num_cond
+      -> (num -> num -> num)
+      -> (num -> num -> num)
+      -> (num -> num -> num)
+      -> num_cond
+      -> num option
   end
 end
 
@@ -40,6 +49,7 @@ module type Num = sig
 
   val zero : t
   val neg : t -> t
+  val ( - ) : t -> t -> t
 end
 
 module MakeSimple (C : ID) (N : Num) = struct
@@ -86,10 +96,6 @@ module MakeSimple (C : ID) (N : Num) = struct
       let* l, now = step s a now in
       Some ((l, now), now))
   ;;
-
-  (*TODO: add CSV output*)
-
-  (*TODO: add visualization?*)
 
   let sync (a1 : t) (a2 : t) : t =
     let g1, t1, c1 = a1 in
@@ -267,28 +273,61 @@ module MakeSimple (C : ID) (N : Num) = struct
           Some (l, n)
     ;;
 
+    let random_label num_decision solutions =
+      if is_empty solutions
+      then None
+      else (
+        let len = List.length solutions in
+        let choice = Random.int len in
+        let l, c = List.nth solutions choice in
+        let* n = num_decision c in
+        Some (l, n))
+    ;;
+
     let bounded bound lin_cond =
       assert (I.subset bound (I.pinf N.zero));
       let choice = I.inter lin_cond bound in
       if I.is_empty choice then None else Some choice
     ;;
 
-    let slow bound round_up lin_cond =
-      let* choice = bounded bound lin_cond in
-      let* a, b = I.destr choice in
-      match a with
-      | I.Include x -> Some x
-      | I.Exclude _ -> Some (round_up a b)
-      | Inf -> failwith "unreachable"
+    let random_leap bound up down rand cond =
+      let cond = I.inter cond bound in
+      if I.is_empty cond
+      then None
+      else (
+        let x, y =
+          match cond with
+          | I.Bound (I.Include x, I.Include y) -> x, y
+          | I.Bound (I.Exclude x, I.Include y) -> up x y, y
+          | I.Bound (I.Include x, I.Exclude y) -> x, down x y
+          | I.Bound (I.Exclude x, I.Exclude y) -> up x y, down x y
+          | _ -> invalid_arg "random on infinite interval is not supported"
+        in
+        Some (rand x y))
     ;;
 
-    let fast bound round_down lin_cond =
+    let slow bound round_down lin_cond =
       let* choice = bounded bound lin_cond in
-      let* a, b = I.destr choice in
-      match b with
-      | I.Include x -> Some x
-      | I.Exclude _ -> Some (round_down a b)
-      | Inf -> failwith "unreachable"
+      let v =
+        match choice with
+        | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
+        | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
+          round_down x y
+        | _ -> invalid_arg "random on infinite interval is not supported"
+      in
+      Some v
+    ;;
+
+    let fast bound round_up lin_cond =
+      let* choice = bounded bound lin_cond in
+      let v =
+        match choice with
+        | I.Bound (I.Include x, I.Include _) | I.Bound (I.Include x, I.Exclude _) -> x
+        | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
+          round_up x y
+        | _ -> invalid_arg "random on infinite interval is not supported"
+      in
+      Some v
     ;;
   end
 
@@ -303,14 +342,16 @@ module MakeSimple (C : ID) (N : Num) = struct
   ;;
 end
 
-module MakeSimpleDebug
+module AddDebug
+    (A : Simple)
     (C : sig
-       include ID
-       include Sexplib0.Sexpable.S with type t := t
-     end)
-    (N : Num) =
+           include ID
+           include Sexplib0.Sexpable.S with type t := t
+         end
+         with type t = A.clock)
+    (N : Num with type t = A.num) =
 struct
-  include MakeSimple (C) (N)
+  include A
   open Sexplib0.Sexp_conv
 
   let sexp_of_label label = sexp_of_list C.sexp_of_t @@ L.elements label
@@ -319,39 +360,114 @@ struct
   let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
 end
 
+module AddSVGBobSerialize
+    (A : Simple)
+    (C : Stringable with type t = A.clock)
+    (N : sig
+           include Num
+           include Stringable with type t := t
+         end
+         with type t = A.num) =
+struct
+  include A
+
+  let trace_to_svgbob clocks trace =
+    if A.L.is_empty clocks
+    then ""
+    else (
+      let clock_strs = Array.of_list (List.map C.t_to_string (A.L.elements clocks)) in
+      let clocks = Array.of_list (A.L.elements clocks) in
+      let len = Array.length clocks in
+      let biggest_clock =
+        Option.get
+        @@ Seq.fold_left
+             (fun biggest c ->
+               match biggest with
+               | None -> Some c
+               | Some b -> Some (Int.max b c))
+             None
+             (Seq.map String.length (Array.to_seq clock_strs))
+      in
+      let graph_offset = biggest_clock + 3 in
+      let buffers =
+        Array.init len (fun i ->
+          let c = Array.get clock_strs i in
+          let b = Buffer.create (biggest_clock + 32) in
+          let symbol = if i = 0 then '+' else '|' in
+          Printf.bprintf b "%*s %c-" biggest_clock c symbol;
+          b)
+      and footer = Buffer.create (biggest_clock + 32)
+      and history = Buffer.create (biggest_clock + 32) in
+      let _ =
+        Buffer.add_chars footer biggest_clock ' ';
+        Buffer.add_string footer " +-";
+        Buffer.add_chars history graph_offset ' '
+      in
+      let rec print _ = function
+        | [] -> ()
+        | (l, n') :: tail ->
+          (* let delta = N.(n' - n) in *)
+          let time_label = N.t_to_string n' in
+          let len = String.length time_label + 1 in
+          let print_clock mark i c =
+            let buf = Array.get buffers i in
+            let symbol, mark =
+              if A.L.mem c l then '*', true else if mark then '|', true else '-', false
+            in
+            Buffer.add_char buf symbol;
+            Buffer.add_chars buf (len - 1) '-';
+            mark
+          in
+          let _ = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
+          let _ =
+            Buffer.add_char footer '+';
+            Buffer.add_chars footer (len - 1) '-';
+            Printf.bprintf history "%s " time_label
+          in
+          print n' tail
+      in
+      let _ = print N.zero trace in
+      let total_length =
+        Array.fold_left
+          (fun len b -> len + Buffer.length b)
+          (Buffer.length footer + Buffer.length history + len + 32)
+          buffers
+      in
+      let total = Buffer.create total_length in
+      let _ =
+        Array.iter
+          (fun b ->
+            Buffer.add_buffer total b;
+            Buffer.add_char total '\n')
+          buffers;
+        Buffer.add_buffer total footer;
+        Buffer.add_string total ">\n";
+        Buffer.add_buffer total history;
+        Buffer.add_string total "seconds"
+      in
+      Buffer.contents total)
+  ;;
+end
+
 let%test_module _ =
   (module struct
     module A =
-      MakeSimpleDebug
-        (struct
-          include String
-
-          let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_string
-          let t_of_sexp = Sexplib0.Sexp_conv.string_of_sexp
-        end)
-        (struct
-          include ExpOrder.Make (Float)
-
-          let zero = Float.zero
-          let ( + ) = Float.add
-          let neg = Float.neg
-          let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_float
-          let t_of_sexp = Sexplib0.Sexp_conv.float_of_sexp
-        end)
+      AddSVGBobSerialize
+        (MakeSimple (Clock.String) (Number.Float)) (Clock.String)
+        (Number.Float)
 
     open Rtccsl
 
     let step = 0.1
 
     let round_up x y =
-      Printf.printf "round_up";
-      match x, y with
-      | A.I.Include x, _ -> x
-      | A.I.Exclude x, A.I.Include y | A.I.Exclude x, A.I.Exclude y ->
-        let r = x +. step in
-        if r < y then r else (x +. y) /. 2.
-      | A.I.Exclude x, A.I.Inf -> x +. step
-      | _ -> failwith "unreachable"
+      let v = x +. step in
+      if v > y then (x +. y) /. 2. else v
+    ;;
+
+    let round_down x y =
+      let v = y -. step in
+      if v < x then (x +. y) /. 2. else v
     ;;
 
     let strat = A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) round_up
@@ -359,6 +475,24 @@ let%test_module _ =
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
       not (is_empty (A.run strat a 10))
+    ;;
+
+    let random_float x y = if Float.equal x y then x else x +. Random.float (y -. x)
+
+    let random_strat =
+      A.Strategy.random_label
+        (A.Strategy.random_leap A.I.(0.0 =-= 1.0) round_up round_down random_float)
+    ;;
+
+    let%test _ =
+      let a = A.of_constr (Coincidence [ "a"; "b" ]) in
+      not (is_empty (A.run strat a 10))
+    ;;
+
+    let%test _ =
+      let a = A.of_constr (Coincidence [ "a"; "b" ]) in
+      let trace = A.run random_strat a 10 in
+      not (is_empty trace)
     ;;
 
     let%test _ =
@@ -372,9 +506,9 @@ let%test_module _ =
       let empty2 = A.empty in
       let steps = 10 in
       let trace = A.bisimulate strat empty1 empty2 steps in
-      match trace with
+      (* match trace with
       | Ok l | Error l ->
-        Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l;
+        Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
       Result.is_ok trace
     ;;
   end)

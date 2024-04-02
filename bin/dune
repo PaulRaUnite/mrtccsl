@@ -2,3 +2,8 @@
  (public_name mrtccsl)
  (name main)
  (libraries mrtccsl))
+
+(env
+	(dev
+		(flags
+			(:standard -warn-error -A))))
