@@ -2,6 +2,8 @@ open Prelude
 
 module type ID = sig
   include Set.OrderedType
+  include Stringable with type t := t
+  include Sexplib0.Sexpable.S with type t := t
 end
 
 module type Simple = sig
@@ -31,7 +33,7 @@ module type Simple = sig
     val first : (num_cond -> num option) -> strategy
     val slow : num_cond -> (num -> num -> num) -> num_cond -> num option
     val fast : num_cond -> (num -> num -> num) -> num_cond -> num option
-    val random_label : (num_cond -> num option) -> strategy
+    val random_label : int -> (num_cond -> num option) -> strategy
 
     val random_leap
       :  num_cond
@@ -50,6 +52,7 @@ module type Num = sig
   val zero : t
   val neg : t -> t
   val ( - ) : t -> t -> t
+  val t_to_string : t -> string
 end
 
 module MakeSimple (C : ID) (N : Num) = struct
@@ -66,6 +69,13 @@ module MakeSimple (C : ID) (N : Num) = struct
   type strategy = guard -> solution option
   type trace = solution list
   type t = (num -> guard) * (num -> solution -> bool) * label
+
+  open Sexplib0.Sexp_conv
+
+  let sexp_of_label label = sexp_of_list C.sexp_of_t @@ L.elements label
+  let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
+  let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
+  let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
 
   let empty : t =
     ( (fun now -> [ L.empty, I.pinf_strict now ])
@@ -86,8 +96,19 @@ module MakeSimple (C : ID) (N : Num) = struct
             l, c)
           possible
       in
+      (* let _ =
+        Printf.printf
+          "pre-strat: now=%s sols=%s\n"
+          (Sexplib0.Sexp.to_string @@ N.sexp_of_t now)
+          (Sexplib0.Sexp.to_string @@ sexp_of_guard possible)
+      in *)
       let* l, d = strat possible in
       let sol = l, N.(d + now) in
+      (* let _ =
+        Printf.printf
+          "post-strat: sol=%s\n"
+          (Sexplib0.Sexp.to_string @@ sexp_of_solution sol)
+      in *)
       if transition now sol then Some sol else None)
   ;;
 
@@ -119,8 +140,21 @@ module MakeSimple (C : ID) (N : Num) = struct
     in
     let g now =
       let g1 = g1 now in
+      (* let _ =
+        Printf.printf "sync sol 1: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g1)
+      in *)
       let g2 = g2 now in
-      List.filter_map guard_solver @@ cartesian g1 g2
+      (* let _ =
+        Printf.printf "sync sol 2: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g2)
+      in *)
+      let pot_solutions = cartesian g1 g2 in
+      let solutions = List.filter_map guard_solver pot_solutions in
+      (* let _ =
+        Printf.printf
+          "sync sols: %s\n"
+          (Sexplib0.Sexp.to_string @@ sexp_of_guard solutions)
+      in *)
+      solutions
     in
     let t n l = t1 n l && t2 n l in
     g, t, c
@@ -179,36 +213,42 @@ module MakeSimple (C : ID) (N : Num) = struct
       let queue = Queue.create () in
       let delay = I.(l =-= r) in
       let g now =
-        let basic_behav =
-          [ L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now ]
-        in
         if Queue.is_empty queue
-        then basic_behav
+        then [ L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now ]
         else (
           let head = Queue.peek queue in
           let next = I.inter (I.pinf_strict now) (I.shift_by delay head) in
-          List.append basic_behav [ L.of_list [ a; b ], next; L.of_list [ b ], next ])
+          [ (L.of_list [ a ], I.(now <-> N.(head + l)))
+          ; (L.empty, I.(now <-> N.(head + r)))
+          ; L.of_list [ a; b ], next
+          ; L.of_list [ b ], next
+          ])
       in
       let clocks = L.of_list [ a; b ] in
       let t n (l, n') =
         let test = correctness_check clocks (g n) (l, n') in
         let _ = if L.mem a l then Queue.push n' queue in
+        let _ = if L.mem b l then ignore @@ Queue.pop queue in
+        (* let _ =
+          Printf.printf "trans: test=%b sol=%s\n" test
+          @@ Sexplib0.Sexp.to_string
+          @@ sexp_of_solution (l, n')
+        in *)
         test
       in
       g, t, clocks
     | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
-      let e = I.make_include e1 e2 in
+      let e = I.(e1 =-= e2) in
+      let _ = Printf.printf "%s\n" (Sexplib0.Sexp.to_string @@ I.sexp_of_t e) in
       let last = ref None in
       let g now =
-        let generic = I.pinf_strict now in
-        let next =
+        let next, right_bound =
           match !last with
-          | None -> I.shift_by e off
-          | Some v -> I.shift_by e N.(d + v)
+          | None -> I.shift_by e off, N.(off + e2)
+          | Some v -> I.shift_by e N.(d + v), N.(v + d + e2)
         in
-        [ L.of_list [ c ], I.inter generic next
-        ; L.empty, I.inter generic (Option.get @@ I.complement_left next)
-        ]
+        let generic = I.pinf_strict now in
+        [ L.of_list [ c ], I.inter generic next; (L.empty, I.(N.zero <-> right_bound)) ]
       in
       let clocks = L.of_list [ c ] in
       let t n (l, n') =
@@ -219,9 +259,17 @@ module MakeSimple (C : ID) (N : Num) = struct
             let update =
               match cons with
               | CumulPeriodic _ -> n'
-              | AbsPeriodic _ -> N.(Option.value !last ~default:N.zero + d)
+              | AbsPeriodic _ ->
+                (match !last with
+                 | None -> off
+                 | Some last -> N.(last + d))
               | _ -> failwith "unreachable"
             in
+            (* let _ =
+               Printf.printf
+               "update := %s\n"
+               (Sexplib0.Sexp.to_string (N.sexp_of_t update))
+               in *)
             last := Some update)
         in
         test
@@ -234,7 +282,7 @@ module MakeSimple (C : ID) (N : Num) = struct
         | None -> [ L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now ]
         | Some v ->
           let next_after = N.(d + v) in
-          [ L.of_list [ c ], I.pinf next_after; (L.empty, I.(now <-> next_after)) ]
+          [ L.of_list [ c ], I.pinf_strict next_after; (L.empty, I.(now <-> next_after)) ]
       in
       let clocks = L.of_list [ c ] in
       let t n (l, n') =
@@ -279,24 +327,27 @@ module MakeSimple (C : ID) (N : Num) = struct
           Some (l, n)
     ;;
 
-    let random_label num_decision solutions =
+    let random_label attempts num_decision solutions =
       if is_empty solutions
       then None
       else (
         let len = List.length solutions in
-        let choice = Random.int len in
-        let l, c = List.nth solutions choice in
-        let* n = num_decision c in
-        Some (l, n))
+        let rand _ =
+          let choice = Random.int len in
+          let l, c = List.nth solutions choice in
+          let* n = num_decision c in
+          Some (l, n)
+        in
+        Seq.find_map (fun x -> x) (Seq.init attempts rand))
     ;;
 
     let bounded bound lin_cond =
       assert (I.subset bound (I.pinf N.zero));
       let choice = I.inter lin_cond bound in
-      if I.is_empty choice
-      then (
-        None)
-      else Some choice
+      (* let _ =
+         Printf.printf "bounded: %s\n" (Sexplib0.Sexp.to_string (I.sexp_of_t choice))
+         in *)
+      if I.is_empty choice then None else Some choice
     ;;
 
     let random_leap bound up down rand cond =
@@ -315,25 +366,25 @@ module MakeSimple (C : ID) (N : Num) = struct
         Some (rand x y))
     ;;
 
-    let slow bound round_down lin_cond =
-      let* choice = bounded bound lin_cond in
-      let v =
-        match choice with
-        | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
-        | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
-          round_down x y
-        | _ -> invalid_arg "random on infinite interval is not supported"
-      in
-      Some v
-    ;;
-
-    let fast bound round_up lin_cond =
+    let slow bound round_up lin_cond =
       let* choice = bounded bound lin_cond in
       let v =
         match choice with
         | I.Bound (I.Include x, I.Include _) | I.Bound (I.Include x, I.Exclude _) -> x
         | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
           round_up x y
+        | _ -> invalid_arg "random on infinite interval is not supported"
+      in
+      Some v
+    ;;
+
+    let fast bound round_down lin_cond =
+      let* choice = bounded bound lin_cond in
+      let v =
+        match choice with
+        | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
+        | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
+          round_down x y
         | _ -> invalid_arg "random on infinite interval is not supported"
       in
       Some v
@@ -349,43 +400,14 @@ module MakeSimple (C : ID) (N : Num) = struct
     in
     if List.length result = n then Ok result else Error result
   ;;
-end
 
-module AddDebug
-    (A : Simple)
-    (C : sig
-           include ID
-           include Sexplib0.Sexpable.S with type t := t
-         end
-         with type t = A.clock)
-    (N : Num with type t = A.num) =
-struct
-  include A
-  open Sexplib0.Sexp_conv
-
-  let sexp_of_label label = sexp_of_list C.sexp_of_t @@ L.elements label
-  let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
-  let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
-  let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
-end
-
-module AddSVGBobSerialize
-    (A : Simple)
-    (C : Stringable with type t = A.clock)
-    (N : sig
-           include Num
-           include Stringable with type t := t
-         end
-         with type t = A.num) =
-struct
-  include A
-
+  (*TODO: add idices instead of dots for clocks*)
   let trace_to_svgbob clocks trace =
-    if A.L.is_empty clocks
+    if L.is_empty clocks
     then ""
     else (
-      let clock_strs = Array.of_list (List.map C.t_to_string (A.L.elements clocks)) in
-      let clocks = Array.of_list (A.L.elements clocks) in
+      let clock_strs = Array.of_list (List.map C.t_to_string (L.elements clocks)) in
+      let clocks = Array.of_list (L.elements clocks) in
       let len = Array.length clocks in
       let biggest_clock =
         Option.get
@@ -421,7 +443,7 @@ struct
           let print_clock mark i c =
             let buf = Array.get buffers i in
             let symbol, mark =
-              if A.L.mem c l then '*', true else if mark then '|', true else '-', false
+              if L.mem c l then '*', true else if mark then '|', true else '-', false
             in
             Buffer.add_char buf symbol;
             Buffer.add_chars buf (len - 1) '-';
@@ -460,25 +482,14 @@ end
 
 let%test_module _ =
   (module struct
-    module A =
-      AddDebug (MakeSimple (Clock.String) (Number.Float)) (Clock.String) (Number.Float)
-
     open Rtccsl
+    open Number
+    module A = MakeSimple (Clock.String) (Float)
 
     let step = 0.1
 
-    let round_up x y =
-      let v = x +. step in
-      if v > y then (x +. y) /. 2. else v
-    ;;
-
-    let round_down x y =
-      let v = y -. step in
-      if v < x then (x +. y) /. 2. else v
-    ;;
-
     let slow_strat =
-      A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) round_up
+      A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) (Float.round_up step)
     ;;
 
     let%test _ =
@@ -486,11 +497,14 @@ let%test_module _ =
       not (is_empty (A.run slow_strat a 10))
     ;;
 
-    let random_float x y = if Float.equal x y then x else x +. Random.float (y -. x)
-
     let random_strat =
       A.Strategy.random_label
-        (A.Strategy.random_leap A.I.(0.0 =-= 1.0) round_up round_down random_float)
+        1
+        (A.Strategy.random_leap
+           A.I.(0.0 =-= 1.0)
+           (Float.round_up step)
+           (Float.round_down step)
+           Float.random)
     ;;
 
     let%test _ =
@@ -523,10 +537,10 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Precedence ("a", "b")) in
-      let g, _, _ = a in
       let trace = A.run slow_strat a 10 in
-      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
-      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace;
+      (* let g, _, _ = a in *)
+      (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
+      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
       List.length trace = 10
     ;;
   end)
