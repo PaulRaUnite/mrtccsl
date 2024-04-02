@@ -2,5 +2,6 @@
  (name mrtccsl)
  (wrapped false)
  (inline_tests)
+ (libraries num)
  (preprocess
   (pps ppx_inline_test ppx_assert ppx_sexp_conv)))
