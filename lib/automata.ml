@@ -434,7 +434,18 @@ module MakeSimple (C : ID) (N : Num) = struct
         Buffer.add_string footer " +-";
         Buffer.add_chars history graph_offset ' '
       in
-      let rec print _ = function
+      let marker i =
+        match Int.rem i 6 with
+        | 0 -> "*"
+        | 1 -> "o"
+        | 2 -> "◆"
+        | 3 -> ">"
+        | 4 -> "O"
+        | 5 -> "^"
+        | 6 -> "#"
+        | _ -> failwith "unreachable"
+      in
+      let rec serialize_trace = function
         | [] -> ()
         | (l, n') :: tail ->
           (* let delta = N.(n' - n) in *)
@@ -442,12 +453,12 @@ module MakeSimple (C : ID) (N : Num) = struct
           let len = String.length time_label + 1 in
           let print_clock mark i c =
             let buf = Array.get buffers i in
-            let symbol, mark =
-              if L.mem c l then '*', true else if mark then '|', true else '-', false
+            let symbol, placed =
+              if L.mem c l then marker i, true else if mark then "|", true else "-", false
             in
-            Buffer.add_char buf symbol;
+            Buffer.add_string buf symbol;
             Buffer.add_chars buf (len - 1) '-';
-            mark
+            placed
           in
           let _ = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
           let _ =
@@ -455,9 +466,9 @@ module MakeSimple (C : ID) (N : Num) = struct
             Buffer.add_chars footer (len - 1) '-';
             Printf.bprintf history "%s " time_label
           in
-          print n' tail
+          serialize_trace tail
       in
-      let _ = print N.zero trace in
+      let _ = serialize_trace trace in
       let total_length =
         Array.fold_left
           (fun len b -> len + Buffer.length b)
