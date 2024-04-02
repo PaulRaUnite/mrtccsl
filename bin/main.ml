@@ -1,33 +1,42 @@
 open Prelude
+open Number
+module A = Automata.MakeSimple (Clock.String) (Ratio)
 
-
-module A =
-  Automata.AddSVGBobSerialize (Automata.MakeSimple (Clock.String) (Number.Float)) (Clock.String) (Number.Float)
-
-let step = 0.1
-
-let round_up x y =
-  let v = x +. step in
-  if v > y then (x +. y) /. 2. else v
-;;
-
-let round_down x y =
-  let v = y -. step in
-  if v < x then (x +. y) /. 2. else v
-;;
-
-let random_float x y = if Float.equal x y then x else x +. Random.float (y -. x)
+let step = Ratio.(num_of_int 1 // num_of_int 10)
 
 let random_strat =
   A.Strategy.random_label
-    (A.Strategy.random_leap A.I.(0.0 =-= 1.0) round_up round_down random_float)
+    10
+    (A.Strategy.random_leap
+       A.I.(Ratio.num_of_int 0 =-= Ratio.num_of_int 1)
+       (Ratio.round_up step)
+       (Ratio.round_down step)
+       Ratio.random)
 ;;
 
+let fast_strat =
+  A.Strategy.random_label 10
+  @@ A.Strategy.fast
+       (A.I.make_include (Ratio.num_of_int 0) (Ratio.num_of_int 2))
+       (Ratio.round_down step)
+;;
+
+let one = Ratio.num_of_int 2
+let two = Ratio.num_of_int 2
+let half = Ratio.(num_of_int 1 // num_of_int 2)
+
 let () =
-  let spec = [ Rtccsl.Precedence( "a", "b") ] in
+  let _ = Random.init 2634615231297 in
+  let spec =
+    [ Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
+    ; Rtccsl.RTdelay ("a", "b", (one, one))
+    ; Rtccsl.RTdelay ("b", "c", (one, one))
+    ]
+  in
   let a = A.of_spec spec in
-  let trace = A.run random_strat a 10 in
-  let _, _, clocks = a in
+  let trace = A.run fast_strat a 10 in
+  let g, _, clocks = a in
+  (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)
   let svgbob_str = A.trace_to_svgbob clocks trace in
   print_endline svgbob_str
 ;;
