@@ -147,20 +147,21 @@ module MakeSimple (C : ID) (N : Num) = struct
     let l2 =
       List.filter
         (fun x ->
-          if strict then not @@ L.mem c2 x else not ((not @@ L.mem c1 x) && L.mem c2 x))
+          if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
         l1
     in
     let g now =
-      let l = if !c = 0 then l1 else l2 in
+      let l = if !c = 0 then l2 else l1 in
       simple_guard l now
     in
     let clocks = L.of_list [ c1; c2 ] in
     ( g
     , (fun n (l, n') ->
+        let test = correctness_check clocks (g n) (l, n') in
         let delta = if L.mem c1 l then 1 else 0 in
         let delta = delta - if L.mem c2 l then 1 else 0 in
-        c := !c + delta;
-        !c >= 0 && correctness_check clocks (g n) (l, n'))
+        let _ = c := !c + delta in
+        !c >= 0 && test)
     , clocks )
   ;;
 
@@ -190,8 +191,9 @@ module MakeSimple (C : ID) (N : Num) = struct
       in
       let clocks = L.of_list [ a; b ] in
       let t n (l, n') =
-        if L.mem a l then Queue.push n' queue;
-        correctness_check clocks (g n) (l, n')
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem a l then Queue.push n' queue in
+        test
       in
       g, t, clocks
     | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
@@ -210,16 +212,19 @@ module MakeSimple (C : ID) (N : Num) = struct
       in
       let clocks = L.of_list [ c ] in
       let t n (l, n') =
-        if L.mem c l
-        then (
-          let update =
-            match cons with
-            | CumulPeriodic _ -> n'
-            | AbsPeriodic _ -> N.(Option.value !last ~default:N.zero + d)
-            | _ -> failwith "unreachable"
-          in
-          last := Some update);
-        correctness_check clocks (g n) (l, n')
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ =
+          if L.mem c l
+          then (
+            let update =
+              match cons with
+              | CumulPeriodic _ -> n'
+              | AbsPeriodic _ -> N.(Option.value !last ~default:N.zero + d)
+              | _ -> failwith "unreachable"
+            in
+            last := Some update)
+        in
+        test
       in
       g, t, clocks
     | Sporadic (c, d) ->
@@ -233,8 +238,9 @@ module MakeSimple (C : ID) (N : Num) = struct
       in
       let clocks = L.of_list [ c ] in
       let t n (l, n') =
-        if L.mem c l then last := Some n';
-        correctness_check clocks (g n) (l, n')
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem c l then last := Some n' in
+        test
       in
       g, t, clocks
     (*
@@ -287,7 +293,10 @@ module MakeSimple (C : ID) (N : Num) = struct
     let bounded bound lin_cond =
       assert (I.subset bound (I.pinf N.zero));
       let choice = I.inter lin_cond bound in
-      if I.is_empty choice then None else Some choice
+      if I.is_empty choice
+      then (
+        None)
+      else Some choice
     ;;
 
     let random_leap bound up down rand cond =
@@ -452,9 +461,7 @@ end
 let%test_module _ =
   (module struct
     module A =
-      AddSVGBobSerialize
-        (MakeSimple (Clock.String) (Number.Float)) (Clock.String)
-        (Number.Float)
+      AddDebug (MakeSimple (Clock.String) (Number.Float)) (Clock.String) (Number.Float)
 
     open Rtccsl
 
@@ -470,11 +477,13 @@ let%test_module _ =
       if v < x then (x +. y) /. 2. else v
     ;;
 
-    let strat = A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) round_up
+    let slow_strat =
+      A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) round_up
+    ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (is_empty (A.run strat a 10))
+      not (is_empty (A.run slow_strat a 10))
     ;;
 
     let random_float x y = if Float.equal x y then x else x +. Random.float (y -. x)
@@ -486,7 +495,7 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (is_empty (A.run strat a 10))
+      not (is_empty (A.run slow_strat a 10))
     ;;
 
     let%test _ =
@@ -505,11 +514,20 @@ let%test_module _ =
       let empty1 = A.of_spec [ Coincidence [ "a"; "b" ]; Exclusion [ "a"; "b" ] ] in
       let empty2 = A.empty in
       let steps = 10 in
-      let trace = A.bisimulate strat empty1 empty2 steps in
+      let trace = A.bisimulate slow_strat empty1 empty2 steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
       Result.is_ok trace
+    ;;
+
+    let%test _ =
+      let a = A.of_constr (Precedence ("a", "b")) in
+      let g, _, _ = a in
+      let trace = A.run slow_strat a 10 in
+      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
+      Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace;
+      List.length trace = 10
     ;;
   end)
 ;;
