@@ -122,6 +122,8 @@ module Make (N : Num) = struct
     let pass =
       match i with
       | Bound (Include x, Include y) -> N.compare x y <= 0
+      | Bound (Include x, Exclude y)
+      | Bound (Exclude x, Include y)
       | Bound (Exclude x, Exclude y) -> N.compare x y < 0
       | _ -> true
     in
@@ -197,10 +199,10 @@ module Make (N : Num) = struct
     | Empty -> Some (Bound (Inf, Inf))
   ;;
 
-  let ( <-> ) x y = Bound (Exclude x, Exclude y)
-  let ( =-> ) x y = Bound (Include x, Exclude y)
-  let ( <-= ) x y = Bound (Exclude x, Include y)
-  let ( =-= ) x y = Bound (Include x, Include y)
+  let ( <-> ) x y = normalize @@ Bound (Exclude x, Exclude y)
+  let ( =-> ) x y = normalize @@ Bound (Include x, Exclude y)
+  let ( <-= ) x y = normalize @@ Bound (Exclude x, Include y)
+  let ( =-= ) x y = normalize @@ Bound (Include x, Include y)
 end
 
 let%test_module _ =
@@ -232,5 +234,9 @@ let%test_module _ =
     let%test_unit _ =
       [%test_eq: II.t] (II.inter (II.ninf_strict 0) (II.pinf_strict 0)) II.empty
     ;;
+
+    let%test_unit _ = [%test_eq: II.t] II.(0 <-= 0) II.empty
+    let%test_unit _ = [%test_eq: II.t] II.(0 =-> 0) II.empty
+    let%test_unit _ = [%test_eq: II.t] II.(0 <-> 0) II.empty
   end)
 ;;
