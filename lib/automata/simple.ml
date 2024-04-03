@@ -6,7 +6,7 @@ module type ID = sig
   include Sexplib0.Sexpable.S with type t := t
 end
 
-module type Simple = sig
+module type S = sig
   type clock
   type num
   type label
@@ -55,7 +55,7 @@ module type Num = sig
   val t_to_string : t -> string
 end
 
-module MakeSimple (C : ID) (N : Num) = struct
+module Make (C : ID) (N : Num) = struct
   type clock = C.t
   type num = N.t
 
@@ -505,7 +505,7 @@ let%test_module _ =
   (module struct
     open Rtccsl
     open Number
-    module A = MakeSimple (Clock.String) (Float)
+    module A = Make (Clock.String) (Float)
 
     let step = 0.1
 

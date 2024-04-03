@@ -1,28 +1,26 @@
 open Prelude
-open Number
-module A = Automata.MakeSimple (Clock.String) (Ratio)
+module A = Automata.Simple.Make (Clock.String) (Number.Rational)
+open Number.Rational
 
-let step = Ratio.(num_of_int 1 // num_of_int 10)
+let step = num_of_int 1 // num_of_int 10
 
 let random_strat =
   A.Strategy.random_label
     10
     (A.Strategy.random_leap
-       A.I.(Ratio.num_of_int 0 =-= Ratio.num_of_int 1)
-       (Ratio.round_up step)
-       (Ratio.round_down step)
-       Ratio.random)
+       A.I.(num_of_int 0 =-= num_of_int 1)
+       (round_up step)
+       (round_down step)
+       random)
 ;;
 
 let fast_strat =
   A.Strategy.random_label 10
-  @@ A.Strategy.fast
-       (A.I.make_include (Ratio.num_of_int 0) (Ratio.num_of_int 2))
-       (Ratio.round_down step)
+  @@ A.Strategy.fast (A.I.make_include (num_of_int 0) (num_of_int 2)) (round_down step)
 ;;
 
-let one = Ratio.num_of_int 2
-let two = Ratio.num_of_int 2
+let one = num_of_int 2
+let two = num_of_int 2
 let half = Ratio.(num_of_int 1 // num_of_int 2)
 
 let () =

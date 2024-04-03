@@ -13,7 +13,7 @@ doc: "https://github.com/PaulRaUnite/mrtccsl"
 bug-reports: "https://github.com/PaulRaUnite/mrtccsl/issues"
 depends: [
   "ocaml"
-  "dune" {>= "3.6"}
+  "dune" {>= "3.7"}
   "camllib"
   "bddapron"
   "ppx_sexp_conv"
