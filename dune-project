@@ -29,6 +29,7 @@
   bddapron
   ppx_sexp_conv
   (odoc :with-doc)
+  (odig :with-doc)
   (alcotest :with-test)
   (ppx_assert :with-test)
   (ppx_inline_test :with-test))

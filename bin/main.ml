@@ -26,13 +26,14 @@ let half = Ratio.(num_of_int 1 // num_of_int 2)
 let () =
   let _ = Random.init 2634615231297 in
   let spec =
-    [ Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
+    (* [ Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
     ; Rtccsl.RTdelay ("a", "b", (one, one))
     ; Rtccsl.RTdelay ("b", "c", (one, one))
-    ]
+    ] *)
+    [Rtccsl.Periodic ("o", "in", 4)]
   in
   let a = A.of_spec spec in
-  let trace = A.run fast_strat a 10 in
+  let trace = A.run fast_strat a 20 in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)
   let svgbob_str = A.trace_to_svgbob ~numbers:true clocks trace in

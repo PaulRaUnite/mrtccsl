@@ -2,5 +2,5 @@
 
 Tools:
 - simulator that outputs traces using several strategies (with at most step, at least step, random)
-- real-time and asynchronous fragment analyzer using linera programming (polyhedra) and k-induction-like reasoning about only live schedules.
+- analyzer of the real-time and asynchronous fragment by using constraint programming (polyhedra) and k-induction-like reasoning about only live schedules.
 
