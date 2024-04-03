@@ -291,6 +291,24 @@ module Make (C : ID) (N : Num) = struct
         test
       in
       g, t, clocks
+    | Periodic (out, base, p) ->
+      let clocks = L.of_list [ out; base ] in
+      let labels_eqp = List.map L.of_list [ [ base; out ]; [] ] in
+      let labels_lp = List.map L.of_list [ [ base ]; [] ] in
+      let c = ref 0 in
+      let g now =
+        let labels = if !c = p - 1 then labels_eqp else labels_lp in
+        simple_guard labels now
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ =
+          if L.mem base l then c := !c + 1;
+          if L.mem out l then c := 0
+        in
+        0 <= !c && !c < p && test
+      in
+      g, t, clocks
     (*
        | Subclocking (_, _) -> _
        | Minus (_, _, _) -> _
@@ -299,7 +317,6 @@ module Make (C : ID) (N : Num) = struct
        | Slowest (_, _) -> _
        | Intersection (_, _) -> _
        | Union (_, _) -> _
-       | Periodic (_, _, _) -> _
        | Sample (_, _, _) -> _
        | Alternate (_, _) -> _
        | FirstSampled (_, _, _) -> _
@@ -401,7 +418,6 @@ module Make (C : ID) (N : Num) = struct
     if List.length result = n then Ok result else Error result
   ;;
 
-  (*TODO: add idices instead of dots for clocks*)
   let trace_to_svgbob ?(numbers = false) clocks trace =
     if L.is_empty clocks
     then ""
@@ -434,46 +450,46 @@ module Make (C : ID) (N : Num) = struct
         Buffer.add_string footer " +-";
         Buffer.add_chars history graph_offset ' '
       in
-      let marker i =
-        match Int.rem i 6 with
-        | 0 -> "*"
-        | 1 -> "o"
-        | 2 -> "◆"
-        | 3 -> ">"
-        | 4 -> "O"
-        | 5 -> "^"
-        | 6 -> "#"
-        | _ -> failwith "unreachable"
-      in
       let clock_counters = Array.init len (fun _ -> 0) in
       let counter i =
         let c = clock_counters.(i) in
         let _ = Array.set clock_counters i (c + 1) in
         c + 1
       in
+      let marker i =
+        if numbers
+        then Int.to_string (counter i)
+        else (
+          match Int.rem i 6 with
+          | 0 -> "*"
+          | 1 -> "o"
+          | 2 -> "◆"
+          | 3 -> ">"
+          | 4 -> "O"
+          | 5 -> "^"
+          | 6 -> "#"
+          | _ -> failwith "unreachable")
+      in
       let rec serialize_trace = function
         | [] -> ()
         | (l, n') :: tail ->
           (* let delta = N.(n' - n) in *)
           let time_label = N.t_to_string n' in
-          let len = String.length time_label + 1 in
+          let step_len = String.length time_label + 1 in
           let print_clock mark i c =
             let buf = Array.get buffers i in
             let symbol, placed =
-              if L.mem c l
-              then if numbers then Int.to_string (counter i), true else marker i, true
-              else if mark
-              then "|", true
-              else "-", false
+              if L.mem c l then marker i, true else if mark then "|", true else "-", false
             in
             Buffer.add_string buf symbol;
-            Buffer.add_chars buf (len - 1) '-';
+            Buffer.add_chars buf (step_len - String.length symbol) '-';
+            (*FIXME: numbers can have non-1 width, will crash when number is bigger than bigger than window length*)
             placed
           in
-          let _ = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
+          let placed = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
           let _ =
-            Buffer.add_char footer '+';
-            Buffer.add_chars footer (len - 1) '-';
+            Buffer.add_string footer (if placed then "┴" else "+");
+            Buffer.add_chars footer (step_len - 1) '-';
             Printf.bprintf history "%s " time_label
           in
           serialize_trace tail
