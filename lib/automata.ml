@@ -402,7 +402,7 @@ module MakeSimple (C : ID) (N : Num) = struct
   ;;
 
   (*TODO: add idices instead of dots for clocks*)
-  let trace_to_svgbob clocks trace =
+  let trace_to_svgbob ?(numbers = false) clocks trace =
     if L.is_empty clocks
     then ""
     else (
@@ -445,6 +445,12 @@ module MakeSimple (C : ID) (N : Num) = struct
         | 6 -> "#"
         | _ -> failwith "unreachable"
       in
+      let clock_counters = Array.init len (fun _ -> 0) in
+      let counter i =
+        let c = clock_counters.(i) in
+        let _ = Array.set clock_counters i (c + 1) in
+        c + 1
+      in
       let rec serialize_trace = function
         | [] -> ()
         | (l, n') :: tail ->
@@ -454,7 +460,11 @@ module MakeSimple (C : ID) (N : Num) = struct
           let print_clock mark i c =
             let buf = Array.get buffers i in
             let symbol, placed =
-              if L.mem c l then marker i, true else if mark then "|", true else "-", false
+              if L.mem c l
+              then if numbers then Int.to_string (counter i), true else marker i, true
+              else if mark
+              then "|", true
+              else "-", false
             in
             Buffer.add_string buf symbol;
             Buffer.add_chars buf (len - 1) '-';

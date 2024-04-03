@@ -37,6 +37,6 @@ let () =
   let trace = A.run fast_strat a 10 in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)
-  let svgbob_str = A.trace_to_svgbob clocks trace in
+  let svgbob_str = A.trace_to_svgbob ~numbers:true clocks trace in
   print_endline svgbob_str
 ;;
