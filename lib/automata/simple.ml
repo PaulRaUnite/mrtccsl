@@ -139,22 +139,22 @@ module Make (C : ID) (N : Num) = struct
       Some (l, c)
     in
     let g now =
-      let _ = Printf.printf "sync---\n" in
+      (* let _ = Printf.printf "sync---\n" in *)
       let g1 = g1 now in
-      let _ =
+      (* let _ =
         Printf.printf "sync sol 1: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g1)
-      in
+      in *)
       let g2 = g2 now in
-      let _ =
+      (* let _ =
         Printf.printf "sync sol 2: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g2)
-      in
+      in *)
       let pot_solutions = cartesian g1 g2 in
       let solutions = List.filter_map guard_solver pot_solutions in
-      let _ =
+      (* let _ =
         Printf.printf
           "sync sols: %s\n"
           (Sexplib0.Sexp.to_string @@ sexp_of_guard solutions)
-      in
+      in *)
       solutions
     in
     let t n l = t1 n l && t2 n l in
@@ -375,7 +375,6 @@ module Make (C : ID) (N : Num) = struct
         let test3 =
           if L.mem base l then not (ExpirationQueue.expiration_step q) else true
         in
-        let _ = Printf.printf "%b %b %b\n" test1 test2 test3 in
         test1 && test2 && test3
       in
       g, t, clocks
@@ -634,6 +633,17 @@ let%test_module _ =
       let empty2 = A.empty in
       let steps = 10 in
       let trace = A.bisimulate slow_strat empty1 empty2 steps in
+      (* match trace with
+      | Ok l | Error l ->
+        Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
+      Result.is_ok trace
+    ;;
+
+    let%test _ =
+      let sampling1 = A.of_constr @@ Delay ("o", "i", (0,0), Some "b") in
+      let sampling2 = A.of_constr @@ Sample ("o", "i", "b") in
+      let steps = 10 in
+      let trace = A.bisimulate random_strat sampling1 sampling2 steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
