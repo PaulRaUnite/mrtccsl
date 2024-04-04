@@ -28,7 +28,21 @@ let t_of_sexp sexp =
   x // y
 ;;
 
-let t_to_string = string_of_num
+let t_to_string x =
+  let r = ratio_of_num x in
+  let nom = Ratio.numerator_ratio r in
+  let denom = Ratio.denominator_ratio r in
+  let whole, rem = Big_int.quomod_big_int nom denom in
+  let whole_str = Big_int.string_of_big_int whole in
+  if Big_int.eq_big_int Big_int.zero_big_int rem
+  then whole_str
+  else
+    Printf.sprintf
+      "%s+%s/%s"
+      whole_str
+      (Big_int.string_of_big_int rem)
+      (Big_int.string_of_big_int denom)
+;;
 
 let round_up step x y =
   let v = x +/ step in
