@@ -7,7 +7,7 @@ type ('c, 't) constr =
   | Coincidence of 'c list
   | Subclocking of 'c * 'c
   | Minus of 'c * 'c * 'c list
-  | Delay of 'c * 'c * int * 'c option
+  | Delay of 'c * 'c * (int*int) * 'c option
   | Fastest of 'c * 'c list
   | Slowest of 'c * 'c list
   | Intersection of 'c * 'c list

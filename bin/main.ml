@@ -19,7 +19,7 @@ let fast_strat =
   @@ A.Strategy.fast (A.I.make_include (num_of_int 0) (num_of_int 2)) (round_down step)
 ;;
 
-let one = num_of_int 2
+let one = num_of_int 1
 let two = num_of_int 2
 let half = Ratio.(num_of_int 1 // num_of_int 2)
 
@@ -30,7 +30,8 @@ let () =
     ; Rtccsl.RTdelay ("a", "b", (one, one))
     ; Rtccsl.RTdelay ("b", "c", (one, one))
     ] *)
-    [Rtccsl.Periodic ("o", "in", 4)]
+    (* [Rtccsl.Periodic ("o", "in", 4)] *)
+    [Rtccsl.Delay ("o", "i", (1,1), Some "b")]
   in
   let a = A.of_spec spec in
   let trace = A.run fast_strat a 20 in

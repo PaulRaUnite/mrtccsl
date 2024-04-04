@@ -28,10 +28,24 @@ end
 
 let cartesian l l' = List.concat (List.map (fun e -> List.map (fun e' -> e, e') l') l)
 
-let is_empty = function
-  | [] -> true
-  | _ -> false
-;;
+module List = struct
+  include List
+
+  let is_empty = function
+    | [] -> true
+    | _ -> false
+  ;;
+
+  let last l =
+    let rec aux prev = function
+      | [] -> prev
+      | x :: tail -> aux x tail
+    in
+    match l with
+    | [] -> None
+    | x :: tail -> Some (aux x tail)
+  ;;
+end
 
 (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
 let rec powerset = function
@@ -69,16 +83,62 @@ module String = struct
   include String
 
   let init_char n c = init n (fun _ -> c)
+  let grapheme_length = Uuseg_string.fold_utf_8 `Grapheme_cluster (fun x _ -> x + 1) 0
 end
 
 module Buffer = struct
   include Buffer
 
-  let add_chars b n c:unit =
-    for _ = 0 to (n-1) do
+  let add_chars b n c : unit =
+    for _ = 0 to n - 1 do
       add_char b c
     done
   ;;
 end
 
 let rec ints n : int Seq.t = fun () -> Seq.Cons (n, ints (n + 1))
+
+module ExpirationQueue = struct
+  open Sexplib0.Sexp_conv
+
+  type 'a t =
+    { mutable data : 'a list
+    ; cycling : 'a -> 'a option
+    }
+  [@@deriving sexp]
+
+  let create c : 'a t = { data = []; cycling = c }
+  let push q x = q.data <- q.data @ [ x ]
+
+  let pop q =
+    match q.data with
+    | [] -> None
+    | x :: tail ->
+      q.data <- tail;
+      Some x
+  ;;
+
+  let peek q =
+    match q.data with
+    | [] -> None
+    | x :: _ -> Some x
+  ;;
+
+  let expiration_step q =
+    let list, discard =
+      List.fold_left
+        (fun (l, discard) x ->
+          match q.cycling x with
+          | None -> l, true
+          | Some x -> x :: l, discard)
+        ([], false)
+        q.data
+    in
+    q.data <- list;
+    discard
+  ;;
+
+  let is_empty q = List.is_empty q.data
+  let last q = List.last q.data
+  let to_list q = q.data
+end

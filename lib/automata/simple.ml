@@ -86,7 +86,7 @@ module Make (C : ID) (N : Num) = struct
   let step strat (a : t) now : solution option =
     let guards, transition, _ = a in
     let possible = guards now in
-    if is_empty possible
+    if List.is_empty possible
     then None
     else (
       let possible =
@@ -139,21 +139,22 @@ module Make (C : ID) (N : Num) = struct
       Some (l, c)
     in
     let g now =
+      let _ = Printf.printf "sync---\n" in
       let g1 = g1 now in
-      (* let _ =
+      let _ =
         Printf.printf "sync sol 1: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g1)
-      in *)
+      in
       let g2 = g2 now in
-      (* let _ =
+      let _ =
         Printf.printf "sync sol 2: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g2)
-      in *)
+      in
       let pot_solutions = cartesian g1 g2 in
       let solutions = List.filter_map guard_solver pot_solutions in
-      (* let _ =
+      let _ =
         Printf.printf
           "sync sols: %s\n"
           (Sexplib0.Sexp.to_string @@ sexp_of_guard solutions)
-      in *)
+      in
       solutions
     in
     let t n l = t1 n l && t2 n l in
@@ -239,7 +240,7 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
       let e = I.(e1 =-= e2) in
-      let _ = Printf.printf "%s\n" (Sexplib0.Sexp.to_string @@ I.sexp_of_t e) in
+      (* let _ = Printf.printf "e=%s, off=%s\n" (Sexplib0.Sexp.to_string @@ I.sexp_of_t e) (Sexplib0.Sexp.to_string @@ N.sexp_of_t off) in *)
       let last = ref None in
       let g now =
         let next, right_bound =
@@ -248,7 +249,7 @@ module Make (C : ID) (N : Num) = struct
           | Some v -> I.shift_by e N.(d + v), N.(v + d + e2)
         in
         let generic = I.pinf_strict now in
-        [ L.of_list [ c ], I.inter generic next; (L.empty, I.(N.zero <-> right_bound)) ]
+        [ L.of_list [ c ], I.inter generic next; (L.empty, I.(now <-> right_bound)) ]
       in
       let clocks = L.of_list [ c ] in
       let t n (l, n') =
@@ -309,15 +310,82 @@ module Make (C : ID) (N : Num) = struct
         0 <= !c && !c < p && test
       in
       g, t, clocks
+    | Sample (out, arg, base) ->
+      let clocks = L.of_list [ out; arg; base ] in
+      let labels_latched =
+        List.map L.of_list [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
+      in
+      let labels_unlatched =
+        List.map L.of_list [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
+      in
+      let latched = ref false in
+      let g now =
+        if !latched
+        then simple_guard labels_latched now
+        else simple_guard labels_unlatched now
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem arg l then latched := true in
+        let _ = if L.mem base l then latched := false in
+        test
+      in
+      g, t, clocks
+    | Delay (out, arg, (d1, d2), base) ->
+      let _ = assert (d1 <= d2) in
+      let base = Option.value base ~default:arg in
+      let clocks = L.of_list [ out; arg; base ] in
+      let q =
+        ExpirationQueue.create (fun x ->
+          match x + 1 with
+          | x when x > d2 -> None
+          | x -> Some x)
+      in
+      let basic_labels = [ []; [ arg ]; [ arg; base ] ] in
+      let labels_empty = [ base ] :: basic_labels in
+      let labels_empty_immediate = [ [ out; arg; base ]; [ base ] ] @ basic_labels in
+      let labels_ne_immediate = [ [ out; base ]; [ out; arg; base ] ] @ basic_labels in
+      let labels_ne_can = [ [ out; base ]; [] ] @ basic_labels in
+      let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
+      let g now =
+        let labels =
+          match ExpirationQueue.peek q, d1 = 0 with
+          | None, false -> labels_empty
+          | None, true -> labels_empty_immediate
+          | Some _, true -> labels_ne_immediate
+          | Some x, _ when x = d2 -> labels_ne_must
+          | Some x, _ when d1 <= x -> labels_ne_can
+          | Some _, _ -> basic_labels
+        in
+        let labels = List.map L.of_list labels in
+        simple_guard labels now
+      in
+      let t n (l, n') =
+        let test1 = correctness_check clocks (g n) (l, n') in
+        let _ =
+          if L.mem arg l
+          then (
+            match ExpirationQueue.last q with
+            | Some x when x = 0 -> ()
+            | _ -> ExpirationQueue.push q 0)
+        in
+        let test2 =
+          if L.mem out l then Option.is_some @@ ExpirationQueue.pop q else true
+        in
+        let test3 =
+          if L.mem base l then not (ExpirationQueue.expiration_step q) else true
+        in
+        let _ = Printf.printf "%b %b %b\n" test1 test2 test3 in
+        test1 && test2 && test3
+      in
+      g, t, clocks
     (*
        | Subclocking (_, _) -> _
        | Minus (_, _, _) -> _
-       | Delay (_, _, _, _) -> _
        | Fastest (_, _) -> _
        | Slowest (_, _) -> _
        | Intersection (_, _) -> _
        | Union (_, _) -> _
-       | Sample (_, _, _) -> _
        | Alternate (_, _) -> _
        | FirstSampled (_, _, _) -> _
        | LastSampled (_, _, _) -> _
@@ -345,7 +413,7 @@ module Make (C : ID) (N : Num) = struct
     ;;
 
     let random_label attempts num_decision solutions =
-      if is_empty solutions
+      if List.is_empty solutions
       then None
       else (
         let len = List.length solutions in
@@ -450,7 +518,7 @@ module Make (C : ID) (N : Num) = struct
         Buffer.add_string footer " +-";
         Buffer.add_chars history graph_offset ' '
       in
-      let clock_counters = Array.init len (fun _ -> 0) in
+      let clock_counters = Array.make len 0 in
       let counter i =
         let c = clock_counters.(i) in
         let _ = Array.set clock_counters i (c + 1) in
@@ -482,7 +550,7 @@ module Make (C : ID) (N : Num) = struct
               if L.mem c l then marker i, true else if mark then "|", true else "-", false
             in
             Buffer.add_string buf symbol;
-            Buffer.add_chars buf (step_len - String.length symbol) '-';
+            Buffer.add_chars buf (step_len - String.grapheme_length symbol) '-';
             (*FIXME: numbers can have non-1 width, will crash when number is bigger than bigger than window length*)
             placed
           in
@@ -531,7 +599,7 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (is_empty (A.run slow_strat a 10))
+      not (List.is_empty (A.run slow_strat a 10))
     ;;
 
     let random_strat =
@@ -546,19 +614,19 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (is_empty (A.run slow_strat a 10))
+      not (List.is_empty (A.run slow_strat a 10))
     ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
       let trace = A.run random_strat a 10 in
-      not (is_empty trace)
+      not (List.is_empty trace)
     ;;
 
     let%test _ =
       let g, _, _ = A.of_constr (Coincidence [ "a"; "b" ]) in
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0); *)
-      not (is_empty (g 0.0))
+      not (List.is_empty (g 0.0))
     ;;
 
     let%test _ =

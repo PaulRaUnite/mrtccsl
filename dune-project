@@ -28,6 +28,7 @@
   camllib
   bddapron
   ppx_sexp_conv
+  uuseg
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test)
