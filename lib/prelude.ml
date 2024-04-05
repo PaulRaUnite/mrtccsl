@@ -98,6 +98,8 @@ end
 
 let rec ints n : int Seq.t = fun () -> Seq.Cons (n, ints (n + 1))
 
+(*TODO: maybe use doubleended list as discussed here: https://discuss.ocaml.org/t/how-to-represent-a-double-ended-linked-list/13354*)
+(*TODO: refactor out*)
 module ExpirationQueue = struct
   open Sexplib0.Sexp_conv
 
@@ -141,4 +143,6 @@ module ExpirationQueue = struct
   let is_empty q = List.is_empty q.data
   let last q = List.last q.data
   let to_list q = q.data
+  let map q f c = { data = List.map f q.data; cycling = c }
+  let map_inplace q f = q.data <- List.map f q.data
 end
