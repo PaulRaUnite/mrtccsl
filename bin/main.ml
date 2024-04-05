@@ -31,12 +31,12 @@ let () =
     ; Rtccsl.RTdelay ("b", "c", (one, one))
     ] *)
     (* [Rtccsl.Periodic ("o", "in", 4)] *)
-    [Rtccsl.Delay ("o", "i", (1,1), Some "b")]
+    [Rtccsl.Delay ("o", "i", (0,0), Some "b")]
   in
   let a = A.of_spec spec in
   let trace = A.run fast_strat a 20 in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)
-  let svgbob_str = A.trace_to_svgbob ~numbers:true clocks trace in
+  let svgbob_str = A.trace_to_svgbob ~numbers:false clocks trace in
   print_endline svgbob_str
 ;;

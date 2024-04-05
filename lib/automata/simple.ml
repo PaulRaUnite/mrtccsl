@@ -343,19 +343,22 @@ module Make (C : ID) (N : Num) = struct
       in
       let basic_labels = [ []; [ arg ]; [ arg; base ] ] in
       let labels_empty = [ base ] :: basic_labels in
-      let labels_empty_immediate = [ [ out; arg; base ]; [ base ] ] @ basic_labels in
-      let labels_ne_immediate = [ [ out; base ]; [ out; arg; base ] ] @ basic_labels in
+      let labels_empty_immediate = [ [ out; arg; base ]; [ base ] ] in
       let labels_ne_can = [ [ out; base ]; [] ] @ basic_labels in
       let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
       let g now =
         let labels =
-          match ExpirationQueue.peek q, d1 = 0 with
-          | None, false -> labels_empty
-          | None, true -> labels_empty_immediate
-          | Some _, true -> labels_ne_immediate
-          | Some x, _ when x = d2 -> labels_ne_must
-          | Some x, _ when d1 <= x -> labels_ne_can
-          | Some _, _ -> basic_labels
+          match ExpirationQueue.peek q with
+          | None ->
+            if d1 = 0
+            then
+              if d2 = 0
+              then labels_empty_immediate @ [ []; [ arg ] ]
+              else labels_empty_immediate @ basic_labels
+            else labels_empty
+          | Some x when x = d2 -> labels_ne_must
+          | Some x when d1 <= x -> labels_ne_can
+          | Some _ -> basic_labels
         in
         let labels = List.map L.of_list labels in
         simple_guard labels now
@@ -370,7 +373,12 @@ module Make (C : ID) (N : Num) = struct
             | _ -> ExpirationQueue.push q 0)
         in
         let test2 =
-          if L.mem out l then Option.is_some @@ ExpirationQueue.pop q else true
+          if L.mem out l
+          then (
+            match ExpirationQueue.pop q with
+            | None -> false
+            | Some x -> x >= d1)
+          else true
         in
         let test3 =
           if L.mem base l then not (ExpirationQueue.expiration_step q) else true
@@ -485,6 +493,7 @@ module Make (C : ID) (N : Num) = struct
     if List.length result = n then Ok result else Error result
   ;;
 
+  (*TODO: add setting to change order of clocks*)
   let trace_to_svgbob ?(numbers = false) clocks trace =
     if L.is_empty clocks
     then ""
@@ -596,11 +605,6 @@ let%test_module _ =
       A.Strategy.first @@ A.Strategy.slow (A.I.make_include 1.0 2.0) (Float.round_up step)
     ;;
 
-    let%test _ =
-      let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (List.is_empty (A.run slow_strat a 10))
-    ;;
-
     let random_strat =
       A.Strategy.random_label
         1
@@ -609,6 +613,11 @@ let%test_module _ =
            (Float.round_up step)
            (Float.round_down step)
            Float.random)
+    ;;
+
+    let%test _ =
+      let a = A.of_constr (Coincidence [ "a"; "b" ]) in
+      not (List.is_empty (A.run slow_strat a 10))
     ;;
 
     let%test _ =
@@ -640,7 +649,7 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let sampling1 = A.of_constr @@ Delay ("o", "i", (0,0), Some "b") in
+      let sampling1 = A.of_constr @@ Delay ("o", "i", (0, 0), Some "b") in
       let sampling2 = A.of_constr @@ Sample ("o", "i", "b") in
       let steps = 10 in
       let trace = A.bisimulate random_strat sampling1 sampling2 steps in
