@@ -493,12 +493,15 @@ module Make (C : ID) (N : Num) = struct
     if List.length result = n then Ok result else Error result
   ;;
 
+  let proj_trace clocks trace = List.map (fun (l, n) -> L.inter clocks l, n) trace
+  let skip_empty trace = List.filter (fun (l, _) -> not (L.is_empty l)) trace
+
   (*TODO: add setting to change order of clocks*)
   let trace_to_svgbob ?(numbers = false) clocks trace =
     if L.is_empty clocks
     then ""
     else (
-      let clock_strs = Array.of_list (List.map C.t_to_string (L.elements clocks)) in
+      let clock_strs = Array.of_list (List.map C.to_string (L.elements clocks)) in
       let clocks = Array.of_list (L.elements clocks) in
       let len = Array.length clocks in
       let biggest_clock =

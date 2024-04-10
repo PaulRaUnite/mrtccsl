@@ -56,6 +56,9 @@ let rec powerset = function
 ;;
 
 let powerset_nz elements = List.filter (fun l -> l <> []) @@ powerset elements
+
+let (<<) f g x = f(g(x));;
+
 let ( let* ) = Option.bind
 
 let ( and* ) x y =
@@ -76,7 +79,7 @@ let rec collect n init f : 'a list =
 module type Stringable = sig
   type t
 
-  val t_to_string : t -> string
+  val to_string : t -> string
 end
 
 module String = struct
