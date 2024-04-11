@@ -29,6 +29,7 @@
   bddapron
   ppx_sexp_conv
   uuseg
+  uutf
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test)
