@@ -386,14 +386,35 @@ module Make (C : ID) (N : Num) = struct
         test1 && test2 && test3
       in
       g, t, clocks
+    | Minus (out, arg, exclude) ->
+      let labels =
+        [] :: [ out; arg ] :: List.map (fun l -> arg :: l) (powerset_nz exclude)
+      in
+      let clocks = out :: arg :: exclude in
+      stateless (List.map L.of_list labels) clocks
+    | Union (out, args) ->
+      let labels = [] :: List.map (fun l -> out :: l) (powerset_nz args) in
+      stateless (List.map L.of_list labels) (out :: args)
+    | Alternate (a, b) ->
+      let clocks = L.of_list [ a; b ] in
+      let phase = ref false in
+      let g n =
+        let labels =
+          if not !phase then [ L.empty; L.of_list [ a ] ] else [ L.empty; L.of_list [ b ] ]
+        in
+        simple_guard labels n
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
+        test
+      in
+      g, t, clocks
     (*
        | Subclocking (_, _) -> _
-       | Minus (_, _, _) -> _
        | Fastest (_, _) -> _
        | Slowest (_, _) -> _
        | Intersection (_, _) -> _
-       | Union (_, _) -> _
-       | Alternate (_, _) -> _
        | FirstSampled (_, _, _) -> _
        | LastSampled (_, _, _) -> _
        | Forbid (_, _, _) -> _

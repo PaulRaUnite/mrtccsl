@@ -26,12 +26,15 @@ let half = Ratio.(num_of_int 1 // num_of_int 2)
 let () =
   let _ = Random.init 2634615231297 in
   let spec =
-    (* [ Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
+    (* [
+       Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
     ; Rtccsl.RTdelay ("a", "b", (one, one))
     ; Rtccsl.RTdelay ("b", "c", (one, one))
     ] *)
     (* [Rtccsl.Periodic ("o", "in", 4)] *)
-    [Rtccsl.Delay ("o", "i", (0,0), Some "b")]
+    (* [Rtccsl.Delay ("o", "i", (0,0), Some "b")] *)
+    (* [Rtccsl.Alternate ("a", "b")] *)
+    [Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one); Rtccsl.Minus("o", "a", ["b"])]
   in
   let a = A.of_spec spec in
   let trace = A.run fast_strat a 20 in
