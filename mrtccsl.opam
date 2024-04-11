@@ -19,11 +19,11 @@ depends: [
   "ppx_sexp_conv"
   "uuseg"
   "uutf"
+  "ppx_assert"
+  "ppx_inline_test"
   "odoc" {with-doc}
   "odig" {with-doc}
   "alcotest" {with-test}
-  "ppx_assert" {with-test}
-  "ppx_inline_test" {with-test}
 ]
 build: [
   ["dune" "subst"] {dev}

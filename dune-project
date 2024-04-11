@@ -30,11 +30,11 @@
   ppx_sexp_conv
   uuseg
   uutf
+  ppx_assert
+  ppx_inline_test
   (odoc :with-doc)
   (odig :with-doc)
-  (alcotest :with-test)
-  (ppx_assert :with-test)
-  (ppx_inline_test :with-test))
+  (alcotest :with-test))
  (tags
   (simulation "model checking" "abstract interpretation" induction)))
 
