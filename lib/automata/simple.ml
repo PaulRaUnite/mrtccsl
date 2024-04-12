@@ -400,7 +400,9 @@ module Make (C : ID) (N : Num) = struct
       let phase = ref false in
       let g n =
         let labels =
-          if not !phase then [ L.empty; L.of_list [ a ] ] else [ L.empty; L.of_list [ b ] ]
+          if not !phase
+          then [ L.empty; L.of_list [ a ] ]
+          else [ L.empty; L.of_list [ b ] ]
         in
         simple_guard labels n
       in
@@ -410,9 +412,32 @@ module Make (C : ID) (N : Num) = struct
         test
       in
       g, t, clocks
+    | Fastest (out, a, b) ->
+      let count = ref 0 in
+      let clocks = L.of_list [ out; a; b ] in
+      let g n =
+        let general_labels = [ []; [ a; b; out ] ] in
+        let labels =
+          general_labels
+          @
+          match !count with
+          | x when x > 0 -> [ [ a; out ]; [ b ] ]
+          | x when x = 0 -> [ [ a; out ]; [ b; out ] ]
+          | x when x < 0 -> [ [ b; out ]; [ a ] ]
+          | _ -> failwith "unreachable"
+        in
+        let labels = List.map L.of_list labels in
+        simple_guard labels n
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem a l then count := !count + 1 in
+        let _ = if L.mem b l then count := !count - 1 in
+        test
+      in
+      g, t, clocks
     (*
        | Subclocking (_, _) -> _
-       | Fastest (_, _) -> _
        | Slowest (_, _) -> _
        | Intersection (_, _) -> _
        | FirstSampled (_, _, _) -> _

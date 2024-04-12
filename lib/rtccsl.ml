@@ -8,8 +8,8 @@ type ('c, 't) constr =
   | Subclocking of 'c * 'c
   | Minus of 'c * 'c * 'c list
   | Delay of 'c * 'c * (int*int) * 'c option
-  | Fastest of 'c * 'c list
-  | Slowest of 'c * 'c list
+  | Fastest of 'c * 'c * 'c 
+  | Slowest of 'c * 'c * 'c
   | Intersection of 'c * 'c list
   | Union of 'c * 'c list
   | Periodic of 'c * 'c * int
