@@ -461,7 +461,6 @@ module Make (C : ID) (N : Num) = struct
              | true, false -> true
              | false, true -> false
         in
-        Printf.printf "phase=%b\n" !phase;
         test
       in
       g, t, clocks
