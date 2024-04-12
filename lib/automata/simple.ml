@@ -436,6 +436,35 @@ module Make (C : ID) (N : Num) = struct
         test
       in
       g, t, clocks
+    | Allow (from, until, args) ->
+      let clocks = L.of_list (from :: until :: args) in
+      let phase = ref false in
+      let g n =
+        let basic_off = [ []; [ from ]; [ from; until ] ] in
+        let basic_on = [ []; [ from; until ]; [ until ] ] in
+        let labels =
+          if not !phase
+          then basic_off @ List.map (fun x -> from :: x) (powerset_nz args)
+          else List.map (fun (x, y) -> x @ y) (cartesian basic_on (powerset args))
+        in
+        let labels = List.map L.of_list labels in
+        simple_guard labels n
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let from_test = L.mem from l in
+        let until_test = L.mem until l in
+        let _ =
+          phase
+          := match from_test, until_test with
+             | true, true | false, false -> !phase
+             | true, false -> true
+             | false, true -> false
+        in
+        Printf.printf "phase=%b\n" !phase;
+        test
+      in
+      g, t, clocks
     (*
        | Subclocking (_, _) -> _
        | Slowest (_, _) -> _

@@ -35,7 +35,8 @@ let () =
     (* [Rtccsl.Delay ("o", "i", (0,0), Some "b")] *)
     (* [Rtccsl.Alternate ("a", "b")] *)
     (* [Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one); Rtccsl.Minus("o", "a", ["b"])] *)
-    [Rtccsl.Fastest("o", "a", "b")]
+    (* [Rtccsl.Fastest("o", "a", "b")] *)
+    [Rtccsl.Allow ("from", "to", ["a"])]
   in
   let a = A.of_spec spec in
   let trace = A.run fast_strat a 20 in
