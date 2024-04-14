@@ -11,7 +11,7 @@
 
 (maintainers "Pavlo Tokariev")
 
-(license LICENSE)
+(license APACHE-2.0)
 
 (documentation https://github.com/PaulRaUnite/mrtccsl)
 

@@ -470,8 +470,7 @@ module Make (C : ID) (N : Num) = struct
        | Intersection (_, _) -> _
        | FirstSampled (_, _, _) -> _
        | LastSampled (_, _, _) -> _
-       | Forbid (_, _, _) -> _
-       | Allow (_, _, _) -> _ *)
+       | Forbid (_, _, _) -> _*)
     | _ -> failwith "not implemented"
   ;;
 

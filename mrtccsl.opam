@@ -6,7 +6,7 @@ description:
   "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention."
 maintainer: ["Pavlo Tokariev"]
 authors: ["Pavlo Tokariev"]
-license: "LICENSE"
+license: "APACHE-2.0"
 tags: ["simulation" "model checking" "abstract interpretation" "induction"]
 homepage: "https://github.com/PaulRaUnite/mrtccsl"
 doc: "https://github.com/PaulRaUnite/mrtccsl"
