@@ -464,11 +464,30 @@ module Make (C : ID) (N : Num) = struct
         test
       in
       g, t, clocks
+    | FirstSampled (out, arg, base) ->
+      let sampled = ref false in
+      let clocks = L.of_list [ out; arg; base ] in
+      let g n =
+        let labels =
+          if !sampled
+          then [ []; [ arg ]; [ base ] ]
+          else [ []; [ out; arg ]; [ out; arg; base ]; [ base ] ]
+        in
+        let labels = List.map L.of_list labels in
+        simple_guard labels n
+      in
+      let t n (l, n') =
+        let test = correctness_check clocks (g n) (l, n') in
+        let _ = if L.mem arg l then sampled := true in
+        let _ = if L.mem base l then sampled := false in
+        test
+      in
+      g, t, clocks
+    | Subclocking (a, b) ->
+      stateless (List.map L.of_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
     (*
-       | Subclocking (_, _) -> _
        | Slowest (_, _) -> _
        | Intersection (_, _) -> _
-       | FirstSampled (_, _, _) -> _
        | LastSampled (_, _, _) -> _
        | Forbid (_, _, _) -> _*)
     | _ -> failwith "not implemented"
