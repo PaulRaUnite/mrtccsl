@@ -21,10 +21,15 @@ let fast_strat =
 
 let one = num_of_int 1
 let two = num_of_int 2
+let hundred = num_of_int 100
 let half = Ratio.(num_of_int 1 // num_of_int 2)
 
 let () =
   let _ = Random.init 872478216 in
+  let ie = num_of_int 1 in
+  let rr = num_of_int 30 // num_of_int 60 in
+  let inspiration_duration = one // rr // (one +/ ie) in
+  let trigger_delay = num_of_int 7 // num_of_int 10 in
   let spec =
     (* [
        Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
@@ -37,7 +42,20 @@ let () =
     (* [Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one); Rtccsl.Minus("o", "a", ["b"])] *)
     (* [Rtccsl.Fastest("o", "a", "b")] *)
     (* [Rtccsl.Allow ("from", "to", ["a"])] *)
-    [Rtccsl.FirstSampled("o", "a", "b"); Rtccsl.Sample ("s", "a", "b")]
+    (* [Rtccsl.FirstSampled("o", "a", "b"); Rtccsl.Sample ("s", "a", "b")] *)
+    Rtccsl.
+      [ RTdelay ("inspiration", "expiration", (inspiration_duration, inspiration_duration))
+      ; Precedence ("trigger.start", "trigger.finish")
+      ; Allow ("trigger.start", "trigger.finish", [ "sensor.inhale" ])
+      ; RTdelay ("expiration", "trigger.start", (trigger_delay, trigger_delay))
+      ; RTdelay ("inspiration", "trigger.finish", (one // rr, one // rr))
+      ; Delay ("next inspiration", "inspiration", (1, 1), None)
+      ; Sample ("s", "sensor.inhale", "trigger.finish")
+      ; Minus ("-", "trigger.finish", [ "s" ])
+      ; Union ("cond", [ "sensor.inhale"; "-" ])
+      ; FirstSampled ("first", "cond", "trigger.finish")
+      ; RTdelay ("first", "next inspiration", (one // hundred, two//hundred))
+      ]
   in
   let a = A.of_spec spec in
   let trace = A.run fast_strat a 20 in
