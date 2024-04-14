@@ -25,7 +25,7 @@ let hundred = num_of_int 100
 let half = Ratio.(num_of_int 1 // num_of_int 2)
 
 let () =
-  let _ = Random.init 872478216 in
+let _ = Random.init 127649812489 in
   let ie = num_of_int 1 in
   let rr = num_of_int 30 // num_of_int 60 in
   let inspiration_duration = one // rr // (one +/ ie) in

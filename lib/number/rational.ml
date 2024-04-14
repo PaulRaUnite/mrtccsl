@@ -28,33 +28,38 @@ let t_of_sexp sexp =
   x // y
 ;;
 
-let rec bigint_gcd a b =
-  if Big_int.eq_big_int b Big_int.zero_big_int
-  then a
-  else bigint_gcd b (Big_int.mod_big_int a b)
-;;
-
 let t_to_string x =
   let r = ratio_of_num x in
   let nom = Ratio.numerator_ratio r in
   let denom = Ratio.denominator_ratio r in
-  let gcd = bigint_gcd denom (Big_int.big_int_of_int 10) in
   let whole, rem = Big_int.quomod_big_int nom denom in
   let whole_str = Big_int.string_of_big_int whole in
-  if gcd != Big_int.unit_big_int
-  then
-    Printf.sprintf
-      "%s.%s"
-      whole_str
-      (Big_int.string_of_big_int (Big_int.mult_big_int gcd rem))
-  else if Big_int.eq_big_int Big_int.zero_big_int rem
+  if Big_int.eq_big_int Big_int.zero_big_int rem
   then whole_str
-  else
-    Printf.sprintf
-      "%s+%s/%s"
-      whole_str
-      (Big_int.string_of_big_int rem)
-      (Big_int.string_of_big_int denom)
+  else (
+    let closest_ten =
+      Seq.ints 0
+      |> Seq.map (Big_int.power_int_positive_int 10)
+      |> Seq.find (fun x ->
+        let div = Big_int.div_big_int denom x in
+        Big_int.eq_big_int Big_int.zero_big_int div
+        || Big_int.eq_big_int Big_int.unit_big_int div)
+      |> Option.get
+    in
+    let gcd = Big_int.gcd_big_int denom closest_ten in
+    if gcd != Big_int.unit_big_int
+    then
+      Printf.sprintf
+        "%s.%s"
+        whole_str
+        (Big_int.string_of_big_int
+           (Big_int.mult_big_int rem (Big_int.div_big_int closest_ten gcd)))
+    else
+      Printf.sprintf
+        "%s+%s/%s"
+        whole_str
+        (Big_int.string_of_big_int rem)
+        (Big_int.string_of_big_int denom))
 ;;
 
 let round_up step x y =
