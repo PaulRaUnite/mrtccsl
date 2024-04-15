@@ -83,8 +83,13 @@ module Make (C : ID) (N : Num) = struct
     , L.empty )
   ;;
 
+  let correctness_check clocks labels (l, n) =
+    let proj = L.inter clocks l in
+    List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n) labels
+  ;;
+
   let step strat (a : t) now : solution option =
-    let guards, transition, _ = a in
+    let guards, transition, clocks = a in
     let possible = guards now in
     if List.is_empty possible
     then None
@@ -109,7 +114,9 @@ module Make (C : ID) (N : Num) = struct
           "post-strat: sol=%s\n"
           (Sexplib0.Sexp.to_string @@ sexp_of_solution sol)
       in *)
-      if transition now sol then Some sol else None)
+      if correctness_check clocks possible sol && transition now sol
+      then Some sol
+      else None)
   ;;
 
   let run s (a : t) n : solution list =
@@ -165,15 +172,10 @@ module Make (C : ID) (N : Num) = struct
 
   let simple_guard l now = List.map (fun l -> l, I.pinf_strict now) l
 
-  let correctness_check clocks labels (l, n) =
-    let proj = L.inter clocks l in
-    List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n) labels
-  ;;
-
   let stateless labels clocks : t =
     let clocks = L.of_list clocks in
     let g = simple_guard labels in
-    g, (fun n s -> correctness_check clocks (g n) s), clocks
+    g, (fun _ _ -> true), clocks
   ;;
 
   let prec c1 c2 strict : t =
@@ -191,12 +193,11 @@ module Make (C : ID) (N : Num) = struct
     in
     let clocks = L.of_list [ c1; c2 ] in
     ( g
-    , (fun n (l, n') ->
-        let test = correctness_check clocks (g n) (l, n') in
+    , (fun _ (l, _) ->
         let delta = if L.mem c1 l then 1 else 0 in
         let delta = delta - if L.mem c2 l then 1 else 0 in
         let _ = c := !c + delta in
-        !c >= 0 && test)
+        !c >= 0)
     , clocks )
   ;;
 
@@ -226,8 +227,7 @@ module Make (C : ID) (N : Num) = struct
           ])
       in
       let clocks = L.of_list [ a; b ] in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, n') =
         let _ = if L.mem a l then Queue.push n' queue in
         let _ = if L.mem b l then ignore @@ Queue.pop queue in
         (* let _ =
@@ -235,7 +235,7 @@ module Make (C : ID) (N : Num) = struct
           @@ Sexplib0.Sexp.to_string
           @@ sexp_of_solution (l, n')
         in *)
-        test
+        true
       in
       g, t, clocks
     | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
@@ -252,8 +252,7 @@ module Make (C : ID) (N : Num) = struct
         [ L.of_list [ c ], I.inter generic next; (L.empty, I.(now <-> right_bound)) ]
       in
       let clocks = L.of_list [ c ] in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, n') =
         let _ =
           if L.mem c l
           then (
@@ -273,7 +272,7 @@ module Make (C : ID) (N : Num) = struct
                in *)
             last := Some update)
         in
-        test
+        true
       in
       g, t, clocks
     | Sporadic (c, d) ->
@@ -286,10 +285,9 @@ module Make (C : ID) (N : Num) = struct
           [ L.of_list [ c ], I.pinf_strict next_after; (L.empty, I.(now <-> next_after)) ]
       in
       let clocks = L.of_list [ c ] in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, n') =
         let _ = if L.mem c l then last := Some n' in
-        test
+        true
       in
       g, t, clocks
     | Periodic (out, base, p) ->
@@ -301,13 +299,12 @@ module Make (C : ID) (N : Num) = struct
         let labels = if !c = p - 1 then labels_eqp else labels_lp in
         simple_guard labels now
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ =
           if L.mem base l then c := !c + 1;
           if L.mem out l then c := 0
         in
-        0 <= !c && !c < p && test
+        0 <= !c && !c < p
       in
       g, t, clocks
     | Sample (out, arg, base) ->
@@ -324,11 +321,10 @@ module Make (C : ID) (N : Num) = struct
         then simple_guard labels_latched now
         else simple_guard labels_unlatched now
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ = if L.mem arg l then latched := true in
         let _ = if L.mem base l then latched := false in
-        test
+        true
       in
       g, t, clocks
     | Delay (out, arg, (d1, d2), base) ->
@@ -363,8 +359,7 @@ module Make (C : ID) (N : Num) = struct
         let labels = List.map L.of_list labels in
         simple_guard labels now
       in
-      let t n (l, n') =
-        let test1 = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ =
           if L.mem arg l
           then (
@@ -383,7 +378,7 @@ module Make (C : ID) (N : Num) = struct
         let test3 =
           if L.mem base l then not (ExpirationQueue.expiration_step q) else true
         in
-        test1 && test2 && test3
+        test2 && test3
       in
       g, t, clocks
     | Minus (out, arg, exclude) ->
@@ -406,10 +401,9 @@ module Make (C : ID) (N : Num) = struct
         in
         simple_guard labels n
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
-        test
+        true
       in
       g, t, clocks
     | Fastest (out, a, b) ->
@@ -429,11 +423,10 @@ module Make (C : ID) (N : Num) = struct
         let labels = List.map L.of_list labels in
         simple_guard labels n
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ = if L.mem a l then count := !count + 1 in
         let _ = if L.mem b l then count := !count - 1 in
-        test
+        true
       in
       g, t, clocks
     | Allow (from, until, args) ->
@@ -450,8 +443,7 @@ module Make (C : ID) (N : Num) = struct
         let labels = List.map L.of_list labels in
         simple_guard labels n
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let from_test = L.mem from l in
         let until_test = L.mem until l in
         let _ =
@@ -461,7 +453,7 @@ module Make (C : ID) (N : Num) = struct
              | true, false -> true
              | false, true -> false
         in
-        test
+        true
       in
       g, t, clocks
     | FirstSampled (out, arg, base) ->
@@ -476,11 +468,10 @@ module Make (C : ID) (N : Num) = struct
         let labels = List.map L.of_list labels in
         simple_guard labels n
       in
-      let t n (l, n') =
-        let test = correctness_check clocks (g n) (l, n') in
+      let t _ (l, _) =
         let _ = if L.mem arg l then sampled := true in
         let _ = if L.mem base l then sampled := false in
-        test
+        true
       in
       g, t, clocks
     | Subclocking (a, b) ->
