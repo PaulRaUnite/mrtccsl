@@ -94,26 +94,15 @@ module Make (C : ID) (N : Num) = struct
     if List.is_empty possible
     then None
     else (
-      let possible =
+      let possible_shifted =
         List.map
           (fun (l, c) ->
             let c = I.shift_by c (N.neg now) in
             l, c)
           possible
       in
-      (* let _ =
-        Printf.printf
-          "pre-strat: now=%s sols=%s\n"
-          (Sexplib0.Sexp.to_string @@ N.sexp_of_t now)
-          (Sexplib0.Sexp.to_string @@ sexp_of_guard possible)
-      in *)
-      let* l, d = strat possible in
+      let* l, d = strat possible_shifted in
       let sol = l, N.(d + now) in
-      (* let _ =
-        Printf.printf
-          "post-strat: sol=%s\n"
-          (Sexplib0.Sexp.to_string @@ sexp_of_solution sol)
-      in *)
       if correctness_check clocks possible sol && transition now sol
       then Some sol
       else None)
@@ -579,13 +568,12 @@ module Make (C : ID) (N : Num) = struct
   let proj_trace clocks trace = List.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = List.filter (fun (l, _) -> not (L.is_empty l)) trace
 
-  (*TODO: add setting to change order of clocks*)
   let trace_to_svgbob ?(numbers = false) clocks trace =
-    if L.is_empty clocks
+    if List.is_empty clocks
     then ""
     else (
-      let clock_strs = Array.of_list (List.map C.to_string (L.elements clocks)) in
-      let clocks = Array.of_list (L.elements clocks) in
+      let clock_strs = Array.of_list (List.map C.to_string clocks) in
+      let clocks = Array.of_list clocks in
       let len = Array.length clocks in
       let biggest_clock =
         Option.get

@@ -62,6 +62,6 @@ let _ = Random.init 127649812489 in
   let trace = A.skip_empty trace in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)
-  let svgbob_str = A.trace_to_svgbob ~numbers:false clocks trace in
+  let svgbob_str = A.trace_to_svgbob ~numbers:false (A.L.elements clocks) trace in
   print_endline svgbob_str
 ;;
