@@ -159,11 +159,12 @@ module Make (C : ID) (N : Num) = struct
 
   open Rtccsl
 
-  let simple_guard l now = List.map (fun l -> l, I.pinf_strict now) l
+  (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.**)
+  let lo_guard l now = List.map (fun l -> l, I.pinf_strict now) l
 
   let stateless labels clocks : t =
     let clocks = L.of_list clocks in
-    let g = simple_guard labels in
+    let g = lo_guard labels in
     g, (fun _ _ -> true), clocks
   ;;
 
@@ -178,7 +179,7 @@ module Make (C : ID) (N : Num) = struct
     in
     let g now =
       let l = if !c = 0 then l2 else l1 in
-      simple_guard l now
+      lo_guard l now
     in
     let clocks = L.of_list [ c1; c2 ] in
     ( g
@@ -191,14 +192,15 @@ module Make (C : ID) (N : Num) = struct
   ;;
 
   let of_constr (cons : (clock, I.num) Rtccsl.constr) : t =
+    let label_list = List.map L.of_list in
     match cons with
     | Precedence (c1, c2) -> prec c1 c2 true
     | Causality (c1, c2) -> prec c1 c2 false
     | Exclusion clocks ->
-      let l = List.map L.of_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
+      let l = label_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
       stateless l clocks
     | Coincidence clocks ->
-      let l = List.map L.of_list [ clocks; [] ] in
+      let l = label_list [ clocks; [] ] in
       stateless l clocks
     | RTdelay (a, b, (l, r)) ->
       let queue = Queue.create () in
@@ -281,12 +283,12 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Periodic (out, base, p) ->
       let clocks = L.of_list [ out; base ] in
-      let labels_eqp = List.map L.of_list [ [ base; out ]; [] ] in
-      let labels_lp = List.map L.of_list [ [ base ]; [] ] in
+      let labels_eqp = label_list [ [ base; out ]; [] ] in
+      let labels_lp = label_list [ [ base ]; [] ] in
       let c = ref 0 in
       let g now =
         let labels = if !c = p - 1 then labels_eqp else labels_lp in
-        simple_guard labels now
+        lo_guard labels now
       in
       let t _ (l, _) =
         let _ =
@@ -299,16 +301,12 @@ module Make (C : ID) (N : Num) = struct
     | Sample (out, arg, base) ->
       let clocks = L.of_list [ out; arg; base ] in
       let labels_latched =
-        List.map L.of_list [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
+        label_list [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
       in
-      let labels_unlatched =
-        List.map L.of_list [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
-      in
+      let labels_unlatched = label_list [ []; [ arg ]; [ out; arg; base ]; [ base ] ] in
       let latched = ref false in
       let g now =
-        if !latched
-        then simple_guard labels_latched now
-        else simple_guard labels_unlatched now
+        if !latched then lo_guard labels_latched now else lo_guard labels_unlatched now
       in
       let t _ (l, _) =
         let _ = if L.mem arg l then latched := true in
@@ -345,8 +343,8 @@ module Make (C : ID) (N : Num) = struct
           | Some x when d1 <= x -> labels_ne_can
           | Some _ -> basic_labels
         in
-        let labels = List.map L.of_list labels in
-        simple_guard labels now
+        let labels = label_list labels in
+        lo_guard labels now
       in
       let t _ (l, _) =
         let _ =
@@ -375,10 +373,10 @@ module Make (C : ID) (N : Num) = struct
         [] :: [ out; arg ] :: List.map (fun l -> arg :: l) (powerset_nz exclude)
       in
       let clocks = out :: arg :: exclude in
-      stateless (List.map L.of_list labels) clocks
+      stateless (label_list labels) clocks
     | Union (out, args) ->
       let labels = [] :: List.map (fun l -> out :: l) (powerset_nz args) in
-      stateless (List.map L.of_list labels) (out :: args)
+      stateless (label_list labels) (out :: args)
     | Alternate (a, b) ->
       let clocks = L.of_list [ a; b ] in
       let phase = ref false in
@@ -388,19 +386,19 @@ module Make (C : ID) (N : Num) = struct
           then [ L.empty; L.of_list [ a ] ]
           else [ L.empty; L.of_list [ b ] ]
         in
-        simple_guard labels n
+        lo_guard labels n
       in
       let t _ (l, _) =
         let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
         true
       in
       g, t, clocks
-    | Fastest (out, a, b) ->
+    | Fastest (out, a, b) | Slowest (out, a, b) ->
       let count = ref 0 in
       let clocks = L.of_list [ out; a; b ] in
       let g n =
         let general_labels = [ []; [ a; b; out ] ] in
-        let labels =
+        let fastest_labels =
           general_labels
           @
           match !count with
@@ -409,8 +407,23 @@ module Make (C : ID) (N : Num) = struct
           | x when x < 0 -> [ [ b; out ]; [ a ] ]
           | _ -> failwith "unreachable"
         in
-        let labels = List.map L.of_list labels in
-        simple_guard labels n
+        let slowest_labels =
+          general_labels
+          @
+          match !count with
+          | x when x > 0 -> [ [ a ]; [ b; out ] ]
+          | x when x = 0 -> [ [ a ]; [ b ] ]
+          | x when x < 0 -> [ [ b ]; [ a; out ] ]
+          | _ -> failwith "unreachable"
+        in
+        let labels =
+          match cons with
+          | Fastest _ -> fastest_labels
+          | Slowest _ -> slowest_labels
+          | _ -> failwith "unreachable"
+        in
+        let labels = label_list labels in
+        lo_guard labels n
       in
       let t _ (l, _) =
         let _ = if L.mem a l then count := !count + 1 in
@@ -418,19 +431,34 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Allow (from, until, args) ->
+    | Allow (from, until, args) | Forbid (from, until, args) ->
       let clocks = L.of_list (from :: until :: args) in
       let phase = ref false in
-      let g n =
+      let g_allow n =
         let basic_off = [ []; [ from ]; [ from; until ] ] in
         let basic_on = [ []; [ from; until ]; [ until ] ] in
+        let basic = if !phase then basic_on else basic_off in
+        let labels = flat_cartesian basic (powerset args) in
+        let labels = label_list labels in
+        lo_guard labels n
+      in
+      let g_forbid n =
         let labels =
-          if not !phase
-          then basic_off @ List.map (fun x -> from :: x) (powerset_nz args)
-          else List.map (fun (x, y) -> x @ y) (cartesian basic_on (powerset args))
+          if !phase
+          then
+            []
+            :: [ from ]
+            :: flat_cartesian [ [ until ]; [ from; until ] ] (powerset args)
+          else flat_cartesian [ []; [ from ]; [ from; until ]; [ until ] ] (powerset args)
         in
-        let labels = List.map L.of_list labels in
-        simple_guard labels n
+        let labels = label_list labels in
+        lo_guard labels n
+      in
+      let g =
+        match cons with
+        | Allow _ -> g_allow
+        | Forbid _ -> g_forbid
+        | _ -> failwith "unreachable"
       in
       let t _ (l, _) =
         let from_test = L.mem from l in
@@ -454,8 +482,8 @@ module Make (C : ID) (N : Num) = struct
           then [ []; [ arg ]; [ base ] ]
           else [ []; [ out; arg ]; [ out; arg; base ]; [ base ] ]
         in
-        let labels = List.map L.of_list labels in
-        simple_guard labels n
+        let labels = label_list labels in
+        lo_guard labels n
       in
       let t _ (l, _) =
         let _ = if L.mem arg l then sampled := true in
@@ -463,14 +491,28 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Subclocking (a, b) ->
-      stateless (List.map L.of_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
-    (*
-       | Slowest (_, _) -> _
-       | Intersection (_, _) -> _
-       | LastSampled (_, _, _) -> _
-       | Forbid (_, _, _) -> _*)
-    | _ -> failwith "not implemented"
+    | LastSampled (out, arg, base) ->
+      let last = ref false in
+      let clocks = L.of_list [ out; arg; base ] in
+      let g n =
+        let labels =
+          if !last
+          then [ []; [ base ] ]
+          else [ []; [ out; arg; base ]; [ out; arg ]; [ base ] ]
+        in
+        lo_guard (label_list labels) n
+      in
+      let t _ (l, _) =
+        let _ = if L.mem out l then last := true in
+        let _ = if L.mem base l then last := false in
+        true
+      in
+      g, t, clocks
+    | Subclocking (a, b) -> stateless (label_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
+    | Intersection (out, args) ->
+      let labels = powerset args in
+      let labels = List.map (fun l -> if l = args then out :: args else l) labels in
+      stateless (label_list labels) (out :: args)
   ;;
 
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)

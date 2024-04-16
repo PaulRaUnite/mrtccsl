@@ -26,7 +26,11 @@ module ExpOrder = struct
   end
 end
 
+(** Cartesian product of 2 lists. *)
 let cartesian l l' = List.concat (List.map (fun e -> List.map (fun e' -> e, e') l') l)
+
+(** Makes cartesian product of two lists of lists as another list of lists. *)
+let flat_cartesian l l' = List.map (fun (x, y) -> x @ y) (cartesian l l')
 
 module List = struct
   include List
@@ -56,9 +60,7 @@ let rec powerset = function
 ;;
 
 let powerset_nz elements = List.filter (fun l -> l <> []) @@ powerset elements
-
-let (<<) f g x = f(g(x));;
-
+let ( << ) f g x = f (g x)
 let ( let* ) = Option.bind
 
 let ( and* ) x y =
