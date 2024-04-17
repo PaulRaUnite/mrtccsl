@@ -32,6 +32,8 @@ let cartesian l l' = List.concat (List.map (fun e -> List.map (fun e' -> e, e') 
 (** Makes cartesian product of two lists of lists as another list of lists. *)
 let flat_cartesian l l' = List.map (fun (x, y) -> x @ y) (cartesian l l')
 
+let id x = x
+
 module List = struct
   include List
 
@@ -49,6 +51,8 @@ module List = struct
     | [] -> None
     | x :: tail -> Some (aux x tail)
   ;;
+
+  let ints len = List.init len id 
 end
 
 (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
@@ -151,3 +155,4 @@ module ExpirationQueue = struct
   let map q f c = { data = List.map f q.data; cycling = c }
   let map_inplace q f = q.data <- List.map f q.data
 end
+
