@@ -115,7 +115,7 @@ module MakeDebug (V : Var) (N : Num) = struct
         list
     | And list ->
       List.fold_left
-        (fun acc el -> Printf.sprintf "( %s \/\\ %s)" acc (string_of_bool_expr el))
+        (fun acc el -> Printf.sprintf "( %s /\\ %s)" acc (string_of_bool_expr el))
         ""
         list
     | Linear (l, op, r) ->
