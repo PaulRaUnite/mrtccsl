@@ -58,7 +58,7 @@ let _ = Random.init 127649812489 in
       ]
   in
   let a = A.of_spec spec in
-  let trace = A.run fast_strat a 20 in
+  let trace = A.gen_trace fast_strat a 20 in
   let trace = A.skip_empty trace in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)

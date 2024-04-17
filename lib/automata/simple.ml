@@ -88,8 +88,24 @@ module Make (C : ID) (N : Num) = struct
     List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n) labels
   ;;
 
-  let step strat (a : t) now : solution option =
-    let guards, transition, clocks = a in
+  let step a n sol =
+    let guard, transition, clocks = a in
+    let possible = guard n in
+    correctness_check clocks possible sol && transition n sol
+  ;;
+
+  let accept a n t =
+    List.fold_left
+      (fun n (l, n') ->
+        match n with
+        | Some n -> if step a n (l, n') then Some n' else None
+        | None -> None)
+      (Some n)
+      t
+  ;;
+
+  let next_step strat (a : t) now : solution option =
+    let guards, _, _ = a in
     let possible = guards now in
     if List.is_empty possible
     then None
@@ -103,14 +119,12 @@ module Make (C : ID) (N : Num) = struct
       in
       let* l, d = strat possible_shifted in
       let sol = l, N.(d + now) in
-      if correctness_check clocks possible sol && transition now sol
-      then Some sol
-      else None)
+      if step a now sol then Some sol else None)
   ;;
 
-  let run s (a : t) n : solution list =
+  let gen_trace s (a : t) n : solution list =
     collect n N.zero (fun now ->
-      let* l, now = step s a now in
+      let* l, now = next_step s a now in
       Some ((l, now), now))
   ;;
 
@@ -601,7 +615,7 @@ module Make (C : ID) (N : Num) = struct
     let _, trans, _ = a2 in
     let result =
       collect n N.zero (fun now ->
-        let* l, n = step s a1 now in
+        let* l, n = next_step s a1 now in
         if trans now (l, n) then Some ((l, n), n) else None)
     in
     if List.length result = n then Ok result else Error result
@@ -733,17 +747,17 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (List.is_empty (A.run slow_strat a 10))
+      not (List.is_empty (A.gen_trace slow_strat a 10))
     ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (List.is_empty (A.run slow_strat a 10))
+      not (List.is_empty (A.gen_trace slow_strat a 10))
     ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      let trace = A.run random_strat a 10 in
+      let trace = A.gen_trace random_strat a 10 in
       not (List.is_empty trace)
     ;;
 
@@ -777,7 +791,7 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Precedence ("a", "b")) in
-      let trace = A.run slow_strat a 10 in
+      let trace = A.gen_trace slow_strat a 10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
