@@ -1,7 +1,4 @@
-(test
- (name mrtccsl)
- (modules mrtccsl))
-
-(test
- (name interval)
- (modules interval))
+(test 
+(name simple)
+(modules simple)
+(libraries mrtccsl alcotest))
