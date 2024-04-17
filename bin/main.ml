@@ -1,5 +1,5 @@
 open Prelude
-module A = Automata.Simple.Make (Clock.String) (Number.Rational)
+module A = Automata.Simple.MakeExtendedString (Number.Rational)
 open Number.Rational
 
 let step = num_of_int 1 // num_of_int 10

@@ -1,7 +1,7 @@
 open Prelude
 open Rtccsl
 open Number
-module A = Automata.Simple.Make (Clock.String) (Rational)
+module A = Automata.Simple.MakeExtendedString (Rational)
 
 let wall_test spec traces results =
   let check i (case, result) =
@@ -15,7 +15,8 @@ let wall_test spec traces results =
   List.mapi check (List.combine traces results)
 ;;
 
-let logical_wall_test spec traces results =
+let logical_wall_test spec traces_results =
+  let traces, results = List.split traces_results in
   let add_time trace =
     List.combine
       trace
@@ -25,27 +26,18 @@ let logical_wall_test spec traces results =
   wall_test spec traces results
 ;;
 
-let trace_of_string l =
-  let to_clock_seq (c, s) =
-    Seq.map (fun char -> if char = 'x' then Some c else None) (String.to_seq s)
-  in
-  let clock_traces = List.map to_clock_seq l in
-  let clocks_trace = Seq.zip_list clock_traces in
-  List.of_seq
-  @@ Seq.map
-       (fun cs ->
-         let clocks, _ = List.flatten_opt cs in
-         A.L.of_list clocks)
-       clocks_trace
-;;
-
 let () =
   Alcotest.run
     "Simple Automata"
     [ ( "causality"
       , logical_wall_test
           [ Causality ("a", "b") ]
-          [ trace_of_string [ "a", "xxxxxxxxx"; "b", "xxx    xx" ] ]
-          [ true ] )
+          [ A.trace_of_regexp "(ab)(ab)(ab)", true
+          ; A.trace_of_regexp "bbb", false
+          ] )
+    ; ( "forbid"
+      , logical_wall_test
+          [ Forbid ("f", "t", [ "a" ]); Precedence ("f", "a"); Precedence ("a", "t") ]
+          [ A.trace_of_regexp "fat", false ] )
     ]
 ;;

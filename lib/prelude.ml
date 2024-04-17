@@ -180,4 +180,26 @@ module Seq = struct
         let values, seqs = List.split values_seqs in
         Cons (values, zip_list seqs))
   ;;
+
+  let rec fold_left_until p f acc xs =
+    match xs () with
+    | Nil -> acc, None, xs
+    | Cons (x, xs) ->
+      if p x
+      then (
+        let acc = f acc x in
+        fold_left_until p f acc xs)
+      else acc, Some x, xs
+  ;;
+
+  let%test _ =
+    let left, delim, right =
+      fold_left_until
+        (fun x -> x < 5)
+        (fun acc x -> x :: acc)
+        []
+        (List.to_seq @@ List.ints 10)
+    in
+    left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [6; 7; 8; 9 ]
+  ;;
 end

@@ -799,3 +799,56 @@ let%test_module _ =
     ;;
   end)
 ;;
+
+module MakeExtendedString(N: Num) = struct 
+  include Make(Clock.String)(N)
+
+
+let trace_of_strings l =
+  let to_clock_seq (c, s) =
+    Seq.map (fun char -> if char = 'x' then Some c else None) (String.to_seq s)
+  in
+  let clock_traces = List.map to_clock_seq l in
+  let clocks_trace = Seq.zip_list clock_traces in
+  List.of_seq
+  @@ Seq.map
+       (fun cs ->
+         let clocks, _ = List.flatten_opt cs in
+         L.of_list clocks)
+       clocks_trace
+;;
+
+let trace_of_regexp str =
+  let rec parse_single cs =
+    let single_clocks, par, rest =
+      Seq.fold_left_until
+        (fun c -> c <> '(')
+        (fun acc x ->
+          let label = L.singleton (String.init_char 1 x) in
+          acc @ [ label ])
+        []
+        cs
+    in
+    match par with
+    | Some _ -> single_clocks @ parse_group rest
+    | None -> single_clocks
+  and parse_group cs =
+    let label, par, rest =
+      Seq.fold_left_until
+        (fun c -> c <> ')')
+        (fun acc x ->
+          let c = String.init_char 1 x in
+          acc @ [ c ])
+        []
+        cs
+    in
+    let label = L.of_list label in
+    match par with
+    | Some _ -> label :: parse_single rest
+    | None -> [ label ]
+  in
+  parse_single (String.to_seq str)
+;;
+
+let%test _ = trace_of_regexp "ab(cd)" = trace_of_strings ["a", "x  "; "b", " x "; "c", "  x"; "d", "  x"]
+end
