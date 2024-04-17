@@ -94,7 +94,7 @@ module Make (C : ID) (N : Num) = struct
     correctness_check clocks possible sol && transition n sol
   ;;
 
-  let accept a n t =
+  let accept_trace a n t =
     List.fold_left
       (fun n (l, n') ->
         match n with

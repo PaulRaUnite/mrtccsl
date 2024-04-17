@@ -52,7 +52,17 @@ module List = struct
     | x :: tail -> Some (aux x tail)
   ;;
 
-  let ints len = List.init len id 
+  let ints len = List.init len id
+
+  let flatten_opt list =
+    fold_left
+      (fun (acc, missing) x ->
+        match x with
+        | Some x -> x :: acc, missing
+        | None -> acc, true)
+      ([], false)
+      list
+  ;;
 end
 
 (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
@@ -156,3 +166,18 @@ module ExpirationQueue = struct
   let map_inplace q f = q.data <- List.map f q.data
 end
 
+module Seq = struct
+  include Seq
+
+  let rec zip_list seq_list () =
+    match seq_list with
+    | [] -> Nil
+    | list ->
+      let values_seqs, ended = List.flatten_opt (List.map Seq.uncons list) in
+      if ended
+      then Nil
+      else (
+        let values, seqs = List.split values_seqs in
+        Cons (values, zip_list seqs))
+  ;;
+end
