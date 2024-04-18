@@ -63,6 +63,19 @@ module List = struct
       ([], false)
       list
   ;;
+
+  let rec zip3 l1 l2 l3 =
+    match l1, l2, l3 with
+    | [], [], [] | [], _, _ | _, [], _ | _, _, [] -> []
+    | a1 :: l1, a2 :: l2, a3 :: l3 -> (a1, a2, a3) :: zip3 l1 l2 l3
+  ;;
+
+  let rec split3 = function
+    | [] -> [], [], []
+    | (x, y, z) :: tail ->
+      let tx, ty, tz = split3 tail in
+      x :: tx, y :: ty, z :: tz
+  ;;
 end
 
 (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
@@ -147,13 +160,13 @@ module ExpirationQueue = struct
 
   let expiration_step q =
     let list, discard =
-      List.fold_left
-        (fun (l, discard) x ->
+      List.fold_right
+        (fun x (l, discard) ->
           match q.cycling x with
           | None -> l, true
           | Some x -> x :: l, discard)
-        ([], false)
         q.data
+        ([], false)
     in
     q.data <- list;
     discard
@@ -164,6 +177,14 @@ module ExpirationQueue = struct
   let to_list q = q.data
   let map q f c = { data = List.map f q.data; cycling = c }
   let map_inplace q f = q.data <- List.map f q.data
+
+  let%test _ =
+    let q = create Option.some in
+    let _ = push q 2 in
+    let _ = push q 1 in
+    let _ = push q 0 in
+    peek q = Some 2
+  ;;
 end
 
 module Seq = struct
@@ -200,6 +221,6 @@ module Seq = struct
         []
         (List.to_seq @@ List.ints 10)
     in
-    left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [6; 7; 8; 9 ]
+    left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
   ;;
 end
