@@ -22,6 +22,6 @@ type ('c, 't) constr =
   | LastSampled of 'c * 'c * 'c
   | Forbid of 'c * 'c * 'c list
   | Allow of 'c * 'c * 'c list
-  | Sporadic of 'c * 't
+  | Sporadic of 'c * 't (*TODO: maybe add strict option*)
 
 type ('c, 't) specification = ('c, 't) constr list

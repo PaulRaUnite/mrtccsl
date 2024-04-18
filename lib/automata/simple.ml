@@ -287,7 +287,7 @@ module Make (C : ID) (N : Num) = struct
         | None -> [ L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now ]
         | Some v ->
           let next_after = N.(d + v) in
-          [ L.of_list [ c ], I.pinf_strict next_after; (L.empty, I.(now <-> next_after)) ]
+          [ L.of_list [ c ], I.pinf next_after; (L.empty, I.(now <-> next_after)) ]
       in
       let clocks = L.of_list [ c ] in
       let t _ (l, n') =

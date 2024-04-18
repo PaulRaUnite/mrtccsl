@@ -1,14 +1,15 @@
 open Prelude
 open Rtccsl
 open Number
-module A = Automata.Simple.MakeExtendedString (Rational)
+module N = Integer
+module A = Automata.Simple.MakeExtendedString (N)
 
 let wall_test spec names_traces_results =
   let check (name, case, result) =
     let test () =
       let automaton = A.of_spec spec in
       Alcotest.(check bool) "same result" result
-      @@ Option.is_some (A.accept_trace automaton Rational.zero case)
+      @@ Option.is_some (A.accept_trace automaton N.zero case)
     in
     Alcotest.(test_case name `Quick) test
   in
@@ -18,22 +19,29 @@ let wall_test spec names_traces_results =
 let logical_wall_test spec names_traces_results =
   let add_time (name, trace, result) =
     let trace =
-      List.combine
-        trace
-        (List.init (List.length trace) (fun x -> Number.Rational.from_int (x + 1)))
+      List.combine trace (List.init (List.length trace) (fun x -> N.from_int (x + 1)))
     in
     name, trace, result
   in
   wall_test spec (List.map add_time names_traces_results)
 ;;
 
-let true_false_cases trues falses =
-  let trues = List.map (fun s -> s, A.trace_of_regexp s, true) trues in
-  let falses = List.map (fun s -> s, A.trace_of_regexp s, false) falses in
-  trues @ falses
+let rglwt spec t f =
+  let map v = List.map (fun s -> s, A.trace_of_regexp s, v) in
+  let true_false_cases trues falses =
+    let trues = map true trues in
+    let falses = map false falses in
+    trues @ falses
+  in
+  logical_wall_test spec @@ true_false_cases t f
 ;;
 
-let rglwt spec l l' = logical_wall_test spec @@ true_false_cases l l'
+(** Real-time wall test maps trace strings and timescale to Alcotest cases. *)
+let rtwt spec t f =
+  let map v = List.map (fun (s, time) -> s, List.combine (A.trace_of_regexp s) time, v) in
+  let cases = map true t @ map false f in
+  wall_test spec cases
+;;
 
 let () =
   Alcotest.run
@@ -113,5 +121,25 @@ let () =
           [ Intersection ("i", [ "a"; "b"; "c" ]) ]
           [ "(iabc)abc"; "(ab)" ]
           [ "(abc)"; "(iab)" ] )
+    ; ( "rt-delay"
+      , rtwt
+          [ RTdelay ("i", "o", (1, 3)) ]
+          [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
+          [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
+    ; ( "cum-period"
+      , rtwt
+          [ CumulPeriodic ("o", 4, (-1, 1), 2) ]
+          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 4; 7 ] ]
+          [ "o", [ 4 ]; "ooo", [ 1; 5; 11 ] ] )
+    ; ( "abs-period"
+      , rtwt
+          [ AbsPeriodic ("o", 4, (-1, 1), 2) ]
+          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
+          [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
+    ; ( "sporadic"
+      , rtwt
+          [ Sporadic ("a", 2) ]
+          [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
+          [ "aa", [ 2; 3 ] ] )
     ]
 ;;
