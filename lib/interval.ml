@@ -207,13 +207,7 @@ end
 
 let%test_module _ =
   (module struct
-    module II : I with type num = int = Make (struct
-        include Int
-
-        let ( + ) = Int.add
-        let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_int
-        let t_of_sexp = Sexplib0.Sexp_conv.int_of_sexp
-      end)
+    module II : I with type num = int = Make (Number.Integer)
 
     let%test_unit _ =
       [%test_eq: II.t] (II.make_include ~-1 1) (II.inter (II.pinf ~-1) (II.ninf 1))
