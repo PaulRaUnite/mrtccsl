@@ -330,6 +330,7 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Delay (out, arg, (d1, d2), base) ->
       let _ = assert (d1 <= d2) in
+      let diff_base = Option.is_some base in
       let base = Option.value base ~default:arg in
       let clocks = L.of_list [ out; arg; base ] in
       let q =
@@ -350,12 +351,15 @@ module Make (C : ID) (N : Num) = struct
             if d1 = 0
             then
               if d2 = 0
-              then labels_empty_immediate @ [ []; [ arg ] ]
+              then
+                if diff_base
+                then labels_empty_immediate @ [ []; [ arg ] ]
+                else [ []; [ out; arg ] ]
               else labels_empty_immediate @ basic_labels
             else labels_empty
           | Some x when x = d2 -> labels_ne_must
           | Some x when d1 <= x -> labels_ne_can
-          | Some _ -> basic_labels
+          | Some _ -> labels_empty
         in
         let labels = label_list labels in
         lo_guard labels now
@@ -384,7 +388,7 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Minus (out, arg, exclude) ->
       let labels =
-        [] :: [ out; arg ] :: List.map (fun l -> arg :: l) (powerset_nz exclude)
+        [] :: [ out; arg ] :: flat_cartesian [ [ arg ]; [] ] (powerset_nz exclude)
       in
       let clocks = out :: arg :: exclude in
       stateless (label_list labels) clocks
@@ -449,10 +453,11 @@ module Make (C : ID) (N : Num) = struct
       let clocks = L.of_list (from :: until :: args) in
       let phase = ref false in
       let g_allow n =
-        let basic_off = [ []; [ from ]; [ from; until ] ] in
-        let basic_on = [ []; [ from; until ]; [ until ] ] in
-        let basic = if !phase then basic_on else basic_off in
-        let labels = flat_cartesian basic (powerset args) in
+        let labels =
+          if !phase
+          then flat_cartesian [ []; [ from; until ]; [ until ] ] (powerset args)
+          else [] :: flat_cartesian [ [ from ]; [ from; until ] ] (powerset args)
+        in
         let labels = label_list labels in
         lo_guard labels n
       in
@@ -460,9 +465,8 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !phase
           then
-            []
-            :: [ from ]
-            :: flat_cartesian [ [ until ]; [ from; until ] ] (powerset args)
+            [ []; [ from ] ]
+            @ flat_cartesian [ [ until ]; [ from; until ] ] (powerset args)
           else flat_cartesian [ []; [ from ]; [ from; until ]; [ until ] ] (powerset args)
         in
         let labels = label_list labels in
@@ -494,7 +498,7 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !sampled
           then [ []; [ arg ]; [ base ] ]
-          else [ []; [ out; arg ]; [ out; arg; base ]; [ base ] ]
+          else [ [];  [ out; arg; base ]; [ out; arg ]; [ base ] ]
         in
         let labels = label_list labels in
         lo_guard labels n
@@ -512,7 +516,7 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !last
           then [ []; [ base ] ]
-          else [ []; [ out; arg; base ]; [ out; arg ]; [ base ] ]
+          else [ []; [ out; arg; base ]; [ out; arg ]; [arg] ]
         in
         lo_guard (label_list labels) n
       in
@@ -800,55 +804,57 @@ let%test_module _ =
   end)
 ;;
 
-module MakeExtendedString(N: Num) = struct 
-  include Make(Clock.String)(N)
+module MakeExtendedString (N : Num) = struct
+  include Make (Clock.String) (N)
 
-
-let trace_of_strings l =
-  let to_clock_seq (c, s) =
-    Seq.map (fun char -> if char = 'x' then Some c else None) (String.to_seq s)
-  in
-  let clock_traces = List.map to_clock_seq l in
-  let clocks_trace = Seq.zip_list clock_traces in
-  List.of_seq
-  @@ Seq.map
-       (fun cs ->
-         let clocks, _ = List.flatten_opt cs in
-         L.of_list clocks)
-       clocks_trace
-;;
-
-let trace_of_regexp str =
-  let rec parse_single cs =
-    let single_clocks, par, rest =
-      Seq.fold_left_until
-        (fun c -> c <> '(')
-        (fun acc x ->
-          let label = L.singleton (String.init_char 1 x) in
-          acc @ [ label ])
-        []
-        cs
+  let trace_of_strings l =
+    let to_clock_seq (c, s) =
+      Seq.map (fun char -> if char = 'x' then Some c else None) (String.to_seq s)
     in
-    match par with
-    | Some _ -> single_clocks @ parse_group rest
-    | None -> single_clocks
-  and parse_group cs =
-    let label, par, rest =
-      Seq.fold_left_until
-        (fun c -> c <> ')')
-        (fun acc x ->
-          let c = String.init_char 1 x in
-          acc @ [ c ])
-        []
-        cs
-    in
-    let label = L.of_list label in
-    match par with
-    | Some _ -> label :: parse_single rest
-    | None -> [ label ]
-  in
-  parse_single (String.to_seq str)
-;;
+    let clock_traces = List.map to_clock_seq l in
+    let clocks_trace = Seq.zip_list clock_traces in
+    List.of_seq
+    @@ Seq.map
+         (fun cs ->
+           let clocks, _ = List.flatten_opt cs in
+           L.of_list clocks)
+         clocks_trace
+  ;;
 
-let%test _ = trace_of_regexp "ab(cd)" = trace_of_strings ["a", "x  "; "b", " x "; "c", "  x"; "d", "  x"]
+  let trace_of_regexp str =
+    let rec parse_single cs =
+      let single_clocks, par, rest =
+        Seq.fold_left_until
+          (fun c -> c <> '(')
+          (fun acc x ->
+            let label = L.singleton (String.init_char 1 x) in
+            acc @ [ label ])
+          []
+          cs
+      in
+      match par with
+      | Some _ -> single_clocks @ parse_group rest
+      | None -> single_clocks
+    and parse_group cs =
+      let label, par, rest =
+        Seq.fold_left_until
+          (fun c -> c <> ')')
+          (fun acc x ->
+            let c = String.init_char 1 x in
+            acc @ [ c ])
+          []
+          cs
+      in
+      let label = L.of_list label in
+      match par with
+      | Some _ -> label :: parse_single rest
+      | None -> [ label ]
+    in
+    parse_single (String.to_seq str)
+  ;;
+
+  let%test _ =
+    trace_of_regexp "ab(cd)"
+    = trace_of_strings [ "a", "x  "; "b", " x "; "c", "  x"; "d", "  x" ]
+  ;;
 end
