@@ -51,11 +51,13 @@ let () =
     ; "exclusion", rglwt [ Exclusion [ "a"; "b"; "c" ] ] [ "abc" ] [ "(ab)"; "(abc)" ]
     ; "periodic", rglwt [ Periodic ("o", "b", 3) ] [ "bb(bo)bb(bo)" ] [ "bbbbbb" ]
     ; "sample", rglwt [ Sample ("o", "i", "b") ] [ "ii(bo)"; "bbi(bo)" ] [ "bbo"; "(bo)" ]
-      (*TODO: add more delay tests*)
     ; ( "delay-trivial"
       , rglwt [ Delay ("o", "i", (0, 0), None) ] [ "(oi)(oi)" ] [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
-      , rglwt [ Delay ("o", "i", (2, 2), None) ] [ "ii(oi)(oi)" ] [ "ooo"; "iiii" ] )
+      , rglwt
+          [ Delay ("o", "i", (2, 2), None) ]
+          [ "ii(oi)(oi)" ]
+          [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
           [ Delay ("o", "i", (2, 4), None) ]
@@ -64,13 +66,13 @@ let () =
     ; ( "delay-undet-zero"
       , rglwt
           [ Delay ("o", "i", (0, 2), None) ]
-          [ "ii(oi)(oi)"; "(oi)(oi)" ]
+          [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
           [ "iiiii"; "oooo" ] )
     ; ( "delay-sample"
       , rglwt
           [ Delay ("o", "i", (1, 2), Some "b") ]
-          [ "ib(ib)(ob)"; "(ib)(ob)(ib)"; "iii"; "bbbb" ]
-          [ "ooo" ] )
+          [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
+          [ "ooo"; "(ib)bbb(ob)" ] )
     ; ( "minus"
       , rglwt [ Minus ("m", "a", [ "b"; "c" ]) ] [ "(ma)"; "(ab)(ac)(abc)"; "bc" ] [ "a" ]
       )

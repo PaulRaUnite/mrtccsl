@@ -235,17 +235,11 @@ module Make (C : ID) (N : Num) = struct
       let t _ (l, n') =
         let _ = if L.mem a l then Queue.push n' queue in
         let _ = if L.mem b l then ignore @@ Queue.pop queue in
-        (* let _ =
-          Printf.printf "trans: test=%b sol=%s\n" test
-          @@ Sexplib0.Sexp.to_string
-          @@ sexp_of_solution (l, n')
-        in *)
         true
       in
       g, t, clocks
     | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
       let e = I.(e1 =-= e2) in
-      (* let _ = Printf.printf "e=%s, off=%s\n" (Sexplib0.Sexp.to_string @@ I.sexp_of_t e) (Sexplib0.Sexp.to_string @@ N.sexp_of_t off) in *)
       let last = ref None in
       let g now =
         let next, right_bound =
@@ -270,11 +264,6 @@ module Make (C : ID) (N : Num) = struct
                  | Some last -> N.(last + d))
               | _ -> failwith "unreachable"
             in
-            (* let _ =
-               Printf.printf
-               "update := %s\n"
-               (Sexplib0.Sexp.to_string (N.sexp_of_t update))
-               in *)
             last := Some update)
         in
         true
@@ -339,29 +328,36 @@ module Make (C : ID) (N : Num) = struct
           | x when x > d2 -> None
           | x -> Some x)
       in
-      let basic_labels = [ []; [ arg ]; [ arg; base ] ] in
-      let labels_empty = [ base ] :: basic_labels in
-      let labels_empty_immediate = [ [ out; arg; base ]; [ base ] ] in
-      let labels_ne_can = [ [ out; base ]; [] ] @ basic_labels in
+      let labels_empty = [ []; [ arg ]; [ arg; base ]; [ base ] ] in
+      let labels_ne_can = [ []; [ arg ]; [ arg; base ]; [ out; base ]; [base] ] in
       let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
       let g now =
         let labels =
           match ExpirationQueue.peek q with
-          | None ->
-            if d1 = 0
-            then
-              if d2 = 0
-              then
-                if diff_base
-                then labels_empty_immediate @ [ []; [ arg ] ]
-                else [ []; [ out; arg ] ]
-              else labels_empty_immediate @ basic_labels
-            else labels_empty
+          | None when d1 = 0 && d2 = 0 && diff_base ->
+            [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
+          | None when d1 = 0 && d2 = 0 -> [ []; [ out; arg ] ]
+          | None when d1 = 0 ->
+            [ []; [ arg ]; [ out; arg; base ]; [ base ]; [ arg; base ] ]
+          | None -> labels_empty
           | Some x when x = d2 -> labels_ne_must
           | Some x when d1 <= x -> labels_ne_can
           | Some _ -> labels_empty
         in
+        let labels = List.sort_uniq (List.compare C.compare) labels in
+        let _ =
+          Printf.printf
+            "q: %s\n"
+            (Sexplib0.Sexp.to_string
+               (Sexplib0.Sexp_conv.sexp_of_list sexp_of_int (ExpirationQueue.to_list q)))
+        in
         let labels = label_list labels in
+        let _ =
+          Printf.printf
+            "labels: %s\n"
+            (Sexplib0.Sexp.to_string
+               (Sexplib0.Sexp_conv.sexp_of_list sexp_of_label labels))
+        in
         lo_guard labels now
       in
       let t _ (l, _) =
@@ -498,7 +494,7 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !sampled
           then [ []; [ arg ]; [ base ] ]
-          else [ [];  [ out; arg; base ]; [ out; arg ]; [ base ] ]
+          else [ []; [ out; arg; base ]; [ out; arg ]; [ base ] ]
         in
         let labels = label_list labels in
         lo_guard labels n
@@ -516,7 +512,7 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !last
           then [ []; [ base ] ]
-          else [ []; [ out; arg; base ]; [ out; arg ]; [arg] ]
+          else [ []; [ out; arg; base ]; [ out; arg ]; [ arg ] ]
         in
         lo_guard (label_list labels) n
       in
