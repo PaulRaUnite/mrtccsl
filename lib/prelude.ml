@@ -26,12 +26,6 @@ module ExpOrder = struct
   end
 end
 
-(** Cartesian product of 2 lists. *)
-let cartesian l l' = List.concat (List.map (fun e -> List.map (fun e' -> e, e') l') l)
-
-(** Makes cartesian product of two lists of lists as another list of lists. *)
-let flat_cartesian l l' = List.map (fun (x, y) -> x @ y) (cartesian l l')
-
 let id x = x
 
 module List = struct
@@ -76,17 +70,27 @@ module List = struct
       let tx, ty, tz = split3 tail in
       x :: tx, y :: ty, z :: tz
   ;;
+
+  (** Cartesian product of 2 lists. *)
+  let cartesian l l' = concat (map (fun e -> map (fun e' -> e, e') l') l)
+
+  (** Makes cartesian product of two lists of lists as another list of lists. *)
+  let flat_cartesian l l' = map (fun (x, y) -> x @ y) (cartesian l l')
+
+  (** Returns a powerset (all subsets) of the given list.*)
+  let rec powerset = function
+    (*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
+    | [] -> [ [] ]
+    | x :: xs ->
+      let ps = powerset xs in
+      ps @ map (fun ss -> x :: ss) ps
+  ;;
+
+  (** Returns powerset without the empty list.*)
+  let powerset_nz elements = filter (fun l -> l <> []) @@ powerset elements
 end
 
-(*stolen from https://stackoverflow.com/questions/40141955/computing-a-set-of-all-subsets-power-set*)
-let rec powerset = function
-  | [] -> [ [] ]
-  | x :: xs ->
-    let ps = powerset xs in
-    ps @ List.map (fun ss -> x :: ss) ps
-;;
-
-let powerset_nz elements = List.filter (fun l -> l <> []) @@ powerset elements
+(** Function composition, [f << g] if the same as f(g(x)).*)
 let ( << ) f g x = f (g x)
 let ( let* ) = Option.bind
 

@@ -158,7 +158,7 @@ module Make (C : ID) (N : Num) = struct
       (* let _ =
         Printf.printf "sync sol 2: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g2)
       in *)
-      let pot_solutions = cartesian g1 g2 in
+      let pot_solutions = List.cartesian g1 g2 in
       let solutions = List.filter_map guard_solver pot_solutions in
       (* let _ =
         Printf.printf
@@ -184,7 +184,7 @@ module Make (C : ID) (N : Num) = struct
 
   let prec c1 c2 strict : t =
     let c = ref 0 in
-    let l1 = List.map L.of_list (powerset [ c1; c2 ]) in
+    let l1 = List.map L.of_list (List.powerset [ c1; c2 ]) in
     let l2 =
       List.filter
         (fun x ->
@@ -329,7 +329,7 @@ module Make (C : ID) (N : Num) = struct
           | x -> Some x)
       in
       let labels_empty = [ []; [ arg ]; [ arg; base ]; [ base ] ] in
-      let labels_ne_can = [ []; [ arg ]; [ arg; base ]; [ out; base ]; [base] ] in
+      let labels_ne_can = [ []; [ arg ]; [ arg; base ]; [ out; base ]; [ base ] ] in
       let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
       let g now =
         let labels =
@@ -345,19 +345,7 @@ module Make (C : ID) (N : Num) = struct
           | Some _ -> labels_empty
         in
         let labels = List.sort_uniq (List.compare C.compare) labels in
-        let _ =
-          Printf.printf
-            "q: %s\n"
-            (Sexplib0.Sexp.to_string
-               (Sexplib0.Sexp_conv.sexp_of_list sexp_of_int (ExpirationQueue.to_list q)))
-        in
         let labels = label_list labels in
-        let _ =
-          Printf.printf
-            "labels: %s\n"
-            (Sexplib0.Sexp.to_string
-               (Sexplib0.Sexp_conv.sexp_of_list sexp_of_label labels))
-        in
         lo_guard labels now
       in
       let t _ (l, _) =
@@ -384,12 +372,12 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Minus (out, arg, exclude) ->
       let labels =
-        [] :: [ out; arg ] :: flat_cartesian [ [ arg ]; [] ] (powerset_nz exclude)
+        [] :: [ out; arg ] :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz exclude)
       in
       let clocks = out :: arg :: exclude in
       stateless (label_list labels) clocks
     | Union (out, args) ->
-      let labels = [] :: List.map (fun l -> out :: l) (powerset_nz args) in
+      let labels = [] :: List.map (fun l -> out :: l) (List.powerset_nz args) in
       stateless (label_list labels) (out :: args)
     | Alternate (a, b) ->
       let clocks = L.of_list [ a; b ] in
@@ -451,8 +439,8 @@ module Make (C : ID) (N : Num) = struct
       let g_allow n =
         let labels =
           if !phase
-          then flat_cartesian [ []; [ from; until ]; [ until ] ] (powerset args)
-          else [] :: flat_cartesian [ [ from ]; [ from; until ] ] (powerset args)
+          then List.flat_cartesian [ []; [ from; until ]; [ until ] ] (List.powerset args)
+          else [] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args)
         in
         let labels = label_list labels in
         lo_guard labels n
@@ -461,9 +449,13 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !phase
           then
-            [ []; [ from ] ]
-            @ flat_cartesian [ [ until ]; [ from; until ] ] (powerset args)
-          else flat_cartesian [ []; [ from ]; [ from; until ]; [ until ] ] (powerset args)
+            []
+            :: [ from ]
+            :: List.flat_cartesian [ [ until ]; [ from; until ] ] (List.powerset args)
+          else
+            List.flat_cartesian
+              [ []; [ from ]; [ from; until ]; [ until ] ]
+              (List.powerset args)
         in
         let labels = label_list labels in
         lo_guard labels n
@@ -524,7 +516,7 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Subclocking (a, b) -> stateless (label_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
     | Intersection (out, args) ->
-      let labels = powerset args in
+      let labels = List.powerset args in
       let labels = List.map (fun l -> if l = args then out :: args else l) labels in
       stateless (label_list labels) (out :: args)
   ;;
