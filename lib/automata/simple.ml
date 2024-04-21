@@ -372,7 +372,9 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | Minus (out, arg, exclude) ->
       let labels =
-        [] :: [ out; arg ] :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz exclude)
+        []
+        :: [ out; arg ]
+        :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz exclude)
       in
       let clocks = out :: arg :: exclude in
       stateless (label_list labels) clocks
@@ -440,7 +442,8 @@ module Make (C : ID) (N : Num) = struct
         let labels =
           if !phase
           then List.flat_cartesian [ []; [ from; until ]; [ until ] ] (List.powerset args)
-          else [] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args)
+          else
+            [] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args)
         in
         let labels = label_list labels in
         lo_guard labels n
