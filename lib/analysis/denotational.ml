@@ -1,3 +1,4 @@
+open Prelude
 open Sexplib0.Sexp_conv
 
 type num_op =
@@ -27,6 +28,35 @@ type ('c, 'n) bool_expr =
   | And of ('c, 'n) bool_expr list
   | Linear of ('c, 'n) tag_expr * num_rel * ('c, 'n) tag_expr
 [@@deriving sexp]
+
+let rec fold_texp f acc = function
+  | TagVar (v, i) -> f (Some v) i acc
+  | Op (left, _, right) ->
+    let acc = fold_texp f acc left in
+    fold_texp f acc right
+  | Index i -> f None i acc
+  | Const _ -> acc
+;;
+
+let rec fold_bexp f acc = function
+  | Or list | And list -> List.fold_left (fold_bexp f) acc list
+  | Linear (left, _, right) ->
+    let acc = fold_texp f acc left in
+    fold_texp f acc right
+;;
+
+let rec map_ind_texp f = function
+  | TagVar (v, i) -> TagVar (v, f (Some v) i)
+  | Index i -> Index (f None i)
+  | Const c -> Const c
+  | Op (left, op, right) -> Op (map_ind_texp f left, op, map_ind_texp f right)
+;;
+
+let rec map_ind_bexp f = function
+  | Or list -> Or (List.map (map_ind_bexp f) list)
+  | And list -> And (List.map (map_ind_bexp f) list)
+  | Linear (left, op, right) -> Linear (map_ind_texp f left, op, map_ind_texp f right)
+;;
 
 module Syntax = struct
   let ( @ ) c i = TagVar (c, i)
@@ -60,10 +90,11 @@ let exact_rel c =
 let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
   And (List.map exact_rel s)
 ;;
-(* 
-let rec all_variables bexp = 
-  let tvars = function
-  |  *)
+
+(*
+   let rec all_variables bexp =
+   let tvars = function
+   | *)
 
 open Prelude
 

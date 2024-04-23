@@ -1,3 +1,5 @@
+module type OrderedType = Set.OrderedType
+
 module ExpOrder = struct
   module type T = sig
     type t
@@ -12,7 +14,7 @@ module ExpOrder = struct
     val max : t -> t -> t
   end
 
-  module Make (M : Set.OrderedType) = struct
+  module Make (M : OrderedType) = struct
     include M
 
     let compare = M.compare
@@ -92,6 +94,7 @@ end
 
 (** Function composition, [f << g] if the same as f(g(x)).*)
 let ( << ) f g x = f (g x)
+
 let ( let* ) = Option.bind
 
 let ( and* ) x y =

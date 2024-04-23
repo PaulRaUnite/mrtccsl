@@ -1,7 +1,7 @@
 open Prelude
 
 module type ID = sig
-  include Set.OrderedType
+  include OrderedType
   include Stringable with type t := t
   include Sexplib0.Sexpable.S with type t := t
 end
