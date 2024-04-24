@@ -1,9 +1,16 @@
 (executable
- (public_name mrtccsl)
- (name main)
+ (public_name sim)
+ (name sim)
+ (modules sim)
+ (libraries mrtccsl))
+
+(executable
+ (public_name ind)
+ (name ind)
+ (modules ind)
  (libraries mrtccsl))
 
 (env
-	(dev
-		(flags
-			(:standard -warn-error -A))))
+ (dev
+  (flags
+   (:standard -warn-error -A))))

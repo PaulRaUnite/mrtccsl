@@ -1,3 +1,4 @@
+open Mrtccsl
 open Prelude
 module A = Automata.Simple.MakeExtendedString (Number.Rational)
 open Number.Rational

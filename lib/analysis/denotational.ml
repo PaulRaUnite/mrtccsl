@@ -13,6 +13,7 @@ type ('c, 'n) tag_expr =
   | Const of 'n
   | Index of int
   | Op of ('c, 'n) tag_expr * num_op * ('c, 'n) tag_expr
+  | ZeroCond of ('c, 'n) tag_expr * 'n
 [@@deriving sexp]
 
 type num_rel =
@@ -36,6 +37,7 @@ let rec fold_texp f acc = function
     fold_texp f acc right
   | Index i -> f None i acc
   | Const _ -> acc
+  | ZeroCond (more, _) -> fold_texp f acc more
 ;;
 
 let rec fold_bexp f acc = function
@@ -50,12 +52,25 @@ let rec map_ind_texp f = function
   | Index i -> Index (f None i)
   | Const c -> Const c
   | Op (left, op, right) -> Op (map_ind_texp f left, op, map_ind_texp f right)
+  | ZeroCond (more, init_value) -> ZeroCond (map_ind_texp f more, init_value)
 ;;
 
 let rec map_ind_bexp f = function
   | Or list -> Or (List.map (map_ind_bexp f) list)
   | And list -> And (List.map (map_ind_bexp f) list)
   | Linear (left, op, right) -> Linear (map_ind_texp f left, op, map_ind_texp f right)
+;;
+
+let rec use_more_cond_texp = function
+  | ZeroCond (more, _) -> more
+  | Op (l, op, r) -> Op (use_more_cond_texp l, op, use_more_cond_texp r)
+  | _ as e -> e
+;;
+
+let rec use_more_cond_bexp = function
+  | Or list -> Or (List.map use_more_cond_bexp list)
+  | And list -> And (List.map use_more_cond_bexp list)
+  | Linear (l, op, r) -> Linear (use_more_cond_texp l, op, use_more_cond_texp r)
 ;;
 
 module Syntax = struct
@@ -128,6 +143,8 @@ module MakeDebug (V : Var) (N : Num) = struct
         (string_of_tag_expr l)
         (string_of_num_op op)
         (string_of_tag_expr r)
+    | ZeroCond (more, init) ->
+      Printf.sprintf "(%s when i>0 else %s)" (string_of_tag_expr more) (N.to_string init)
   ;;
 
   let string_of_num_rel = function
@@ -138,22 +155,29 @@ module MakeDebug (V : Var) (N : Num) = struct
     | LessEq -> "<="
   ;;
 
-  let rec string_of_bool_expr = function
-    | Or list ->
-      List.fold_left
-        (fun acc el -> Printf.sprintf "( %s V %s)" acc (string_of_bool_expr el))
-        ""
-        list
-    | And list ->
-      List.fold_left
-        (fun acc el -> Printf.sprintf "( %s /\\ %s)" acc (string_of_bool_expr el))
-        ""
-        list
-    | Linear (l, op, r) ->
-      Printf.sprintf
-        "(%s %s %s)"
-        (string_of_tag_expr l)
-        (string_of_num_rel op)
-        (string_of_tag_expr r)
+  let string_of_bool_expr =
+    let rec aux level =
+      let padding = String.make (2 * level) ' ' in
+      let concat delim l =
+        let s =
+          List.fold_left
+            (fun acc el ->
+              Printf.sprintf "%s\n%s%s %s" acc padding delim (aux (level + 1) el))
+            ""
+            l
+        in
+        if List.is_one l || level = 0 then s else Printf.sprintf "(%s\n)" s
+      in
+      function
+      | Or list -> concat "V" list
+      | And list -> concat "⋀" list
+      | Linear (l, op, r) ->
+        Printf.sprintf
+          "%s %s %s"
+          (string_of_tag_expr l)
+          (string_of_num_rel op)
+          (string_of_tag_expr r)
+    in
+    aux 0
   ;;
 end

@@ -28,13 +28,17 @@ module ExpOrder = struct
   end
 end
 
-let id x = x
-
 module List = struct
   include List
 
   let is_empty = function
     | [] -> true
+    | _ -> false
+  ;;
+
+  let is_one = function
+    | [] -> false
+    | _ :: [] -> true
     | _ -> false
   ;;
 
@@ -48,7 +52,7 @@ module List = struct
     | x :: tail -> Some (aux x tail)
   ;;
 
-  let ints len = List.init len id
+  let ints len = List.init len Fun.id
 
   let flatten_opt list =
     fold_left
@@ -121,6 +125,9 @@ end
 module String = struct
   include String
 
+  let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_string
+  let t_of_sexp = Sexplib0.Sexp_conv.string_of_sexp
+  let to_string = Fun.id
   let init_char n c = init n (fun _ -> c)
   let grapheme_length = Uuseg_string.fold_utf_8 `Grapheme_cluster (fun x _ -> x + 1) 0
 end

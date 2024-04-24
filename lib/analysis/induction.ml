@@ -3,7 +3,9 @@ open Denotational
 
 module Make (C : OrderedType) (N : Denotational.Num) = struct
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
-  let lc_connection c = Denotational.Syntax.(c @ -1 < c @ 0)
+  let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
+
+  module SetC = Set.Make (C)
 
   module SetCI = Set.Make (struct
       type t = C.t * int
@@ -35,10 +37,10 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
            SetCI.empty
            formula
     in
-    And (formula @ List.map (fun (c, i) -> Syntax.((c @ Int.(sub i 1)) < c @ i)) vars)
+    use_more_cond_bexp @@ And (formula @ List.map (fun (c, i) -> lc_connection c i) vars)
   ;;
 
-  let postcondition formulae =
+  let postcondition clocks formulae =
     let intervals =
       List.map (fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0)) formulae
     in
@@ -47,6 +49,10 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
         (fun (gmin, gmax) (lmin, lmax) -> Int.(min gmin lmin, max gmax lmax))
         (0, 0)
         intervals
+    in
+    let neg_ints = List.init (Int.neg min + 1) Int.neg in
+    let clock_connections =
+      List.map (fun (c, i) -> lc_connection c i) (List.cartesian clocks neg_ints)
     in
     let _ = assert (max = 0) in
     let expand f min =
@@ -58,15 +64,46 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
       @@ List.map (fun (f, (lmin, _)) -> expand f (min - lmin))
       @@ List.combine formulae intervals
     in
-    And expanded_formulae
+    And (expanded_formulae @ clock_connections)
   ;;
 
   let precondition post = map_ind_bexp (fun _ i -> i - 1) post
 
-  let make formulae =
-    let post = postcondition formulae in
+  let init_cond post =
+    let rec init_cond_texp = function
+      | ZeroCond (_, init) -> Const init
+      | Op (l, op, r) -> Op (init_cond_texp l, op, init_cond_texp r)
+      | TagVar (_, i) when i = 0 -> Const N.zero
+      | _ as e -> e
+    in
+    let rec init_cond_bexp = function
+      | Or list -> Or (List.map init_cond_bexp list)
+      | And list -> And (List.map init_cond_bexp list)
+      | Linear (l, op, r) -> Linear (init_cond_texp l, op, init_cond_texp r)
+    in
+    let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
+    let _ = assert (max = 0) in
+    let post = map_ind_bexp (fun _ i -> i - min) post in
+    let post = init_cond_bexp post in
+    post
+  ;;
+
+  let proof_obligations formulae =
+    let clocks =
+      SetC.elements
+      @@ List.fold_left
+           (fold_bexp (fun c _ acc ->
+              match c with
+              | Some c -> SetC.add c acc
+              | None -> acc))
+           SetC.empty
+           formulae
+    in
+    let post_compound = postcondition clocks formulae in
+    let post = use_more_cond_bexp post_compound in
     let cond = inductive_step formulae in
     let pre = precondition post in
-    pre, cond, post
+    let init = init_cond post_compound in
+    init, pre, cond, post
   ;;
 end

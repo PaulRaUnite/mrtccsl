@@ -3,7 +3,6 @@
 (library
  (name mrtccsl)
  (public_name mrtccsl)
- (wrapped false)
  (inline_tests)
  (libraries num uuseg.string)
  (preprocess
