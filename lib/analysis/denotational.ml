@@ -73,6 +73,30 @@ let rec use_more_cond_bexp = function
   | Linear (l, op, r) -> Linear (use_more_cond_texp l, op, use_more_cond_texp r)
 ;;
 
+let rec norm = function
+  | Or list ->
+    let to_flatten, others =
+      List.partition_map
+        (fun f ->
+          match norm f with
+          | Or l -> Either.Left l
+          | _ as other -> Either.Right other)
+        list
+    in
+    Or (others @ List.flatten to_flatten)
+  | And list ->
+    let to_flatten, others =
+      List.partition_map
+        (fun f ->
+          match norm f with
+          | And l -> Either.Left l
+          | _ as other -> Either.Right other)
+        list
+    in
+    And (others @ List.flatten to_flatten)
+  | _ as lin -> lin
+;;
+
 module Syntax = struct
   let ( @ ) c i = TagVar (c, i)
   let ( < ) x y = Linear (x, Less, y)
@@ -97,8 +121,8 @@ let exact_rel c =
   | Precedence (a, b) -> a @ i < b @ i
   | Causality (a, b) -> a @ i <= b @ i
   | RTdelay (arg, out, (e1, e2)) -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
-  | Delay (out, arg, (d1, d2), Some base) when Stdlib.(d1 = d2 && arg = base) ->
-    out @ Int.sub i d1 = arg @ i
+  | Delay (out, arg, (d1, d2), None) when Stdlib.(d1 = d2) ->
+    out @ Stdlib.(i - d1) = arg @ i
   | _ -> failwith "unimplemented"
 ;;
 
@@ -134,9 +158,20 @@ module MakeDebug (V : Var) (N : Num) = struct
   ;;
 
   let rec string_of_tag_expr = function
-    | TagVar (var, ind) -> Printf.sprintf "%s[%i]" (V.to_string var) ind
+    | TagVar (var, ind) ->
+      let ind_str =
+        match ind with
+        | x when x > 0 -> Printf.sprintf "i+%i" x
+        | 0 -> "i"
+        | x -> Printf.sprintf "i%i" x
+      in
+      Printf.sprintf "%s[%s]" (V.to_string var) ind_str
     | Const n -> N.to_string n
-    | Index i -> Int.to_string i
+    | Index i ->
+      (match i with
+       | x when x > 0 -> Printf.sprintf "i+%i" x
+       | 0 -> "i"
+       | x -> Printf.sprintf "i%i" x)
     | Op (l, op, r) ->
       Printf.sprintf
         "(%s %s %s)"
