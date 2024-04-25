@@ -1,78 +1,70 @@
 open Prelude
-include Num
+include Mpqf
 
 include ExpOrder.Make (struct
-    include Num
+    include Mpqf
 
-    type t = num
-
-    let compare = compare_num
+    let compare = cmp
   end)
 
-let zero = num_of_int 0
-let ( + ) = add_num
-let ( - ) = sub_num
-let neg = minus_num
+let zero = of_int 0
+let ( + ) = add
+let ( - ) = sub
+let ( * ) = mul
+let ( / ) = div
 
 let sexp_of_t x =
-  let r = ratio_of_num x in
-  let nom = Big_int.int_of_big_int @@ Ratio.numerator_ratio r in
-  let denom = Big_int.int_of_big_int @@ Ratio.denominator_ratio r in
-  Sexplib0.Sexp_conv.(sexp_of_pair sexp_of_int sexp_of_int) (nom, denom)
+  let nom = get_num x in
+  let denom = get_den x in
+  Sexplib0.Sexp_conv.(sexp_of_pair sexp_of_int sexp_of_int)
+    (Mpz.get_int nom, Mpz.get_int denom)
 ;;
 
 let t_of_sexp sexp =
   let x, y = Sexplib0.Sexp_conv.(pair_of_sexp int_of_sexp int_of_sexp) sexp in
-  let x = num_of_int x
-  and y = num_of_int y in
-  x // y
+  of_frac x y
 ;;
 
 let t_to_string x =
-  let r = ratio_of_num x in
-  let nom = Ratio.numerator_ratio r in
-  let denom = Ratio.denominator_ratio r in
-  let whole, rem = Big_int.quomod_big_int nom denom in
-  let whole_str = Big_int.string_of_big_int whole in
-  if Big_int.eq_big_int Big_int.zero_big_int rem
+  let nom = get_num x in
+  let denom = get_den x in
+  let whole, rem = Mpzf.tdiv_qr nom denom in
+  let whole_str = Mpzf.to_string whole in
+  if Mpzf.cmp (Mpzf.of_int 0) rem = 0
   then whole_str
   else (
     let closest_ten =
       Seq.ints 0
-      |> Seq.map (Big_int.power_int_positive_int 10)
+      |> Seq.map (fun exp ->
+        let n = Mpz.init () in
+        let _ = Mpz.ui_pow_ui n 10 exp in
+        n)
       |> Seq.find (fun x ->
-        let div = Big_int.div_big_int denom x in
-        Big_int.eq_big_int Big_int.zero_big_int div
-        || Big_int.eq_big_int Big_int.unit_big_int div)
+        let div = Mpzf.divexact denom x in
+        Mpzf.cmp (Mpzf.of_int 0) div = 0 || Mpzf.cmp (Mpzf.of_int 1) div = 0)
       |> Option.get
     in
-    let gcd = Big_int.gcd_big_int denom closest_ten in
-    if gcd != Big_int.unit_big_int
+    let gcd = Mpzf.gcd denom closest_ten in
+    if gcd != Mpzf.of_int 1
     then
       Printf.sprintf
         "%s.%s"
         whole_str
-        (Big_int.string_of_big_int
-           (Big_int.mult_big_int rem (Big_int.div_big_int closest_ten gcd)))
-    else
-      Printf.sprintf
-        "%s+%s/%s"
-        whole_str
-        (Big_int.string_of_big_int rem)
-        (Big_int.string_of_big_int denom))
+        (Mpzf.to_string (Mpzf.mul rem (Mpzf.divexact closest_ten gcd)))
+    else Printf.sprintf "%s+%s/%s" whole_str (Mpzf.to_string rem) (Mpzf.to_string denom))
 ;;
 
 let round_up step x y =
-  let v = x +/ step in
-  let r = if v >=/ y then (x +/ y) // num_of_int 2 else v in
+  let v = x + step in
+  let r = if more_eq v y then (x + y) / of_int 2 else v in
   (* let _ = Printf.printf "%s" (t_to_string r) in *)
   r
 ;;
 
 let round_down step x y =
-  let v = y -/ step in
+  let v = y - step in
   (* let _ = Printf.printf "v: %s %s %s" (t_to_string x) (t_to_string y) (t_to_string v) in *)
-  let r = if v <=/ x then (x +/ y) // num_of_int 2 else v in
+  let r = if less_eq v x then (x + y) / of_int 2 else v in
   (* let _ = Printf.printf "round_down: %s\n" (t_to_string r) in *)
   r
 ;;
@@ -80,9 +72,9 @@ let round_down step x y =
 let random l r =
   let denom = Random.int 1097 in
   let nom = Random.int (Int.add denom 1) in
-  let nom = num_of_int nom
-  and denom = num_of_int denom in
-  l +/ ((r -/ l) */ (nom // denom))
+  let nom = of_int nom
+  and denom = of_int denom in
+  l + ((r - l) * (nom / denom))
 ;;
 
-let from_int = num_of_int
+let from_int = of_int

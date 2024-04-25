@@ -3,13 +3,13 @@ open Prelude
 module A = Automata.Simple.MakeExtendedString (Number.Rational)
 open Number.Rational
 
-let step = num_of_int 1 // num_of_int 10
+let step = of_int 1 / of_int 10
 
 let random_strat =
   A.Strategy.random_label
     10
     (A.Strategy.random_leap
-       A.I.(num_of_int 0 =-= num_of_int 1)
+       A.I.(of_int 0 =-= of_int 1)
        (round_up step)
        (round_down step)
        random)
@@ -17,20 +17,20 @@ let random_strat =
 
 let fast_strat =
   A.Strategy.random_label 10
-  @@ A.Strategy.fast (A.I.make_include (num_of_int 0) (num_of_int 2)) (round_down step)
+  @@ A.Strategy.fast (A.I.make_include (of_int 0) (of_int 2)) (round_down step)
 ;;
 
-let one = num_of_int 1
-let two = num_of_int 2
-let hundred = num_of_int 100
-let half = Ratio.(num_of_int 1 // num_of_int 2)
+let one = of_int 1
+let two = of_int 2
+let hundred = of_int 100
+let half = Ratio.(of_int 1 / of_int 2)
 
 let () =
-let _ = Random.init 127649812489 in
-  let ie = num_of_int 1 in
-  let rr = num_of_int 30 // num_of_int 60 in
-  let inspiration_duration = one // rr // (one +/ ie) in
-  let trigger_delay = num_of_int 7 // num_of_int 10 in
+  let _ = Random.init 127649812489 in
+  let ie = of_int 1 in
+  let rr = of_int 30 / of_int 60 in
+  let inspiration_duration = one / rr / (one + ie) in
+  let trigger_delay = of_int 7 / of_int 10 in
   let spec =
     (* [
        Rtccsl.AbsPeriodic ("a", two, Ratio.(neg half, half), one)
@@ -49,13 +49,13 @@ let _ = Random.init 127649812489 in
       ; Precedence ("trigger.start", "trigger.finish")
       ; Allow ("trigger.start", "trigger.finish", [ "sensor.inhale" ])
       ; RTdelay ("expiration", "trigger.start", (trigger_delay, trigger_delay))
-      ; RTdelay ("inspiration", "trigger.finish", (one // rr, one // rr))
+      ; RTdelay ("inspiration", "trigger.finish", (one / rr, one / rr))
       ; Delay ("next inspiration", "inspiration", (1, 1), None)
       ; Sample ("s", "sensor.inhale", "trigger.finish")
       ; Minus ("-", "trigger.finish", [ "s" ])
       ; Union ("cond", [ "sensor.inhale"; "-" ])
       ; FirstSampled ("first", "cond", "trigger.finish")
-      ; RTdelay ("first", "next inspiration", (one // hundred, two//hundred))
+      ; RTdelay ("first", "next inspiration", (one / hundred, two / hundred))
       ]
   in
   let a = A.of_spec spec in

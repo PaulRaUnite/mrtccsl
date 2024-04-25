@@ -26,12 +26,14 @@
   ocaml
   dune
   camllib
+  apron
   bddapron
   ppx_sexp_conv
   uuseg
   uutf
   ppx_assert
   ppx_inline_test
+  gmp
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test))
