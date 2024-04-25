@@ -5,8 +5,6 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
-  module SetC = Set.Make (C)
-
   module SetCI = Set.Make (struct
       type t = C.t * int
 
@@ -40,7 +38,20 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
     use_more_cond_bexp @@ And (formula @ List.map (fun (c, i) -> lc_connection c i) vars)
   ;;
 
-  let postcondition clocks formulae =
+  let clocks_of formulae =
+    let module SetC = Set.Make (C) in
+    let fold_formula =
+      fold_bexp (fun c _ acc ->
+        match c with
+        | Some c -> SetC.add c acc
+        | None -> acc)
+    in
+    let clocks_set = List.fold_left fold_formula SetC.empty formulae in
+    SetC.elements clocks_set
+  ;;
+
+  let postcondition formulae =
+    let clocks = clocks_of formulae in
     let intervals =
       List.map (fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0)) formulae
     in
@@ -89,21 +100,11 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
   ;;
 
   let proof_obligations formulae =
-    let clocks =
-      SetC.elements
-      @@ List.fold_left
-           (fold_bexp (fun c _ acc ->
-              match c with
-              | Some c -> SetC.add c acc
-              | None -> acc))
-           SetC.empty
-           formulae
-    in
-    let post_compound = postcondition clocks formulae in
+    let post_compound = postcondition formulae in
     let post = use_more_cond_bexp post_compound in
     let cond = inductive_step formulae in
     let pre = precondition post in
     let init = init_cond post_compound in
-    init, pre, cond, post
+    norm init, norm pre, norm cond, norm post
   ;;
 end
