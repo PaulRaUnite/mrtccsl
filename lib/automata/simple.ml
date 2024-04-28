@@ -208,15 +208,15 @@ module Make (C : ID) (N : Num) = struct
   let of_constr (cons : (clock, I.num) Rtccsl.constr) : t =
     let label_list = List.map L.of_list in
     match cons with
-    | Precedence (c1, c2) -> prec c1 c2 true
-    | Causality (c1, c2) -> prec c1 c2 false
+    | Precedence { cause; effect } -> prec cause effect true
+    | Causality { cause; effect } -> prec cause effect false
     | Exclusion clocks ->
       let l = label_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
       stateless l clocks
     | Coincidence clocks ->
       let l = label_list [ clocks; [] ] in
       stateless l clocks
-    | RTdelay (a, b, (l, r)) ->
+    | RTdelay { out=b; arg=a; delay = l, r } ->
       let queue = Queue.create () in
       let delay = I.(l =-= r) in
       let g now =
@@ -238,30 +238,31 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | CumulPeriodic (c, d, (e1, e2), off) | AbsPeriodic (c, d, (e1, e2), off) ->
+    | CumulPeriodic { out; period; error = e1, e2; offset }
+    | AbsPeriodic { out; period; error = e1, e2; offset } ->
       let e = I.(e1 =-= e2) in
       let last = ref None in
       let g now =
-        let next, right_bound =
+        let when_next, when_empty =
           match !last with
-          | None -> I.shift_by e off, N.(off + e2)
-          | Some v -> I.shift_by e N.(d + v), N.(v + d + e2)
+          | None -> I.shift_by e offset, I.(now <-> N.(offset + e2))
+          | Some v -> I.shift_by e N.(period + v), I.(now <-> N.(v + period + e2))
         in
-        let generic = I.pinf_strict now in
-        [ L.of_list [ c ], I.inter generic next; (L.empty, I.(now <-> right_bound)) ]
+        let positive_int = I.pinf_strict now in
+        [ L.of_list [ out ], I.inter positive_int when_next; L.empty, when_empty ]
       in
-      let clocks = L.of_list [ c ] in
+      let clocks = L.of_list [ out ] in
       let t _ (l, n') =
         let _ =
-          if L.mem c l
+          if L.mem out l
           then (
             let update =
               match cons with
               | CumulPeriodic _ -> n'
               | AbsPeriodic _ ->
                 (match !last with
-                 | None -> off
-                 | Some last -> N.(last + d))
+                 | None -> offset
+                 | Some last -> N.(last + period))
               | _ -> failwith "unreachable"
             in
             last := Some update)
@@ -269,14 +270,17 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Sporadic (c, d) ->
+    | Sporadic { out = c; at_least = d; strict } ->
       let last = ref None in
       let g now =
         match !last with
         | None -> [ L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now ]
         | Some v ->
           let next_after = N.(d + v) in
-          [ L.of_list [ c ], I.pinf next_after; (L.empty, I.(now <-> next_after)) ]
+          [ ( L.of_list [ c ]
+            , if strict then I.pinf_strict next_after else I.pinf next_after )
+          ; (L.empty, I.(now <-> next_after))
+          ]
       in
       let clocks = L.of_list [ c ] in
       let t _ (l, n') =
@@ -284,7 +288,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Periodic (out, base, p) ->
+    | Periodic { out; base; period = p } ->
       let clocks = L.of_list [ out; base ] in
       let labels_eqp = label_list [ [ base; out ]; [] ] in
       let labels_lp = label_list [ [ base ]; [] ] in
@@ -301,7 +305,7 @@ module Make (C : ID) (N : Num) = struct
         0 <= !c && !c < p
       in
       g, t, clocks
-    | Sample (out, arg, base) ->
+    | Sample { out; arg; base } ->
       let clocks = L.of_list [ out; arg; base ] in
       let labels_latched =
         label_list [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
@@ -317,7 +321,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Delay (out, arg, (d1, d2), base) ->
+    | Delay { out; arg; delay = d1, d2; base } ->
       let _ = assert (d1 <= d2) in
       let diff_base = Option.is_some base in
       let base = Option.value base ~default:arg in
@@ -370,18 +374,18 @@ module Make (C : ID) (N : Num) = struct
         test2 && test3
       in
       g, t, clocks
-    | Minus (out, arg, exclude) ->
+    | Minus { out; arg; except } ->
       let labels =
         []
         :: [ out; arg ]
-        :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz exclude)
+        :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz except)
       in
-      let clocks = out :: arg :: exclude in
+      let clocks = out :: arg :: except in
       stateless (label_list labels) clocks
-    | Union (out, args) ->
+    | Union { out; args } ->
       let labels = [] :: List.map (fun l -> out :: l) (List.powerset_nz args) in
       stateless (label_list labels) (out :: args)
-    | Alternate (a, b) ->
+    | Alternate { first = a; second = b } ->
       let clocks = L.of_list [ a; b ] in
       let phase = ref false in
       let g n =
@@ -397,7 +401,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Fastest (out, a, b) | Slowest (out, a, b) ->
+    | Fastest { out; left = a; right = b } | Slowest { out; left = a; right = b } ->
       let count = ref 0 in
       let clocks = L.of_list [ out; a; b ] in
       let g n =
@@ -435,7 +439,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Allow (from, until, args) | Forbid (from, until, args) ->
+    | Allow { from; until; args } | Forbid { from; until; args } ->
       let clocks = L.of_list (from :: until :: args) in
       let phase = ref false in
       let g_allow n =
@@ -482,7 +486,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | FirstSampled (out, arg, base) ->
+    | FirstSampled { out; arg; base } ->
       let sampled = ref false in
       let clocks = L.of_list [ out; arg; base ] in
       let g n =
@@ -500,7 +504,7 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | LastSampled (out, arg, base) ->
+    | LastSampled { out; arg; base } ->
       let last = ref false in
       let clocks = L.of_list [ out; arg; base ] in
       let g n =
@@ -517,8 +521,9 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Subclocking (a, b) -> stateless (label_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
-    | Intersection (out, args) ->
+    | Subclocking { sub = a; super = b } ->
+      stateless (label_list [ []; [ a; b ]; [ b ] ]) [ a; b ]
+    | Intersection { out; args } ->
       let labels = List.powerset args in
       let labels = List.map (fun l -> if l = args then out :: args else l) labels in
       stateless (label_list labels) (out :: args)
@@ -774,8 +779,10 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let sampling1 = A.of_constr @@ Delay ("o", "i", (0, 0), Some "b") in
-      let sampling2 = A.of_constr @@ Sample ("o", "i", "b") in
+      let sampling1 =
+        A.of_constr @@ Delay { out = "o"; arg = "i"; delay = 0, 0; base = Some "b" }
+      in
+      let sampling2 = A.of_constr @@ Sample { out = "o"; arg = "i"; base = "b" } in
       let steps = 10 in
       let trace = A.bisimulate random_strat sampling1 sampling2 steps in
       (* match trace with
@@ -785,7 +792,7 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let a = A.of_constr (Precedence ("a", "b")) in
+      let a = A.of_constr (Precedence { cause = "a"; effect = "b" }) in
       let trace = A.gen_trace slow_strat a 10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);

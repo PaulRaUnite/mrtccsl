@@ -118,11 +118,11 @@ let exact_rel c =
   let i = 0 in
   (*dummy variable*)
   match c with
-  | Precedence (a, b) -> a @ i < b @ i
-  | Causality (a, b) -> a @ i <= b @ i
-  | RTdelay (arg, out, (e1, e2)) -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
-  | Delay (out, arg, (d1, d2), None) when Stdlib.(d1 = d2) ->
-    out @ Stdlib.(i - d1) = arg @ i
+  | Precedence { cause; effect } -> cause @ i < effect @ i
+  | Causality { cause; effect } -> cause @ i <= effect @ i
+  | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
+  | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
+    (out @ Stdlib.(i - d1)) = arg @ i
   | _ -> failwith "unimplemented"
 ;;
 

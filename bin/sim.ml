@@ -45,17 +45,31 @@ let () =
     (* [Rtccsl.Allow ("from", "to", ["a"])] *)
     (* [Rtccsl.FirstSampled("o", "a", "b"); Rtccsl.Sample ("s", "a", "b")] *)
     Rtccsl.
-      [ RTdelay ("inspiration", "expiration", (inspiration_duration, inspiration_duration))
-      ; Precedence ("trigger.start", "trigger.finish")
-      ; Allow ("trigger.start", "trigger.finish", [ "sensor.inhale" ])
-      ; RTdelay ("expiration", "trigger.start", (trigger_delay, trigger_delay))
-      ; RTdelay ("inspiration", "trigger.finish", (one / rr, one / rr))
-      ; Delay ("next inspiration", "inspiration", (1, 1), None)
-      ; Sample ("s", "sensor.inhale", "trigger.finish")
-      ; Minus ("-", "trigger.finish", [ "s" ])
-      ; Union ("cond", [ "sensor.inhale"; "-" ])
-      ; FirstSampled ("first", "cond", "trigger.finish")
-      ; RTdelay ("first", "next inspiration", (one / hundred, two / hundred))
+      [ RTdelay
+          { arg = "inspiration"
+          ; out = "expiration"
+          ; delay = inspiration_duration, inspiration_duration
+          }
+      ; Precedence { cause = "trigger.start"; effect = "trigger.finish" }
+      ; Allow
+          { from = "trigger.start"; until = "trigger.finish"; args = [ "sensor.inhale" ] }
+      ; RTdelay
+          { arg = "expiration"
+          ; out = "trigger.start"
+          ; delay = trigger_delay, trigger_delay
+          }
+      ; RTdelay
+          { arg = "inspiration"; out = "trigger.finish"; delay = one / rr, one / rr }
+      ; Delay { out = "next inspiration"; arg = "inspiration"; delay = 1, 1; base = None }
+      ; Sample { out = "s"; arg = "sensor.inhale"; base = "trigger.finish" }
+      ; Minus { out = "-"; arg = "trigger.finish"; except = [ "s" ] }
+      ; Union { out = "cond"; args = [ "sensor.inhale"; "-" ] }
+      ; FirstSampled { out = "first"; arg = "cond"; base = "trigger.finish" }
+      ; RTdelay
+          { arg = "first"
+          ; out = "next inspiration"
+          ; delay = one / hundred, two / hundred
+          }
       ]
   in
   let a = A.of_spec spec in

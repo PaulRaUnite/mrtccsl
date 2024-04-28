@@ -47,101 +47,129 @@ let rtwt spec t f =
 let () =
   Alcotest.run
     "Simple Automata"
-    [ "causality", rglwt [ Causality ("a", "b") ] [ "(ab)(ab)(ab)" ] [ "bbb"; "bababa" ]
-    ; "precedence", rglwt [ Precedence ("a", "b") ] [ "a(ab)(ab)" ] [ "(ab)(ab)" ]
+    [ ( "causality"
+      , rglwt
+          [ Causality { cause = "a"; effect = "b" } ]
+          [ "(ab)(ab)(ab)" ]
+          [ "bbb"; "bababa" ] )
+    ; ( "precedence"
+      , rglwt [ Precedence { cause = "a"; effect = "b" } ] [ "a(ab)(ab)" ] [ "(ab)(ab)" ]
+      )
     ; "exclusion", rglwt [ Exclusion [ "a"; "b"; "c" ] ] [ "abc" ] [ "(ab)"; "(abc)" ]
-    ; "periodic", rglwt [ Periodic ("o", "b", 3) ] [ "bb(bo)bb(bo)" ] [ "bbbbbb" ]
-    ; "sample", rglwt [ Sample ("o", "i", "b") ] [ "ii(bo)"; "bbi(bo)" ] [ "bbo"; "(bo)" ]
+    ; ( "periodic"
+      , rglwt
+          [ Periodic { out = "o"; base = "b"; period = 3 } ]
+          [ "bb(bo)bb(bo)" ]
+          [ "bbbbbb" ] )
+    ; ( "sample"
+      , rglwt
+          [ Sample { out = "o"; arg = "i"; base = "b" } ]
+          [ "ii(bo)"; "bbi(bo)" ]
+          [ "bbo"; "(bo)" ] )
     ; ( "delay-trivial"
-      , rglwt [ Delay ("o", "i", (0, 0), None) ] [ "(oi)(oi)" ] [ "ooo"; "iiii" ] )
+      , rglwt
+          [ Delay { out = "o"; arg = "i"; delay = 0, 0; base = None } ]
+          [ "(oi)(oi)" ]
+          [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
       , rglwt
-          [ Delay ("o", "i", (2, 2), None) ]
+          [ Delay { out = "o"; arg = "i"; delay = 2, 2; base = None } ]
           [ "ii(oi)(oi)" ]
           [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
-          [ Delay ("o", "i", (2, 4), None) ]
+          [ Delay { out = "o"; arg = "i"; delay = 2, 4; base = None } ]
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
           [ "iiiii(oi)" ] )
     ; ( "delay-undet-zero"
       , rglwt
-          [ Delay ("o", "i", (0, 2), None) ]
+          [ Delay { out = "o"; arg = "i"; delay = 0, 2; base = None } ]
           [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
           [ "iiiii"; "oooo" ] )
     ; ( "delay-sample"
       , rglwt
-          [ Delay ("o", "i", (1, 2), Some "b") ]
+          [ Delay { out = "o"; arg = "i"; delay = 1, 2; base = Some "b" } ]
           [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
           [ "ooo"; "(ib)bbb(ob)" ] )
     ; ( "minus"
-      , rglwt [ Minus ("m", "a", [ "b"; "c" ]) ] [ "(ma)"; "(ab)(ac)(abc)"; "bc" ] [ "a" ]
-      )
+      , rglwt
+          [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ]
+          [ "(ma)"; "(ab)(ac)(abc)"; "bc" ]
+          [ "a" ] )
     ; ( "union"
       , rglwt
-          [ Union ("u", [ "a"; "b" ]) ]
+          [ Union { out = "u"; args = [ "a"; "b" ] } ]
           [ "(uab)(ua)(ub)" ]
           [ "u"; "ab"; "ba"; "(ab)" ] )
-    ; "alternate", rglwt [ Alternate ("a", "b") ] [ "abab" ] [ "baba"; "aa" ]
+    ; ( "alternate"
+      , rglwt [ Alternate { first = "a"; second = "b" } ] [ "abab" ] [ "baba"; "aa" ] )
     ; ( "fastest"
       , rglwt
-          [ Fastest ("o", "a", "b") ]
+          [ Fastest { out = "o"; left = "a"; right = "b" } ]
           [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)" ]
           [ "aaaa"; "bbb"; "ooo" ] )
     ; ( "slowest"
       , rglwt
-          [ Slowest ("o", "a", "b") ]
+          [ Slowest { out = "o"; left = "a"; right = "b" } ]
           [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
           [ "ooo" ] )
     ; ( "allow"
       , rglwt
-          [ Allow ("f", "t", [ "a"; "b" ]) ]
+          [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] } ]
           [ "fab(ab)t"; "(fa)(tb)" ]
           [ "aftb"; "b" ] )
     ; ( "allow-prec"
       , rglwt
-          [ Allow ("f", "t", [ "a"; "b" ]); Precedence ("f", "a"); Precedence ("a", "t") ]
+          [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] }
+          ; Precedence { cause = "f"; effect = "a" }
+          ; Precedence { cause = "a"; effect = "t" }
+          ]
           [ "fat"; "fabt"; "fa(ft)at" ]
           [ "aftb"; "b"; "(fa)(tb)"; "faaat" ] )
     ; ( "forbid"
       , rglwt
-          [ Forbid ("f", "t", [ "a" ]) ]
+          [ Forbid { from = "f"; until = "t"; args = [ "a" ] } ]
           [ ""; "f"; "t"; "a(ft)a"; "(fta)" ]
           [ "fat"; "ffatt" ] )
     ; ( "forbid-prec"
       , rglwt
-          [ Forbid ("f", "t", [ "a" ]); Precedence ("f", "a"); Precedence ("a", "t") ]
+          [ Forbid { from = "f"; until = "t"; args = [ "a" ] }
+          ; Precedence { cause = "f"; effect = "a" }
+          ; Precedence { cause = "a"; effect = "t" }
+          ]
           [ ""; "f" ]
           [ "fat" ] )
     ; ( "fl-sampled"
       , rglwt
-          [ FirstSampled ("f", "a", "b"); LastSampled ("l", "a", "b") ]
+          [ FirstSampled { out = "f"; arg = "a"; base = "b" }
+          ; LastSampled { out = "l"; arg = "a"; base = "b" }
+          ]
           [ "(falb)(fa)(al)b" ]
           [ "ab"; "(lab)" ] )
-    ; "subclock", rglwt [ Subclocking ("a", "b") ] [ "(ab)b" ] [ "a" ]
+    ; "subclock", rglwt [ Subclocking { sub = "a"; super = "b" } ] [ "(ab)b" ] [ "a" ]
     ; ( "inter"
       , rglwt
-          [ Intersection ("i", [ "a"; "b"; "c" ]) ]
+          [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ]
           [ "(iabc)abc"; "(ab)" ]
           [ "(abc)"; "(iab)" ] )
     ; ( "rt-delay"
       , rtwt
-          [ RTdelay ("i", "o", (1, 3)) ]
+          [ RTdelay { arg = "i"; out = "o"; delay = 1, 3 } ]
           [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
           [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
     ; ( "cum-period"
       , rtwt
-          [ CumulPeriodic ("o", 4, (-1, 1), 2) ]
+          [ CumulPeriodic { out = "o"; period = 4; error = -1, 1; offset = 2 } ]
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 4; 7 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 5; 11 ] ] )
     ; ( "abs-period"
       , rtwt
-          [ AbsPeriodic ("o", 4, (-1, 1), 2) ]
+          [ AbsPeriodic {out="o";period= 4;error= (-1, 1);offset= 2} ]
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
-          [ Sporadic ("a", 2) ]
+          [ Sporadic {out="a";at_least= 2;strict=false} ]
           [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]
