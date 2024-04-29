@@ -74,6 +74,8 @@ let rec use_more_cond_bexp = function
 ;;
 
 let rec norm = function
+  | Or [] -> And []
+  | Or [ x ] -> x
   | Or list ->
     let to_flatten, others =
       List.partition_map
@@ -84,6 +86,7 @@ let rec norm = function
         list
     in
     Or (others @ List.flatten to_flatten)
+  | And [ x ] -> x
   | And list ->
     let to_flatten, others =
       List.partition_map

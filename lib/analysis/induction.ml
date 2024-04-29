@@ -1,7 +1,13 @@
 open Prelude
 open Denotational
 
-module Make (C : OrderedType) (N : Denotational.Num) = struct
+module type Var = sig
+  include OrderedType
+
+  val to_string : t -> string
+end
+
+module Make (C : Var) (N : Denotational.Num) = struct
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
@@ -105,6 +111,89 @@ module Make (C : OrderedType) (N : Denotational.Num) = struct
     let cond = inductive_step formulae in
     let pre = precondition post in
     let init = init_cond post_compound in
-    norm init, norm pre, norm cond, norm post
+    init, pre, cond, post
+  ;;
+
+  let to_polyhedra man index_name formula =
+    let open Apron in
+    let formula = norm formula in
+    let pp_var v i = Printf.sprintf "%s[%i]" (C.to_string v) i in
+    let clock_vars =
+      fold_bexp
+        (fun v i acc ->
+          match v with
+          | Some v ->
+            let var = pp_var v i in
+            Var.of_string var :: acc
+          | None -> acc)
+        []
+        formula
+    in
+    let index_var = Var.of_string (C.to_string index_name) in
+    let env = Apron.Environment.make [| index_var |] (Array.of_list clock_vars) in
+    let op2op = function
+      | Add -> Texpr1.Add
+      | Sub -> Texpr1.Sub
+      | Mul -> Texpr1.Mul
+      | Div -> Texpr1.Div
+    in
+    let rec te2te = function
+      | TagVar (v, i) -> Texpr1.var env (Var.of_string (pp_var v i))
+      | Index i ->
+        Texpr1.binop
+          Texpr1.Add
+          (Texpr1.var env index_var)
+          (Texpr1.cst env (Coeff.s_of_int i))
+          Texpr1.Int
+          Texpr1.Near
+      | Const c -> Texpr1.cst env (Coeff.s_of_mpqf c)
+      | Op (l, op, r) -> Texpr1.binop (op2op op) (te2te l) (te2te r) Texpr1.Real Near
+      | ZeroCond _ ->
+        invalid_arg "conditionals should not appear at polyhedra translation"
+    in
+    let rec fold_formula domain = function
+      | And [] -> domain
+      | And list -> List.fold_left fold_formula domain list
+      | Or _ -> invalid_arg "polyhedra only supports conjunctions"
+      | Linear (l, op, r) ->
+        let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
+        let op, expr =
+          match op with
+          | Eq -> Tcons1.EQ, diff
+          | Less -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+          | LessEq -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+          | More -> Tcons1.SUP, diff
+          | MoreEq -> Tcons1.SUPEQ, diff
+        in
+        let lincond = Tcons1.make expr op in
+        (* let _ = Format.printf "%a" Tcons1.print lincond in *)
+        let array = Tcons1.array_make env 1 in
+        let _ = Tcons1.array_set array 0 lincond in
+        Abstract1.meet_tcons_array man domain array
+    in
+    fold_formula (Abstract1.top man env) formula
   ;;
 end
+
+let%test_module _ =
+  (module struct
+    module A = struct
+include Make (String) (Number.Rational)
+      include MakeDebug(String)(Number.Rational)
+
+end
+    
+
+    let man = Polka.manager_alloc_loose ()
+
+    let%test_unit _ =
+      assert (Apron.Abstract1.is_top man (A.to_polyhedra man "i" (And [])))
+    ;;
+    let%test_unit _ =
+      let c = Rtccsl.Precedence {cause="a"; effect="b"} in
+      let formula = Denotational.exact_rel c in
+      (* let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in *)
+      assert (not @@ Apron.Abstract1.is_bottom man (A.to_polyhedra man "i" formula))
+    ;;
+  end)
+;;
