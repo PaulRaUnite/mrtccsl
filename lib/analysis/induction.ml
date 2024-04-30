@@ -136,13 +136,13 @@ module type Alloc = sig
 end
 
 module PolkaDomain
+    (A : Alloc)
     (V : Var)
     (N : sig
        type t
 
        val to_rational : t -> Number.Rational.t
-     end)
-    (A : Alloc) =
+     end) =
 struct
   open Apron
 
@@ -217,7 +217,8 @@ module VPLDomain
        type t
 
        val to_q : t -> Q.t
-     end) : Domain = struct
+     end) =
+struct
   module Ident = Vpl.UserInterface.Lift_Ident (String)
 
   module Term = struct
@@ -290,38 +291,61 @@ module Analysis (D : Domain) = struct
   ;;
 end
 
+module Test
+    (MakeDomain : functor
+       (V : Var)
+       (N : sig
+          type t
+
+          val to_rational : t -> Number.Rational.t
+          val to_q : t -> Q.t
+        end)
+       -> Domain with type v = V.t and type n = N.t) =
+struct
+  module N = struct
+    include Number.Rational
+
+    let to_rational = Fun.id
+
+    let to_q x =
+      let num = Mpz.get_int (Mpqf.get_num x) in
+      let den = Mpz.get_int (Mpqf.get_den x) in
+      Q.make (Z.of_int num) (Z.of_int den)
+    ;;
+  end
+
+  module A = struct
+    include Transformation (String) (N)
+    include MakeDebug (String) (N)
+  end
+
+  module D = MakeDomain (String) (N)
+  module An = Analysis (D)
+
+  let%test_unit _ = assert (D.is_top (An.to_polyhedra "i" (And [])))
+
+  let%test_unit _ =
+    let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
+    let formula = Denotational.exact_rel c in
+    let domain = An.to_polyhedra "i" formula in
+    let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in
+    let _ = Format.printf "%s" (D.to_string domain) in
+    assert (not @@ D.is_bottom domain)
+  ;;
+end
+
 let%test_module _ =
   (module struct
-    module A = struct
-      include Transformation (String) (Number.Rational)
-      include MakeDebug (String) (Number.Rational)
-    end
+    include Test (PolkaDomain (struct
+        type dom = Polka.loose Polka.t
 
-    module D =
-      PolkaDomain
-        (String)
-        (struct
-          type t = Number.Rational.t
+        let alloc = Polka.manager_alloc_loose ()
+      end))
+  end)
+;;
 
-          let to_rational = Fun.id
-        end)
-        (struct
-          type dom = Polka.loose Polka.t
-
-          let alloc = Polka.manager_alloc_loose ()
-        end)
-
-    module An = Analysis (D)
-
-    let%test_unit _ = assert (D.is_top (An.to_polyhedra "i" (And [])))
-
-    let%test_unit _ =
-      let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
-      let formula = Denotational.exact_rel c in
-      let domain = An.to_polyhedra "i" formula in
-      let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in
-      let _ = Format.printf "%a" Apron.Abstract1.print domain in
-      assert (not @@ D.is_bottom domain)
-    ;;
+let%test_module _ =
+  (module struct
+    include Test (VPLDomain)
   end)
 ;;
