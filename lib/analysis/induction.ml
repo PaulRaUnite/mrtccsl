@@ -7,7 +7,7 @@ module type Var = sig
   val to_string : t -> string
 end
 
-module Make (C : Var) (N : Denotational.Num) = struct
+module Transformation (C : Var) (N : Denotational.Num) = struct
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
@@ -113,24 +113,55 @@ module Make (C : Var) (N : Denotational.Num) = struct
     let init = init_cond post_compound in
     init, pre, cond, post
   ;;
+end
 
-  let to_polyhedra man index_name formula =
-    let open Apron in
-    let formula = norm formula in
-    let pp_var v i = Printf.sprintf "%s[%i]" (C.to_string v) i in
-    let clock_vars =
-      fold_bexp
-        (fun v i acc ->
-          match v with
-          | Some v ->
-            let var = pp_var v i in
-            Var.of_string var :: acc
-          | None -> acc)
-        []
-        formula
-    in
-    let index_var = Var.of_string (C.to_string index_name) in
-    let env = Apron.Environment.make [| index_var |] (Array.of_list clock_vars) in
+module type Domain = sig
+  type t
+  type v
+  type n
+
+  val top : v -> (v * int) list -> t
+  val add_constraint : v -> t -> (v, n) Denotational.bool_expr -> t
+  val leq : t -> t -> bool
+  val is_bottom : t -> bool
+  val is_top : t -> bool
+
+  include Stringable with type t := t
+end
+
+module type Alloc = sig
+  type dom
+
+  val alloc : dom Apron.Manager.t
+end
+
+module PolkaDomain
+    (V : Var)
+    (N : sig
+       type t
+
+       val to_rational : t -> Number.Rational.t
+     end)
+    (A : Alloc) =
+struct
+  open Apron
+
+  type t = A.dom Abstract1.t
+  type n = N.t
+  type v = V.t
+
+  let pp_var (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
+  let v_to_var = Var.of_string << V.to_string
+
+  let top index reals =
+    let index_var = v_to_var index in
+    let reals = Array.of_seq (Seq.map (Var.of_string << pp_var) (List.to_seq reals)) in
+    Abstract1.top A.alloc (Environment.make [| index_var |] reals)
+  ;;
+
+  let rec add_constraint index domain =
+    let env = Abstract1.env domain in
+    let index_var = v_to_var index in
     let op2op = function
       | Add -> Texpr1.Add
       | Sub -> Texpr1.Sub
@@ -138,7 +169,9 @@ module Make (C : Var) (N : Denotational.Num) = struct
       | Div -> Texpr1.Div
     in
     let rec te2te = function
-      | TagVar (v, i) -> Texpr1.var env (Var.of_string (pp_var v i))
+      | TagVar (v, i) ->
+        let var = Var.of_string (pp_var (v, i)) in
+        Texpr1.var env var
       | Index i ->
         Texpr1.binop
           Texpr1.Add
@@ -146,54 +179,86 @@ module Make (C : Var) (N : Denotational.Num) = struct
           (Texpr1.cst env (Coeff.s_of_int i))
           Texpr1.Int
           Texpr1.Near
-      | Const c -> Texpr1.cst env (Coeff.s_of_mpqf c)
+      | Const c -> Texpr1.cst env (Coeff.s_of_mpqf @@ N.to_rational c)
       | Op (l, op, r) -> Texpr1.binop (op2op op) (te2te l) (te2te r) Texpr1.Real Near
       | ZeroCond _ ->
         invalid_arg "conditionals should not appear at polyhedra translation"
     in
-    let rec fold_formula domain = function
-      | And [] -> domain
-      | And list -> List.fold_left fold_formula domain list
-      | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-      | Linear (l, op, r) ->
-        let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
-        let op, expr =
-          match op with
-          | Eq -> Tcons1.EQ, diff
-          | Less -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-          | LessEq -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-          | More -> Tcons1.SUP, diff
-          | MoreEq -> Tcons1.SUPEQ, diff
-        in
-        let lincond = Tcons1.make expr op in
-        (* let _ = Format.printf "%a" Tcons1.print lincond in *)
-        let array = Tcons1.array_make env 1 in
-        let _ = Tcons1.array_set array 0 lincond in
-        Abstract1.meet_tcons_array man domain array
+    function
+    | And [] -> domain
+    | And list -> List.fold_left (add_constraint index) domain list
+    | Or _ -> invalid_arg "polyhedra only supports conjunctions"
+    | Linear (l, op, r) ->
+      let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
+      let op, expr =
+        match op with
+        | Eq -> Tcons1.EQ, diff
+        | Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+        | LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+        | More -> Tcons1.SUP, diff
+        | MoreEq -> Tcons1.SUPEQ, diff
+      in
+      let lincond = Tcons1.make expr op in
+      let _ = Format.printf "%a\n" Tcons1.print lincond in
+      let array = Tcons1.array_make env 1 in
+      let _ = Tcons1.array_set array 0 lincond in
+      Abstract1.meet_tcons_array A.alloc domain array
+  ;;
+
+  let leq = Apron.Abstract1.is_leq A.alloc
+  let is_bottom = Apron.Abstract1.is_bottom A.alloc
+  let is_top = Apron.Abstract1.is_top A.alloc
+  let to_string d = Format.asprintf "%a" Abstract1.print d
+end
+
+module Analysis (D : Domain) = struct
+  let to_polyhedra index_name formula =
+    let formula = norm formula in
+    let clock_vars =
+      fold_bexp
+        (fun v i acc ->
+          match v with
+          | Some v -> (v, i) :: acc
+          | None -> acc)
+        []
+        formula
     in
-    fold_formula (Abstract1.top man env) formula
+    D.add_constraint index_name (D.top index_name clock_vars) formula
   ;;
 end
 
 let%test_module _ =
   (module struct
     module A = struct
-include Make (String) (Number.Rational)
-      include MakeDebug(String)(Number.Rational)
+      include Transformation (String) (Number.Rational)
+      include MakeDebug (String) (Number.Rational)
+    end
 
-end
-    
+    module D =
+      PolkaDomain
+        (String)
+        (struct
+          type t = Number.Rational.t
 
-    let man = Polka.manager_alloc_loose ()
+          let to_rational = Fun.id
+        end)
+        (struct
+          type dom = Polka.loose Polka.t
+
+          let alloc = Polka.manager_alloc_loose ()
+        end)
+
+    module An = Analysis (D)
+
+    let%test_unit _ = assert (D.is_top (An.to_polyhedra "i" (And [])))
 
     let%test_unit _ =
-      assert (Apron.Abstract1.is_top man (A.to_polyhedra man "i" (And [])))
-    ;;
-    let%test_unit _ =
-      let c = Rtccsl.Precedence {cause="a"; effect="b"} in
+      let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
       let formula = Denotational.exact_rel c in
-      (* let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in *)
-      assert (not @@ Apron.Abstract1.is_bottom man (A.to_polyhedra man "i" formula))
+      let domain = An.to_polyhedra "i" formula in
+      let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in
+      let _ = Format.printf "%a" Apron.Abstract1.print domain in
+      assert (not @@ D.is_bottom domain)
     ;;
   end)
 ;;
