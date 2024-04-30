@@ -211,6 +211,69 @@ struct
   let to_string d = Format.asprintf "%a" Abstract1.print d
 end
 
+module VPLDomain
+    (V : Var)
+    (N : sig
+       type t
+
+       val to_q : t -> Q.t
+     end) : Domain = struct
+  module Ident = Vpl.UserInterface.Lift_Ident (String)
+
+  module Term = struct
+    type t = Vpl.WrapperTraductors.Interface(Vpl.Domains.UncertifiedQ.Coeff).Term.t
+
+    let to_term t = t
+    let of_term t = t
+  end
+
+  module D = Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedQ) (Ident) (Term)
+
+  type t = Vpl.UserInterface.UncertifiedQ.t
+  type v = V.t
+  type n = N.t
+
+  let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
+  let top _ _ = D.top
+  let leq = D.leq
+  let is_top d = d = D.top
+  let is_bottom = D.is_bottom
+  let to_string = D.to_string V.to_string
+
+  let rec te2ae index = function
+    | TagVar (v, i) -> D.Term.Var (var (v, i))
+    | Const n -> D.Term.Cte (N.to_q n)
+    | Index i ->
+      D.Term.Add (D.Term.Var (Ident.toVar @@ V.to_string index), D.Term.Cte (Q.of_int i))
+    | Op (l, op, r) ->
+      let l = te2ae index l in
+      let r = te2ae index r in
+      (match op with
+       | Add -> D.Term.Add (l, r)
+       | Sub -> D.Term.Add (l, D.Term.Opp r)
+       | Mul -> D.Term.Mul (l, r)
+       | Div -> D.Term.Div (l, r))
+    | ZeroCond _ -> failwith "or condition should not appear in polyhedra"
+  ;;
+
+  let op2op = function
+    | Eq -> Vpl.Cstr_type.EQ
+    | More -> Vpl.Cstr_type.GT
+    | Less -> Vpl.Cstr_type.LT
+    | MoreEq -> Vpl.Cstr_type.GE
+    | LessEq -> Vpl.Cstr_type.LE
+  ;;
+
+  let rec add_constraint index domain = function
+    | And [] -> domain
+    | And list -> List.fold_left (add_constraint index) domain list
+    | Or _ -> invalid_arg "polyhedra only supports conjunctions"
+    | Linear (l, op, r) ->
+      let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
+      D.assume (D.of_cond lincond) domain
+  ;;
+end
+
 module Analysis (D : Domain) = struct
   let to_polyhedra index_name formula =
     let formula = norm formula in
