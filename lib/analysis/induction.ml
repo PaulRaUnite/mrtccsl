@@ -14,6 +14,64 @@ end
 
 module Preprocess (C : Var) (N : Num) = struct
   open Denotational
+  open Rtccsl
+
+  exception NoExactConvexRelation
+
+  let exact_rel c =
+    let open Syntax in
+    let i = 0 in
+    (*dummy variable*)
+    match c with
+    | Precedence { cause; effect } -> cause @ i < effect @ i
+    | Causality { cause; effect } -> cause @ i <= effect @ i
+    | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
+    | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
+      (out @ Stdlib.(i - d1)) = arg @ i
+    | Fastest { out; left; right } -> out @ i = min (left @ i) (right @ i)
+    | Slowest { out; left; right } -> out @ i = max (left @ i) (right @ i)
+    | _ -> raise NoExactConvexRelation
+  ;;
+
+  let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
+    And (List.map exact_rel s)
+  ;;
+
+  exception NoOverApproximation
+
+  let over_rel c =
+    try exact_rel c with
+    | NoExactConvexRelation ->
+      let open Syntax in
+      let i = 0 in
+      (match c with
+       | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
+         let _ = arg in
+         (base @ Stdlib.(i - 1)) < out @ i && out @ i <= base @ i
+       | _ -> raise NoOverApproximation)
+  ;;
+
+  let safe_over_rel c =
+    try over_rel c with
+    | NoExactConvexRelation | NoOverApproximation -> And []
+  ;;
+
+  exception NoUnderApproximation
+
+  let under_rel c =
+    try exact_rel c with
+    | NoExactConvexRelation ->
+      let open Syntax in
+      let i = 0 in
+      (match c with
+       | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
+         let _ = arg in
+         (base @ Stdlib.(i - 1)) < out @ i && out @ i = arg @ i && arg @ i <= base @ i
+       | Sample { out; arg; base } ->
+         out @ i = base @ i
+         && arg @ i |> (ZeroCond ((base @ Stdlib.(i - 1)), N.zero), base @ i)
+       | _ -> raise NoUnderApproximation)
+  ;;
 
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
@@ -95,7 +153,8 @@ module Preprocess (C : Var) (N : Num) = struct
 
   let init_cond post =
     let rec init_cond_texp = function
-      | ZeroCond (_, init) -> Const init
+      | ZeroCond (_, init) ->
+        Const init (*FIXME: this is bullshit, need a condition here*)
       | Op (l, op, r) -> Op (init_cond_texp l, op, init_cond_texp r)
       | TagVar (_, i) when i = 0 -> Const N.zero
       | _ as e -> e
@@ -328,7 +387,7 @@ struct
     let to_rational = Fun.id
   end
 
-  module A = struct
+  module P = struct
     include Preprocess (String) (N)
     include Denotational.MakeDebug (String) (N)
   end
@@ -341,9 +400,9 @@ struct
 
   let%test_unit _ =
     let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
-    let formula = Denotational.Rtccsl.exact_rel c in
+    let formula = P.exact_rel c in
     let domain = An.to_polyhedra "i" formula in
-    let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in
+    let _ = Printf.printf "%s\n" (P.string_of_bool_expr formula) in
     let _ = Format.printf "%s" (D.to_string domain) in
     assert (not @@ D.is_bottom domain)
   ;;

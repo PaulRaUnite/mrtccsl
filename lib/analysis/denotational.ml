@@ -46,6 +46,10 @@ module Syntax = struct
   let ( * ) x y = Op (x, Mul, y)
   let ( / ) x y = Op (x, Div, y)
   let ( |> ) expr (l, r) = And [ l <= expr; expr <= r ]
+  let min x y = Min (x, y)
+  let max x y = Max (x, y)
+  let ( && ) l r = And [ l; r ]
+  let ( || ) l r = Or [ l; r ]
 end
 
 let rec fold_texp f acc = function
@@ -148,32 +152,6 @@ let rec fact_disj_bexp = function
     |> List.map (fun ((lcond, l), (rcond, r)) ->
       And ((Linear (l, op, r) :: lcond) @ rcond))
 ;;
-
-module Rtccsl = struct
-  open Rtccsl
-
-  let exact_rel c =
-    let open Syntax in
-    let i = 0 in
-    (*dummy variable*)
-    match c with
-    | Precedence { cause; effect } -> cause @ i < effect @ i
-    | Causality { cause; effect } -> cause @ i <= effect @ i
-    | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
-    | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
-      (out @ Stdlib.(i - d1)) = arg @ i
-    | _ -> failwith "unimplemented"
-  ;;
-
-  let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
-    And (List.map exact_rel s)
-  ;;
-end
-
-(*
-   let rec all_variables bexp =
-   let tvars = function
-   | *)
 
 open Prelude
 
