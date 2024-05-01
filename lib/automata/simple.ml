@@ -1,6 +1,7 @@
 open Prelude
 
 module type ID = sig
+  open Interface
   include OrderedType
   include Stringable with type t := t
   include Sexplib0.Sexpable.S with type t := t
@@ -47,7 +48,7 @@ end
 
 module type Num = sig
   include Interval.Num
-  include ExpOrder.T with type t := t
+  include Interface.ExpOrder.S with type t := t
 
   val zero : t
   val neg : t -> t

@@ -9,36 +9,6 @@ let ( and* ) x y =
   Some (x, y)
 ;;
 
-module type OrderedType = Set.OrderedType
-
-module ExpOrder = struct
-  module type T = sig
-    type t
-
-    val compare : t -> t -> int
-    val less : t -> t -> bool
-    val more : t -> t -> bool
-    val equal : t -> t -> bool
-    val less_eq : t -> t -> bool
-    val more_eq : t -> t -> bool
-    val min : t -> t -> t
-    val max : t -> t -> t
-  end
-
-  module Make (M : OrderedType) = struct
-    include M
-
-    let compare = M.compare
-    let less x y = M.compare x y < 0
-    let more x y = M.compare x y > 0
-    let equal x y = M.compare x y = 0
-    let less_eq x y = M.compare x y <= 0
-    let more_eq x y = M.compare x y >= 0
-    let min x y = if less_eq x y then x else y
-    let max x y = if more_eq x y then x else y
-  end
-end
-
 module List = struct
   include List
 
@@ -132,12 +102,6 @@ module List = struct
   let unfold_until f init n : 'a list = Seq.unfold f init |> Seq.take n |> List.of_seq
 end
 
-module type Stringable = sig
-  type t
-
-  val to_string : t -> string
-end
-
 module String = struct
   include String
 
@@ -157,8 +121,6 @@ module Buffer = struct
     done
   ;;
 end
-
-let rec ints n : int Seq.t = fun () -> Seq.Cons (n, ints (n + 1))
 
 (*TODO: maybe use doubleended list as discussed here: https://discuss.ocaml.org/t/how-to-represent-a-double-ended-linked-list/13354*)
 (*TODO: refactor out*)

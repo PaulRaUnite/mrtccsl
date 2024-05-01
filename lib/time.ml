@@ -1,6 +1,6 @@
-open Prelude
+open !Prelude
 
-module Duration = ExpOrder.Make (Float)
+module Duration = Interface.ExpOrder.Make (Float)
 
 module Interval = struct
   type t = Duration.t * Duration.t

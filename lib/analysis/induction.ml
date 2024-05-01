@@ -1,13 +1,20 @@
 open Prelude
-open Denotational
 
 module type Var = sig
+  open Interface
   include OrderedType
-
-  val to_string : t -> string
+  include Stringable with type t := t
 end
 
-module Transformation (C : Var) (N : Denotational.Num) = struct
+module type Num = sig
+  type t
+
+  val zero : t
+end
+
+module Preprocess (C : Var) (N : Num) = struct
+  open Denotational
+
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
@@ -126,7 +133,7 @@ module type Domain = sig
   val is_bottom : t -> bool
   val is_top : t -> bool
 
-  include Stringable with type t := t
+  include Interface.Stringable with type t := t
 end
 
 module type Alloc = sig
@@ -146,6 +153,7 @@ module PolkaDomain
        val to_rational : t -> Number.Rational.t
      end) =
 struct
+  open Denotational
   open Apron
 
   type t = A.dom Abstract1.t
@@ -220,6 +228,7 @@ module VPLDomain
        val to_rational : t -> Number.Rational.t
      end) =
 struct
+  open Denotational
   module Ident = Vpl.UserInterface.Lift_Ident (String)
 
   module Term = struct
@@ -285,9 +294,9 @@ end
 
 module Analysis (D : Domain) = struct
   let to_polyhedra index_name formula =
-    let formula = norm formula in
+    let formula = Denotational.norm formula in
     let clock_vars =
-      fold_bexp
+      Denotational.fold_bexp
         (fun v i acc ->
           match v with
           | Some v -> (v, i) :: acc
@@ -320,8 +329,8 @@ struct
   end
 
   module A = struct
-    include Transformation (String) (N)
-    include MakeDebug (String) (N)
+    include Preprocess (String) (N)
+    include Denotational.MakeDebug (String) (N)
   end
 
   module D = MakeDomain (String) (N)
@@ -332,7 +341,7 @@ struct
 
   let%test_unit _ =
     let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
-    let formula = Denotational.exact_rel c in
+    let formula = Denotational.Rtccsl.exact_rel c in
     let domain = An.to_polyhedra "i" formula in
     let _ = Printf.printf "%s\n" (A.string_of_bool_expr formula) in
     let _ = Format.printf "%s" (D.to_string domain) in

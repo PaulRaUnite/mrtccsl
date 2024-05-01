@@ -77,7 +77,7 @@ module Make (N : Num) = struct
     ;;
   end
 
-  module LeftBound = ExpOrder.Make (struct
+  module LeftBound = Interface.ExpOrder.Make (struct
       type t = Bound.t
 
       let compare x y =
@@ -95,7 +95,7 @@ module Make (N : Num) = struct
       ;;
     end)
 
-  module RightBound = ExpOrder.Make (struct
+  module RightBound = Interface.ExpOrder.Make (struct
       type t = Bound.t
 
       let compare x y =

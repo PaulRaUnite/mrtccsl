@@ -1,7 +1,7 @@
 open Prelude
 include Mpqf
 
-include ExpOrder.Make (struct
+include Interface.ExpOrder.Make (struct
     include Mpqf
 
     let compare = cmp

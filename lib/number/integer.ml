@@ -1,7 +1,7 @@
-open Prelude
+open !Prelude
 include Int
 
-include ExpOrder.Make (struct
+include Interface.ExpOrder.Make (struct
     include Int
 
     type t = int
@@ -17,8 +17,6 @@ let t_to_string = to_string
 let random = Random.int
 let round_up = Fun.id
 let round_down = Fun.id
-
 let from_int = Fun.id
-
 let ( + ) = ( + )
 let ( - ) = ( - )

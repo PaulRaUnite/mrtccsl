@@ -149,24 +149,26 @@ let rec fact_disj_bexp = function
       And ((Linear (l, op, r) :: lcond) @ rcond))
 ;;
 
-open Rtccsl
+module Rtccsl = struct
+  open Rtccsl
 
-let exact_rel c =
-  let open Syntax in
-  let i = 0 in
-  (*dummy variable*)
-  match c with
-  | Precedence { cause; effect } -> cause @ i < effect @ i
-  | Causality { cause; effect } -> cause @ i <= effect @ i
-  | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
-  | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
-    (out @ Stdlib.(i - d1)) = arg @ i
-  | _ -> failwith "unimplemented"
-;;
+  let exact_rel c =
+    let open Syntax in
+    let i = 0 in
+    (*dummy variable*)
+    match c with
+    | Precedence { cause; effect } -> cause @ i < effect @ i
+    | Causality { cause; effect } -> cause @ i <= effect @ i
+    | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
+    | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
+      (out @ Stdlib.(i - d1)) = arg @ i
+    | _ -> failwith "unimplemented"
+  ;;
 
-let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
-  And (List.map exact_rel s)
-;;
+  let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
+    And (List.map exact_rel s)
+  ;;
+end
 
 (*
    let rec all_variables bexp =
@@ -175,19 +177,7 @@ let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
 
 open Prelude
 
-module type Var = sig
-  include Sexplib0.Sexpable.S
-  include Stringable with type t := t
-end
-
-module type Num = sig
-  include Sexplib0.Sexpable.S
-  include Stringable with type t := t
-
-  val zero : t
-end
-
-module MakeDebug (V : Var) (N : Num) = struct
+module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
   let string_of_num_op = function
     | Add -> "+"
     | Sub -> "-"
