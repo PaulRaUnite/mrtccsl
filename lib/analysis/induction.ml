@@ -216,7 +216,7 @@ module VPLDomain
     (N : sig
        type t
 
-       val to_q : t -> Q.t
+       val to_rational : t -> Number.Rational.t
      end) =
 struct
   module Ident = Vpl.UserInterface.Lift_Ident (String)
@@ -234,6 +234,13 @@ struct
   type v = V.t
   type n = N.t
 
+  let to_q x =
+    let x = N.to_rational x in
+    let num = Mpz.get_int (Mpqf.get_num x) in
+    let den = Mpz.get_int (Mpqf.get_den x) in
+    Q.make (Z.of_int num) (Z.of_int den)
+  ;;
+
   let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
   let top _ _ = D.top
   let leq = D.leq
@@ -243,7 +250,7 @@ struct
 
   let rec te2ae index = function
     | TagVar (v, i) -> D.Term.Var (var (v, i))
-    | Const n -> D.Term.Cte (N.to_q n)
+    | Const n -> D.Term.Cte (to_q n)
     | Index i ->
       D.Term.Add (D.Term.Var (Ident.toVar @@ V.to_string index), D.Term.Cte (Q.of_int i))
     | Op (l, op, r) ->
@@ -298,7 +305,6 @@ module Test
           type t
 
           val to_rational : t -> Number.Rational.t
-          val to_q : t -> Q.t
         end)
        -> Domain with type v = V.t and type n = N.t) =
 struct
@@ -306,12 +312,6 @@ struct
     include Number.Rational
 
     let to_rational = Fun.id
-
-    let to_q x =
-      let num = Mpz.get_int (Mpqf.get_num x) in
-      let den = Mpz.get_int (Mpqf.get_den x) in
-      Q.make (Z.of_int num) (Z.of_int den)
-    ;;
   end
 
   module A = struct
@@ -323,6 +323,7 @@ struct
   module An = Analysis (D)
 
   let%test_unit _ = assert (D.is_top (An.to_polyhedra "i" (And [])))
+  let%test_unit _ = assert (not @@ D.is_bottom (An.to_polyhedra "i" (And [])))
 
   let%test_unit _ =
     let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
