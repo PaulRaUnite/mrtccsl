@@ -1,3 +1,14 @@
+(** Function composition, [f << g] if the same as f(g(x)).*)
+let ( << ) f g x = f (g x)
+
+let ( let* ) = Option.bind
+
+let ( and* ) x y =
+  let* x = x in
+  let* y = y in
+  Some (x, y)
+;;
+
 module type OrderedType = Set.OrderedType
 
 module ExpOrder = struct
@@ -80,6 +91,8 @@ module List = struct
   (** Cartesian product of 2 lists. *)
   let cartesian l l' = concat (map (fun e -> map (fun e' -> e, e') l') l)
 
+  let map_cartesian f l l' = concat (map (fun e -> map (fun e' -> f e e') l') l)
+
   (** Makes cartesian product of two lists of lists as another list of lists. *)
   let flat_cartesian l l' = map (fun (x, y) -> x @ y) (cartesian l l')
 
@@ -94,27 +107,30 @@ module List = struct
 
   (** Returns powerset without the empty list.*)
   let powerset_nz elements = filter (fun l -> l <> []) @@ powerset elements
+
+  let flat_map f = flatten << map f
+
+  let general_cartesian ll =
+    fold_left
+      (fun acc vars ->
+        if is_empty acc
+        then List.map (fun x -> [ x ]) vars
+        else map_cartesian (fun e l -> l @ [ e ]) vars acc)
+      []
+      ll
+  ;;
+
+  open Sexplib0.Sexp_conv
+  open Ppx_compare_lib.Builtin
+
+  let%test_unit _ =
+    [%test_eq: int list list]
+      (general_cartesian [ [ 1; 2 ]; [ 3; 4 ] ])
+      [ [ 1; 3 ]; [ 2; 3 ]; [ 1; 4 ]; [ 2; 4 ] ]
+  ;;
+
+  let unfold_until f init n : 'a list = Seq.unfold f init |> Seq.take n |> List.of_seq
 end
-
-(** Function composition, [f << g] if the same as f(g(x)).*)
-let ( << ) f g x = f (g x)
-
-let ( let* ) = Option.bind
-
-let ( and* ) x y =
-  let* x = x in
-  let* y = y in
-  Some (x, y)
-;;
-
-let rec collect n init f : 'a list =
-  if n = 0
-  then []
-  else (
-    match f init with
-    | Some (r, v) -> r :: collect (n - 1) v f
-    | None -> [])
-;;
 
 module type Stringable = sig
   type t

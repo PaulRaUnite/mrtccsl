@@ -123,9 +123,12 @@ module Make (C : ID) (N : Num) = struct
   ;;
 
   let gen_trace s (a : t) n : solution list =
-    collect n N.zero (fun now ->
-      let* l, now = next_step s a now in
-      Some ((l, now), now))
+    List.unfold_until
+      (fun now ->
+        let* l, now = next_step s a now in
+        Some ((l, now), now))
+      N.zero
+      n
   ;;
 
   let sync (a1 : t) (a2 : t) : t =
@@ -216,7 +219,7 @@ module Make (C : ID) (N : Num) = struct
     | Coincidence clocks ->
       let l = label_list [ clocks; [] ] in
       stateless l clocks
-    | RTdelay { out=b; arg=a; delay = l, r } ->
+    | RTdelay { out = b; arg = a; delay = l, r } ->
       let queue = Queue.create () in
       let delay = I.(l =-= r) in
       let g now =
@@ -614,9 +617,12 @@ module Make (C : ID) (N : Num) = struct
   let bisimulate s a1 a2 n =
     let _, trans, _ = a2 in
     let result =
-      collect n N.zero (fun now ->
-        let* l, n = next_step s a1 now in
-        if trans now (l, n) then Some ((l, n), n) else None)
+      List.unfold_until
+        (fun now ->
+          let* l, n = next_step s a1 now in
+          if trans now (l, n) then Some ((l, n), n) else None)
+        N.zero
+        n
     in
     if List.length result = n then Ok result else Error result
   ;;
