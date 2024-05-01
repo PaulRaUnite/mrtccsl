@@ -22,7 +22,8 @@ depends: [
   "uutf"
   "ppx_assert"
   "ppx_inline_test"
-  "gmp"
+  "mlgmpidl"
+  "vpl-core"
   "odoc" {with-doc}
   "odig" {with-doc}
   "alcotest" {with-test}
@@ -45,4 +46,5 @@ dev-repo: "git+https://github.com/PaulRaUnite/mrtccsl.git"
 pin-depends: [
   ["camllib.1.4.0" "git+https://github.com/paulraunite/camllib"]
   ["bddapron.2.4.0" "git+https://github.com/paulraunite/bddapron"]
+  ["vpl-core.0.6" "git+https://github.com/PaulRaUnite/VPL"]
 ]

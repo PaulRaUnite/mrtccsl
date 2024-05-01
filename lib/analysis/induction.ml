@@ -135,6 +135,8 @@ module type Alloc = sig
   val alloc : dom Apron.Manager.t
 end
 
+exception NonConvex
+
 module PolkaDomain
     (A : Alloc)
     (V : Var)
@@ -181,8 +183,7 @@ struct
           Texpr1.Near
       | Const c -> Texpr1.cst env (Coeff.s_of_mpqf @@ N.to_rational c)
       | Op (l, op, r) -> Texpr1.binop (op2op op) (te2te l) (te2te r) Texpr1.Real Near
-      | ZeroCond _ ->
-        invalid_arg "conditionals should not appear at polyhedra translation"
+      | ZeroCond _ | Min _ | Max _ -> raise NonConvex
     in
     function
     | And [] -> domain
@@ -261,7 +262,7 @@ struct
        | Sub -> D.Term.Add (l, D.Term.Opp r)
        | Mul -> D.Term.Mul (l, r)
        | Div -> D.Term.Div (l, r))
-    | ZeroCond _ -> failwith "or condition should not appear in polyhedra"
+    | ZeroCond _ | Min _ | Max _ -> raise NonConvex
   ;;
 
   let op2op = function
@@ -296,6 +297,10 @@ module Analysis (D : Domain) = struct
     in
     D.add_constraint index_name (D.top index_name clock_vars) formula
   ;;
+
+  type report = unit
+
+  (* let analyze index_name spec assertion : report = () *)
 end
 
 module Test

@@ -1,4 +1,5 @@
 pin-depends: [
   ["camllib.1.4.0" "git+https://github.com/paulraunite/camllib"]
   ["bddapron.2.4.0" "git+https://github.com/paulraunite/bddapron"]
+  ["vpl-core.0.6" "git+https://github.com/PaulRaUnite/VPL"]
 ]

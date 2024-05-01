@@ -1,6 +1,8 @@
 open Prelude
 open Sexplib0.Sexp_conv
 
+(*TODO: refactor numerical and boolean formula into their own modules?*)
+
 type num_op =
   | Add
   | Sub
@@ -14,6 +16,8 @@ type ('c, 'n) tag_expr =
   | Index of int
   | Op of ('c, 'n) tag_expr * num_op * ('c, 'n) tag_expr
   | ZeroCond of ('c, 'n) tag_expr * 'n
+  | Min of ('c, 'n) tag_expr * ('c, 'n) tag_expr
+  | Max of ('c, 'n) tag_expr * ('c, 'n) tag_expr
 [@@deriving sexp]
 
 type num_rel =
@@ -30,9 +34,23 @@ type ('c, 'n) bool_expr =
   | Linear of ('c, 'n) tag_expr * num_rel * ('c, 'n) tag_expr
 [@@deriving sexp]
 
+module Syntax = struct
+  let ( @ ) c i = TagVar (c, i)
+  let ( < ) x y = Linear (x, Less, y)
+  let ( <= ) x y = Linear (x, LessEq, y)
+  let ( > ) x y = Linear (x, More, y)
+  let ( >= ) x y = Linear (x, MoreEq, y)
+  let ( = ) x y = Linear (x, Eq, y)
+  let ( + ) x y = Op (x, Add, y)
+  let ( - ) x y = Op (x, Sub, y)
+  let ( * ) x y = Op (x, Mul, y)
+  let ( / ) x y = Op (x, Div, y)
+  let ( |> ) expr (l, r) = And [ l <= expr; expr <= r ]
+end
+
 let rec fold_texp f acc = function
   | TagVar (v, i) -> f (Some v) i acc
-  | Op (left, _, right) ->
+  | Op (left, _, right) | Min (left, right) | Max (left, right) ->
     let acc = fold_texp f acc left in
     fold_texp f acc right
   | Index i -> f None i acc
@@ -53,6 +71,8 @@ let rec map_ind_texp f = function
   | Const c -> Const c
   | Op (left, op, right) -> Op (map_ind_texp f left, op, map_ind_texp f right)
   | ZeroCond (more, init_value) -> ZeroCond (map_ind_texp f more, init_value)
+  | Min (l, r) -> Min (map_ind_texp f l, map_ind_texp f r)
+  | Max (l, r) -> Max (map_ind_texp f l, map_ind_texp f r)
 ;;
 
 let rec map_ind_bexp f = function
@@ -100,19 +120,34 @@ let rec norm = function
   | _ as lin -> lin
 ;;
 
-module Syntax = struct
-  let ( @ ) c i = TagVar (c, i)
-  let ( < ) x y = Linear (x, Less, y)
-  let ( <= ) x y = Linear (x, LessEq, y)
-  let ( > ) x y = Linear (x, More, y)
-  let ( >= ) x y = Linear (x, MoreEq, y)
-  let ( = ) x y = Linear (x, Eq, y)
-  let ( + ) x y = Op (x, Add, y)
-  let ( - ) x y = Op (x, Sub, y)
-  let ( * ) x y = Op (x, Mul, y)
-  let ( / ) x y = Op (x, Div, y)
-  let ( |> ) expr (l, r) = And [ l <= expr; expr <= r ]
-end
+let rec fact_disj_texp exp =
+  match exp with
+  | TagVar _ | Index _ | Const _ | ZeroCond _ -> [ [], exp ]
+  | Op (l, op, r) ->
+    let lvariants = fact_disj_texp l in
+    let rvariants = fact_disj_texp r in
+    List.cartesian lvariants rvariants
+    |> List.map (fun ((lcond, l), (rcond, r)) -> lcond @ rcond, Op (l, op, r))
+  | Min (l, r) | Max (l, r) ->
+    let lcond = Syntax.(l >= r) in
+    let rcond = Syntax.(l <= r) in
+    (match exp with
+     | Min _ -> [ [ lcond ], r; [ rcond ], l ]
+     | Max _ -> [ [ lcond ], l; [ rcond ], r ]
+     | _ -> failwith "unreachable")
+;;
+
+let rec fact_disj_bexp = function
+  | Or list -> List.flat_map fact_disj_bexp list
+  | And list ->
+    List.map (fun l -> And l) (List.general_cartesian (List.map fact_disj_bexp list))
+  | Linear (l, op, r) ->
+    let lvariants = fact_disj_texp l in
+    let rvariants = fact_disj_texp r in
+    List.cartesian lvariants rvariants
+    |> List.map (fun ((lcond, l), (rcond, r)) ->
+      And ((Linear (l, op, r) :: lcond) @ rcond))
+;;
 
 open Rtccsl
 
@@ -183,6 +218,10 @@ module MakeDebug (V : Var) (N : Num) = struct
         (string_of_tag_expr r)
     | ZeroCond (more, init) ->
       Printf.sprintf "(%s when i>0 else %s)" (string_of_tag_expr more) (N.to_string init)
+    | Min (l, r) ->
+      Printf.sprintf "min(%s, %s)" (string_of_tag_expr l) (string_of_tag_expr r)
+    | Max (l, r) ->
+      Printf.sprintf "max(%s, %s)" (string_of_tag_expr l) (string_of_tag_expr r)
   ;;
 
   let string_of_num_rel = function

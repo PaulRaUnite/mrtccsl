@@ -33,7 +33,8 @@
   uutf
   ppx_assert
   ppx_inline_test
-  gmp
+  mlgmpidl
+  vpl-core
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test))
