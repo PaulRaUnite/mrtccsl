@@ -7,12 +7,17 @@ module type Var = sig
 end
 
 module type Num = sig
-  type t
+  include Interface.OrderedType
 
   val zero : t
 end
 
 module Preprocess (C : Var) (N : Num) = struct
+  module N = struct
+    include N
+    include Interface.ExpOrder.Make (N)
+  end
+
   open Denotational
   open Rtccsl
 
@@ -152,23 +157,53 @@ module Preprocess (C : Var) (N : Num) = struct
   let precondition post = map_ind_bexp (fun _ i -> i - 1) post
 
   let init_cond post =
-    let rec init_cond_texp = function
-      | ZeroCond (_, init) ->
-        Const init (*FIXME: this is bullshit, need a condition here*)
-      | Op (l, op, r) -> Op (init_cond_texp l, op, init_cond_texp r)
-      | TagVar (_, i) when i = 0 -> Const N.zero
-      | _ as e -> e
+    let rec reduce_by_idx index expr =
+      match expr with
+      | TagVar (_, i) when i = index -> Some (Const N.zero)
+      | Op (l, op, r) ->
+        let* l = reduce_by_idx index l in
+        let* r = reduce_by_idx index r in
+        Some (Op (l, op, r))
+      | Index i when i = index -> Some (Const N.zero)
+      | ZeroCond (more, init) -> (*I should probably deprecate it and replace with max.*)
+        Some (Option.value (reduce_by_idx index more) ~default:(Const init))
+      | (Min (l, r) as e) | (Max (l, r) as e) ->
+        (match reduce_by_idx index l, reduce_by_idx index r with
+         | Some (Const n), Some (Const n') ->
+           Some
+             (Const
+                (match e with
+                 | Min _ -> N.min n n'
+                 | Max _ -> N.max n n'
+                 | _ -> failwith "unreachable"))
+         | Some l, Some r ->
+           Some
+             (match e with
+              | Min _ -> Min (l, r)
+              | Max _ -> Max (l, r)
+              | _ -> failwith "unreachable")
+         | Some l, None -> Some l
+         | None, Some r -> Some r
+         | _ -> None)
+      | TagVar _ | Const _ | Index _ -> Some expr
     in
     let rec init_cond_bexp = function
-      | Or list -> Or (List.map init_cond_bexp list)
-      | And list -> And (List.map init_cond_bexp list)
-      | Linear (l, op, r) -> Linear (init_cond_texp l, op, init_cond_texp r)
+      | Or list ->
+        let list = List.filter_map init_cond_bexp list in
+        if List.is_empty list then None else Some (Or list)
+      | And list ->
+        let list = List.filter_map init_cond_bexp list in
+        if List.is_empty list then None else Some (And list)
+      | Linear (l, op, r) ->
+        let* l = reduce_by_idx 0 l in
+        let* r = reduce_by_idx 0 r in
+        Some (Linear (l, op, r))
     in
     let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
     let _ = assert (max = 0) in
     let post = map_ind_bexp (fun _ i -> i - min) post in
     let post = init_cond_bexp post in
-    post
+    Option.get post (*if there is no value, it is sus.*)
   ;;
 
   let proof_obligations formulae =
@@ -177,7 +212,7 @@ module Preprocess (C : Var) (N : Num) = struct
     let cond = inductive_step formulae in
     let pre = precondition post in
     let init = init_cond post_compound in
-    init, pre, cond, post
+    Tuple.map4 norm (init, pre, cond, post)
   ;;
 end
 
@@ -388,8 +423,8 @@ struct
   end
 
   module P = struct
-    include Preprocess (String) (N)
     include Denotational.MakeDebug (String) (N)
+    include Preprocess (String) (N)
   end
 
   module D = MakeDomain (String) (N)
