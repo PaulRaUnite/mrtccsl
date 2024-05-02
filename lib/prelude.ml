@@ -216,3 +216,9 @@ module Seq = struct
     left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
   ;;
 end
+
+module Tuple = struct
+  let map2 f (x, y) = f x, f y
+  let map3 f (x, y, z) = f x, f y, f z
+  let map4 f (x, y, z, w) = f x, f y, f z, f w
+end
