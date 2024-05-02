@@ -16,6 +16,7 @@ type ('c, 'n) tag_expr =
   | Index of int
   | Op of ('c, 'n) tag_expr * num_op * ('c, 'n) tag_expr
   | ZeroCond of ('c, 'n) tag_expr * 'n
+    (*needed because otherwise will collide with max in factoring out min/max*)
   | Min of ('c, 'n) tag_expr * ('c, 'n) tag_expr
   | Max of ('c, 'n) tag_expr * ('c, 'n) tag_expr
 [@@deriving sexp]

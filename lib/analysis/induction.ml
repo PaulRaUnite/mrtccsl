@@ -11,7 +11,7 @@ module type Num = sig
   include Interface.Number.Field with type t := t
 end
 
-module Preprocess (C : Var) (N : Num) = struct
+module Make (C : Var) (N : Num) = struct
   module N = struct
     include N
     include Interface.ExpOrder.Make (N)
@@ -171,25 +171,18 @@ module Preprocess (C : Var) (N : Num) = struct
     | _ -> expr
   ;;
 
+  let reduce_by_idx index expr =
+    match expr with
+    | TagVar (_, i) when i = index -> Const N.zero
+    | Index i when i = index -> Const N.zero
+    | ZeroCond (Const n, init) -> Const (N.max n init)
+    | ZeroCond _ -> failwith "sus zerocond"
+    | _ -> expr
+  ;;
+
   let init_cond post =
-    let reduce_by_idx index expr =
-      match expr with
-      | TagVar (_, i) when i = index -> Const N.zero
-      | Index i when i = index -> Const N.zero
-      | ZeroCond (_, init) ->
-        (*FIXME: I should probably deprecate it and replace with max.*)
-        Const init
-      | _ -> expr
-    in
     let assume_init = texp_reduce (norm_texp_rule << reduce_by_idx 0) in
-    let rec init_cond_bexp = function
-      | Or list -> Or (List.map init_cond_bexp list)
-      | And list -> And (List.map init_cond_bexp list)
-      | Linear (l, op, r) ->
-        let l = assume_init l in
-        let r = assume_init r in
-        Linear (l, op, r)
-    in
+    let init_cond_bexp = bexp_reduce assume_init Fun.id in
     let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
     let _ = assert (max = 0) in
     let post = post |> map_ind_bexp (fun _ i -> i - min) |> init_cond_bexp |> norm in
@@ -197,14 +190,30 @@ module Preprocess (C : Var) (N : Num) = struct
     post
   ;;
 
-  let proof_obligations formulae =
-    let post_compound = postcondition formulae in
-    let post = use_more_cond_bexp post_compound in
-    let cond = inductive_step formulae in
-    let pre = precondition post in
-    let init = init_cond post_compound in
-    Tuple.map4 norm (init, pre, cond, post)
-  ;;
+  module Hypothesis = struct
+    type bexp = (C.t, N.t) bool_expr
+
+    type t =
+      { init : bexp list
+      ; pre : bexp list
+      ; ind : bexp list
+      ; post : bexp list
+      }
+
+    let construct formulae =
+      let post_compound = postcondition formulae in
+      let post = use_more_cond_bexp post_compound in
+      let cond = inductive_step formulae in
+      let pre = precondition post in
+      let init = init_cond post_compound in
+      Tuple.map4 norm (init, pre, cond, post)
+    ;;
+
+    (*
+       let print_obligations
+       let solve_obligations
+       let leq*)
+  end
 end
 
 module type Domain = sig
@@ -339,6 +348,8 @@ struct
   let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
   let top _ _ = D.top
   let leq = D.leq
+
+  (*FIXME: need more tests to check if it actually works in all cases*)
   let is_top d = d = D.top
   let is_bottom = D.is_bottom
   let to_string = D.to_string V.to_string
@@ -377,7 +388,13 @@ struct
   ;;
 end
 
-module Analysis (D : Domain) = struct
+module MakeWithPolyhedra
+    (V : Var)
+    (N : Num)
+    (D : Domain with type v = V.t and type n = N.t) =
+struct
+  include Make (V) (N)
+
   let to_polyhedra index_name formula =
     let formula = Denotational.norm formula in
     let clock_vars =
@@ -413,21 +430,20 @@ struct
     let to_rational = Fun.id
   end
 
+  module D = MakeDomain (String) (N)
+
   module P = struct
     include Denotational.MakeDebug (String) (N)
-    include Preprocess (String) (N)
+    include MakeWithPolyhedra (String) (N) (D)
   end
 
-  module D = MakeDomain (String) (N)
-  module An = Analysis (D)
-
-  let%test_unit _ = assert (D.is_top (An.to_polyhedra "i" (And [])))
-  let%test_unit _ = assert (not @@ D.is_bottom (An.to_polyhedra "i" (And [])))
+  let%test_unit _ = assert (D.is_top (P.to_polyhedra "i" (And [])))
+  let%test_unit _ = assert (not @@ D.is_bottom (P.to_polyhedra "i" (And [])))
 
   let%test_unit _ =
     let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
     let formula = P.exact_rel c in
-    let domain = An.to_polyhedra "i" formula in
+    let domain = P.to_polyhedra "i" formula in
     let _ = Printf.printf "%s\n" (P.string_of_bool_expr formula) in
     let _ = Format.printf "%s" (D.to_string domain) in
     assert (not @@ D.is_bottom domain)
