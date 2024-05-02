@@ -8,8 +8,7 @@ end
 
 module type Num = sig
   include Interface.OrderedType
-
-  val zero : t
+  include Interface.Number.Field with type t := t
 end
 
 module Preprocess (C : Var) (N : Num) = struct
@@ -156,54 +155,46 @@ module Preprocess (C : Var) (N : Num) = struct
 
   let precondition post = map_ind_bexp (fun _ i -> i - 1) post
 
+  (*TODO: move to proper module*)
+  let norm_texp_rule expr =
+    match expr with
+    | Op (Const n, op, Const n') ->
+      Const
+        (match op with
+         | Add -> N.(n + n')
+         | Sub -> N.(n - n')
+         | Mul -> N.(n * n')
+         | Div -> N.(n / n'))
+    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
+    | Min (Const l, Const r) -> Const (N.min l r)
+    | Max (Const l, Const r) -> Const (N.max l r)
+    | _ -> expr
+  ;;
+
   let init_cond post =
-    let rec reduce_by_idx index expr =
+    let reduce_by_idx index expr =
       match expr with
-      | TagVar (_, i) when i = index -> Some (Const N.zero)
-      | Op (l, op, r) ->
-        let* l = reduce_by_idx index l in
-        let* r = reduce_by_idx index r in
-        Some (Op (l, op, r))
-      | Index i when i = index -> Some (Const N.zero)
-      | ZeroCond (more, init) -> (*I should probably deprecate it and replace with max.*)
-        Some (Option.value (reduce_by_idx index more) ~default:(Const init))
-      | (Min (l, r) as e) | (Max (l, r) as e) ->
-        (match reduce_by_idx index l, reduce_by_idx index r with
-         | Some (Const n), Some (Const n') ->
-           Some
-             (Const
-                (match e with
-                 | Min _ -> N.min n n'
-                 | Max _ -> N.max n n'
-                 | _ -> failwith "unreachable"))
-         | Some l, Some r ->
-           Some
-             (match e with
-              | Min _ -> Min (l, r)
-              | Max _ -> Max (l, r)
-              | _ -> failwith "unreachable")
-         | Some l, None -> Some l
-         | None, Some r -> Some r
-         | _ -> None)
-      | TagVar _ | Const _ | Index _ -> Some expr
+      | TagVar (_, i) when i = index -> Const N.zero
+      | Index i when i = index -> Const N.zero
+      | ZeroCond (_, init) ->
+        (*FIXME: I should probably deprecate it and replace with max.*)
+        Const init
+      | _ -> expr
     in
+    let assume_init = texp_reduce (norm_texp_rule << reduce_by_idx 0) in
     let rec init_cond_bexp = function
-      | Or list ->
-        let list = List.filter_map init_cond_bexp list in
-        if List.is_empty list then None else Some (Or list)
-      | And list ->
-        let list = List.filter_map init_cond_bexp list in
-        if List.is_empty list then None else Some (And list)
+      | Or list -> Or (List.map init_cond_bexp list)
+      | And list -> And (List.map init_cond_bexp list)
       | Linear (l, op, r) ->
-        let* l = reduce_by_idx 0 l in
-        let* r = reduce_by_idx 0 r in
-        Some (Linear (l, op, r))
+        let l = assume_init l in
+        let r = assume_init r in
+        Linear (l, op, r)
     in
     let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
     let _ = assert (max = 0) in
-    let post = map_ind_bexp (fun _ i -> i - min) post in
-    let post = init_cond_bexp post in
-    Option.get post (*if there is no value, it is sus.*)
+    let post = post |> map_ind_bexp (fun _ i -> i - min) |> init_cond_bexp |> norm in
+    let _ = assert (not @@ empty_bexp post) in
+    post
   ;;
 
   let proof_obligations formulae =

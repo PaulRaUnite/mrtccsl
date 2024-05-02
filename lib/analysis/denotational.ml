@@ -97,33 +97,6 @@ let rec use_more_cond_bexp = function
   | Linear (l, op, r) -> Linear (use_more_cond_texp l, op, use_more_cond_texp r)
 ;;
 
-let rec norm = function
-  | Or [] -> And []
-  | Or [ x ] -> x
-  | Or list ->
-    let to_flatten, others =
-      List.partition_map
-        (fun f ->
-          match norm f with
-          | Or l -> Either.Left l
-          | _ as other -> Either.Right other)
-        list
-    in
-    Or (others @ List.flatten to_flatten)
-  | And [ x ] -> x
-  | And list ->
-    let to_flatten, others =
-      List.partition_map
-        (fun f ->
-          match norm f with
-          | And l -> Either.Left l
-          | _ as other -> Either.Right other)
-        list
-    in
-    And (others @ List.flatten to_flatten)
-  | _ as lin -> lin
-;;
-
 let rec fact_disj_texp exp =
   match exp with
   | TagVar _ | Index _ | Const _ | ZeroCond _ -> [ [], exp ]
@@ -152,6 +125,73 @@ let rec fact_disj_bexp = function
     |> List.map (fun ((lcond, l), (rcond, r)) ->
       And ((Linear (l, op, r) :: lcond) @ rcond))
 ;;
+
+let empty_bexp = function
+  | Or [] | And [] -> true
+  | _ -> false
+;;
+
+let rec texp_reduce f e =
+  let reduce = texp_reduce f in
+  let r =
+    match e with
+    | TagVar _ | Const _ | Index _ -> f e
+    | Op (l, op, r) ->
+      let l = reduce l in
+      let r = reduce r in
+      Op (l, op, r)
+    | ZeroCond (more, init) -> f (ZeroCond (reduce more, init))
+    | Min (l, r) ->
+      let l = reduce l in
+      let r = reduce r in
+      Min (l, r)
+    | Max (l, r) ->
+      let l = reduce l in
+      let r = reduce r in
+      Max (l, r)
+  in
+  f r
+;;
+
+let rec bexp_reduce f g e =
+  let reduce = bexp_reduce f g in
+  let r =
+    match e with
+    | And list -> And (List.map reduce list)
+    | Or list -> Or (List.map reduce list)
+    | Linear (l, op, r) -> Linear (f l, op, f r)
+  in
+  g r
+;;
+
+let norm_rule = function
+  | Or [] -> And []
+  | Or [ x ] -> x
+  | Or list ->
+    let to_flatten, others =
+      List.partition_map
+        (fun f ->
+          match f with
+          | Or l -> Either.Left l
+          | _ as other -> Either.Right other)
+        list
+    in
+    Or (others @ List.flatten to_flatten)
+  | And [ x ] -> x
+  | And list ->
+    let to_flatten, others =
+      List.partition_map
+        (fun f ->
+          match f with
+          | And l -> Either.Left l
+          | _ as other -> Either.Right other)
+        list
+    in
+    And (others @ List.flatten to_flatten)
+  | _ as lin -> lin
+;;
+
+let norm e = bexp_reduce Fun.id norm_rule e
 
 open Prelude
 
