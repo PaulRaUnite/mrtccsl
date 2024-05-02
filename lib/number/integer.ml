@@ -1,4 +1,4 @@
-open !Prelude
+open! Prelude
 include Int
 
 include Interface.ExpOrder.Make (struct
@@ -20,3 +20,5 @@ let round_down = Fun.id
 let from_int = Fun.id
 let ( + ) = ( + )
 let ( - ) = ( - )
+let ( * ) = ( * )
+let ( / ) = ( / )

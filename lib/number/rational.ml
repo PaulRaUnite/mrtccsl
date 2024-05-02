@@ -8,6 +8,8 @@ include Interface.ExpOrder.Make (struct
   end)
 
 let zero = of_int 0
+let one = of_int 1
+
 let ( + ) = add
 let ( - ) = sub
 let ( * ) = mul

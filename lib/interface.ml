@@ -1,4 +1,4 @@
-open !Prelude
+open! Prelude
 
 module type Stringable = sig
   type t
@@ -38,5 +38,24 @@ module ExpOrder = struct
     let more_eq x y = M.compare x y >= 0
     let min x y = if less_eq x y then x else y
     let max x y = if more_eq x y then x else y
+  end
+end
+
+module Number = struct
+  module type Ring = sig
+    type t
+
+    val zero : t
+    val one : t
+    val ( + ) : t -> t -> t
+    val ( * ) : t -> t -> t
+  end
+
+  module type Field = sig
+    include Ring
+
+    val neg : t -> t
+    val ( - ) : t -> t -> t
+    val ( / ) : t -> t -> t
   end
 end
