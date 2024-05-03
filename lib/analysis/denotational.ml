@@ -115,6 +115,7 @@ let rec fact_disj_texp exp =
      | _ -> failwith "unreachable")
 ;;
 
+(** Factors out disjunctions from semi-linear formula into a list of linear ones. *)
 let rec fact_disj_bexp = function
   | Or list -> List.flat_map fact_disj_bexp list
   | And list ->

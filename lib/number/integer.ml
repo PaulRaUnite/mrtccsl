@@ -22,3 +22,5 @@ let ( + ) = ( + )
 let ( - ) = ( - )
 let ( * ) = ( * )
 let ( / ) = ( / )
+
+let to_rational = Rational.of_int

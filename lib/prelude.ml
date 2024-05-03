@@ -58,6 +58,13 @@ module List = struct
       x :: tx, y :: ty, z :: tz
   ;;
 
+  let rec split4 = function
+    | [] -> [], [], [], []
+    | (x, y, z, w) :: tail ->
+      let tx, ty, tz, tw = split4 tail in
+      x :: tx, y :: ty, z :: tz, w :: tw
+  ;;
+
   (** Cartesian product of 2 lists. *)
   let cartesian l l' = concat (map (fun e -> map (fun e' -> e, e') l') l)
 
@@ -100,6 +107,8 @@ module List = struct
   ;;
 
   let unfold_until f init n : 'a list = Seq.unfold f init |> Seq.take n |> List.of_seq
+  let any = List.exists Fun.id
+  let all = List.for_all Fun.id
 end
 
 module String = struct
@@ -215,10 +224,25 @@ module Seq = struct
     in
     left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
   ;;
+
+  let int_seq n = take n (ints 0)
+
+  let%test _ = List.of_seq (int_seq 3) = [0;1;2]
 end
 
 module Tuple = struct
   let map2 f (x, y) = f x, f y
   let map3 f (x, y, z) = f x, f y, f z
   let map4 f (x, y, z, w) = f x, f y, f z, f w
+end
+
+module Hashtbl = struct
+  include Hashtbl
+
+  let entry tbl f key default =
+    let v = find_opt tbl key |> Option.value ~default in
+    replace tbl key (f v)
+  ;;
+
+  let value tbl key default = Hashtbl.find_opt tbl key |> Option.value ~default
 end

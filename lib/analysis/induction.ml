@@ -11,6 +11,21 @@ module type Num = sig
   include Interface.Number.Field with type t := t
 end
 
+module type Domain = sig
+  type t
+  type v
+  type n
+
+  val top : v -> (v * int) list -> t
+  val add_constraint : v -> t -> (v, n) Denotational.bool_expr -> t
+  val leq : t -> t -> bool
+  val is_bottom : t -> bool
+  val is_top : t -> bool
+  val meet : t -> t -> t
+
+  include Interface.Stringable with type t := t
+end
+
 module Make (C : Var) (N : Num) = struct
   module N = struct
     include N
@@ -89,7 +104,7 @@ module Make (C : Var) (N : Num) = struct
       ;;
     end)
 
-  let collect_vars formula =
+  let vars_set formula =
     let vars =
       fold_bexp
         (fun x i set ->
@@ -102,18 +117,19 @@ module Make (C : Var) (N : Num) = struct
     vars
   ;;
 
-  let inductive_step formula =
-    let vars =
-      SetCI.elements
-      @@ List.fold_left
-           (fun acc f -> SetCI.union acc (collect_vars f))
-           SetCI.empty
-           formula
-    in
-    use_more_cond_bexp @@ And (formula @ List.map (fun (c, i) -> lc_connection c i) vars)
+  let vars formula = SetCI.elements (vars_set formula)
+
+  let vars_of_list formulae =
+    SetCI.elements
+    @@ List.fold_left (fun acc f -> SetCI.union acc (vars_set f)) SetCI.empty formulae
   ;;
 
-  let clocks_of formulae =
+  let inductive_step formulae =
+    use_more_cond_bexp
+    @@ And (formulae @ List.map (fun (c, i) -> lc_connection c i) (vars_of_list formulae))
+  ;;
+
+  let clocks_of_list formulae =
     let module SetC = Set.Make (C) in
     let fold_formula =
       fold_bexp (fun c _ acc ->
@@ -126,7 +142,7 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let postcondition formulae =
-    let clocks = clocks_of formulae in
+    let clocks = clocks_of_list formulae in
     let intervals =
       List.map (fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0)) formulae
     in
@@ -190,44 +206,206 @@ module Make (C : Var) (N : Num) = struct
     post
   ;;
 
-  module Hypothesis = struct
-    type bexp = (C.t, N.t) bool_expr
+  let existence_proof formulae =
+    let post_compound = postcondition formulae in
+    let post = use_more_cond_bexp post_compound in
+    let cond = inductive_step formulae in
+    let pre = precondition post in
+    let init = init_cond post_compound in
+    Tuple.map4 norm (init, pre, cond, post)
+  ;;
 
-    type t =
-      { init : bexp list
-      ; pre : bexp list
-      ; ind : bexp list
-      ; post : bexp list
+  module Solver = struct
+    module type S = sig
+      type t
+      type f = (C.t, N.t) bool_expr
+
+      val of_formula : f -> t
+      val sat : t -> bool
+      val ( <= ) : t -> t -> bool
+      val ( && ) : t -> t -> t
+
+      include Interface.Stringable with type t := t
+    end
+
+    module type D = sig
+      include Domain with type v = C.t and type n = N.t
+
+      val index_name : v
+    end
+
+    module MakeFromDomain (D : D) = struct
+      include D
+
+      type f = (C.t, N.t) bool_expr
+
+      let of_formula f = add_constraint D.index_name (D.top D.index_name (vars f)) f
+      let sat = not << is_bottom
+      let ( && ) = meet
+      let ( <= ) = leq
+    end
+  end
+
+  module ExistenceProof (S : Solver.S) = struct
+    type ('f, 's) t =
+      { init : ('f * 's) array
+      ; pre : 'f array
+      ; ind : 'f array
+      ; post : 'f array
+      ; steps : (int * int, 's) Hashtbl.t
+      ; inclusion : (int * int * int, 's) Hashtbl.t
       }
 
-    let construct formulae =
-      let post_compound = postcondition formulae in
-      let post = use_more_cond_bexp post_compound in
-      let cond = inductive_step formulae in
-      let pre = precondition post in
-      let init = init_cond post_compound in
-      Tuple.map4 norm (init, pre, cond, post)
+    let solve formulae =
+      let init, pre, ind, post =
+        List.map fact_disj_bexp formulae
+        |> List.general_cartesian
+        |> List.map existence_proof
+        |> List.split4
+        |> Tuple.map4 Array.of_list
+      in
+      let len = Array.length init in
+      let steps = Hashtbl.create (len * len) in
+      let inclusion = Hashtbl.create (len * len * len) in
+      let init =
+        Array.map
+          (fun f ->
+            let dom = S.of_formula f in
+            dom, S.sat dom)
+          init
+      in
+      let pre, ind, post = Tuple.map3 (Array.map S.of_formula) (pre, ind, post) in
+      let steps_by_pre i = Seq.int_seq (Array.length ind) |> Seq.map (fun j -> i, j) in
+      let inclusions_by_step (i, j) =
+        Seq.int_seq (Array.length post) |> Seq.map (fun k -> i, j, k)
+      in
+      let reachable_steps =
+        ref
+          (init
+           |> Array.to_seqi
+           |> Seq.filter (fun (_, (_, sat)) -> sat)
+           |> Seq.flat_map (fun (i, _) -> steps_by_pre i))
+      in
+      let reachable_inclusions = ref Seq.empty in
+      let process_steps q =
+        q
+        |> Seq.filter (fun (p, i) ->
+          let result = S.sat S.(Array.get pre p && Array.get ind i) in
+          let _ = Hashtbl.add steps (p, i) result in
+          result)
+        |> Seq.flat_map (fun (p, i) -> inclusions_by_step (p, i))
+        |> Seq.filter (fun key -> not (Hashtbl.value inclusion key false))
+      in
+      let process_inclusions q =
+        q
+        |> Seq.filter (fun (pr, i, po) ->
+          let result = S.((Array.get pre pr && Array.get ind i) <= Array.get post po) in
+          let _ = Hashtbl.add inclusion (pr, i, po) result in
+          result)
+        |> Seq.flat_map (fun (_, _, po) -> steps_by_pre po)
+        |> Seq.filter (fun key -> not (Hashtbl.value steps key false))
+      in
+      let _ =
+        while not (Seq.is_empty !reachable_steps && Seq.is_empty !reachable_inclusions) do
+          reachable_inclusions := process_steps !reachable_steps;
+          reachable_steps := process_inclusions !reachable_inclusions
+        done
+      in
+      { init; pre; ind; post; steps; inclusion }
     ;;
 
+    type 'a vertix =
+      | Pre of 'a
+      | Step of 'a * 'a
+      | Post of 'a
+
+    let unsolved { init; steps; inclusion; _ } =
+      (* let _ = Array.iteri (fun i (_, sat) -> Printf.printf "%i:%b\n" i sat) init in
+         let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
+         let _ =
+         Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
+         in *)
+      let len = Array.length init in
+      let marks = Hashtbl.create ((len * len) + (2 * len)) in
+      let add_vertex v = Hashtbl.add marks v false in
+      (* let print_marks m =
+        Hashtbl.iter
+          (fun k v ->
+            match k with
+            | Pre i -> Printf.printf "pre %i: %b\n" i v
+            | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
+            | Post i -> Printf.printf "post %i: %b\n" i v)
+          m
+      in *)
+      let visited = Hashtbl.create ((len * len) + (2 * len)) in
+      let next = Hashtbl.create (Hashtbl.length steps + Hashtbl.length inclusion) in
+      let add_arrow v v' = Hashtbl.entry next (List.cons v') v [] in
+      let _ =
+        for i = 0 to len - 1 do
+          add_vertex (Pre i);
+          add_vertex (Post i);
+          add_arrow (Post i) (Pre i);
+          for j = 0 to len - 1 do
+            add_vertex (Step (i, j));
+            add_arrow (Pre i) (Step (i, j));
+            add_arrow (Step (i, j)) (Post j)
+          done
+        done
+      in
+      (* let _ = print_marks marks in *)
+      let roots =
+        init
+        |> Array.to_seqi
+        |> Seq.filter_map (fun (i, (_, sat)) -> if sat then Some (Pre i) else None)
+      in
+      let rec dfs v =
+        if Hashtbl.find marks v || Hashtbl.mem visited v
+        then (
+          let _ = Hashtbl.add visited v () in
+          let _ = Hashtbl.replace marks v true in
+          true)
+        else (
+          let _ = Hashtbl.add visited v () in
+          if List.any (List.map dfs (Hashtbl.find next v))
+          then (
+            let _ = Hashtbl.replace marks v true in
+            true)
+          else false)
+      in
+      let _ = Seq.iter (ignore << dfs) roots in
+      (* let _ = Printf.printf "after\n"in
+         let _ = print_marks marks in *)
+      Hashtbl.to_seq marks
+      |> Seq.filter_map (fun (v, sat) -> if sat then None else Some v)
+      |> List.of_seq
+    ;;
+
+    let print_problems g l =
+      let print = function
+        | Pre i ->
+          let d = Array.get g.pre i in
+          Printf.printf "=== Precondition %i : NO SAT STEPS ===\n%s\n" i (S.to_string d)
+        | Step (i, j) ->
+          let d1 = Array.get g.pre i in
+          let d2 = Array.get g.ind j in
+          let d3 = Array.get g.post j in
+          Printf.printf
+            "=== Pre %i, Ind %i ===\n%s\n+++AND+++\n%s\n+++NOT INCLUDED+++\n%s\n"
+            i
+            j
+            (S.to_string d1)
+            (S.to_string d2)
+            (S.to_string d3)
+        | Post i ->
+          let d = Array.get g.post i in
+          Printf.printf "=== Postcondition %i : UNREACHABLE ===\n%s\n" i (S.to_string d)
+      in
+      List.iter print l
+    ;;
     (*
-       let print_obligations
-       let solve_obligations
-       let leq*)
+       let leq g g' =
+    *)
   end
-end
-
-module type Domain = sig
-  type t
-  type v
-  type n
-
-  val top : v -> (v * int) list -> t
-  val add_constraint : v -> t -> (v, n) Denotational.bool_expr -> t
-  val leq : t -> t -> bool
-  val is_bottom : t -> bool
-  val is_top : t -> bool
-
-  include Interface.Stringable with type t := t
 end
 
 module type Alloc = sig
@@ -312,6 +490,7 @@ struct
   let is_bottom = Apron.Abstract1.is_bottom A.alloc
   let is_top = Apron.Abstract1.is_top A.alloc
   let to_string d = Format.asprintf "%a" Abstract1.print d
+  let meet = Apron.Abstract1.meet A.alloc
 end
 
 module VPLDomain
@@ -348,6 +527,7 @@ struct
   let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
   let top _ _ = D.top
   let leq = D.leq
+  let meet = D.meet
 
   (*FIXME: need more tests to check if it actually works in all cases*)
   let is_top d = d = D.top
@@ -397,16 +577,7 @@ struct
 
   let to_polyhedra index_name formula =
     let formula = Denotational.norm formula in
-    let clock_vars =
-      Denotational.fold_bexp
-        (fun v i acc ->
-          match v with
-          | Some v -> (v, i) :: acc
-          | None -> acc)
-        []
-        formula
-    in
-    D.add_constraint index_name (D.top index_name clock_vars) formula
+    D.add_constraint index_name (D.top index_name (vars formula)) formula
   ;;
 
   type report = unit

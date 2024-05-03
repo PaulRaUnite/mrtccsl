@@ -15,7 +15,7 @@
 
 (documentation https://github.com/PaulRaUnite/mrtccsl)
 
-(version 0.1)
+(version 0.2-preview)
 
 (package
  (name mrtccsl)
@@ -24,7 +24,7 @@
   "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention.")
  (depends
   ocaml
-  dune
+  (dune :with-build)
   camllib
   apron
   bddapron
