@@ -18,7 +18,7 @@ let _ =
     Rtccsl.
       [ RTdelay { out = "del"; arg = "in"; delay = 1, 2 }
       ; Precedence { cause = "ts"; effect = "tf" }
-      (* ; Precedence { cause = "tf"; effect = "ts" } *)
+        (* ; Precedence { cause = "tf"; effect = "ts" } *)
       ; Delay { out = "out"; arg = "in"; delay = 2, 2; base = None }
       ]
   in

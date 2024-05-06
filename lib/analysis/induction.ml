@@ -291,7 +291,7 @@ module Make (C : Var) (N : Num) = struct
         q
         |> Seq.filter (fun (p, i) ->
           let result = S.sat S.(Array.get pre p && Array.get ind i) in
-          let _ = Hashtbl.add steps (p, i) result in
+          let _ = Hashtbl.replace steps (p, i) result in
           result)
         |> Seq.flat_map (fun (p, i) -> inclusions_by_step (p, i))
         |> Seq.filter (fun key -> not (Hashtbl.value inclusion key false))
@@ -300,7 +300,7 @@ module Make (C : Var) (N : Num) = struct
         q
         |> Seq.filter (fun (pr, i, po) ->
           let result = S.((Array.get pre pr && Array.get ind i) <= Array.get post po) in
-          let _ = Hashtbl.add inclusion (pr, i, po) result in
+          let _ = Hashtbl.replace inclusion (pr, i, po) result in
           result)
         |> Seq.flat_map (fun (_, _, po) -> steps_by_pre po)
         |> Seq.filter (fun key -> not (Hashtbl.value steps key false))
@@ -321,22 +321,22 @@ module Make (C : Var) (N : Num) = struct
 
     let unsolved { init; steps; inclusion; _ } =
       (* let _ = Array.iteri (fun i (_, sat) -> Printf.printf "%i:%b\n" i sat) init in
-         let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
-         let _ =
-         Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
-         in *)
+      let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
+      let _ =
+        Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
+      in *)
       let len = Array.length init in
       let marks = Hashtbl.create ((len * len) + (2 * len)) in
-      let add_vertex v = Hashtbl.add marks v false in
+      let add_vertex v = Hashtbl.replace marks v false in
       (* let print_marks m =
-        Hashtbl.iter
-          (fun k v ->
-            match k with
-            | Pre i -> Printf.printf "pre %i: %b\n" i v
-            | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
-            | Post i -> Printf.printf "post %i: %b\n" i v)
-          m
-      in *)
+         Hashtbl.iter
+         (fun k v ->
+         match k with
+         | Pre i -> Printf.printf "pre %i: %b\n" i v
+         | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
+         | Post i -> Printf.printf "post %i: %b\n" i v)
+         m
+         in *)
       let visited = Hashtbl.create ((len * len) + (2 * len)) in
       let next = Hashtbl.create (Hashtbl.length steps + Hashtbl.length inclusion) in
       let add_arrow v v' = Hashtbl.entry next (List.cons v') v [] in
@@ -346,9 +346,12 @@ module Make (C : Var) (N : Num) = struct
           add_vertex (Post i);
           add_arrow (Post i) (Pre i);
           for j = 0 to len - 1 do
-            add_vertex (Step (i, j));
-            add_arrow (Pre i) (Step (i, j));
-            add_arrow (Step (i, j)) (Post j)
+            if Hashtbl.find_opt steps (i, j) |> Option.value ~default:false
+            then (
+              add_vertex (Step (i, j));
+              add_arrow (Pre i) (Step (i, j)));
+            if Hashtbl.find_opt inclusion (i, j, j) |> Option.value ~default:false
+            then add_arrow (Step (i, j)) (Post j)
           done
         done
       in
@@ -361,12 +364,12 @@ module Make (C : Var) (N : Num) = struct
       let rec dfs v =
         if Hashtbl.find marks v || Hashtbl.mem visited v
         then (
-          let _ = Hashtbl.add visited v () in
+          let _ = Hashtbl.replace visited v () in
           let _ = Hashtbl.replace marks v true in
           true)
         else (
-          let _ = Hashtbl.add visited v () in
-          if List.any (List.map dfs (Hashtbl.find next v))
+          let _ = Hashtbl.replace visited v () in
+          if List.any (List.map dfs (Hashtbl.value next v []))
           then (
             let _ = Hashtbl.replace marks v true in
             true)
@@ -390,7 +393,7 @@ module Make (C : Var) (N : Num) = struct
           let d2 = Array.get g.ind j in
           let d3 = Array.get g.post j in
           Printf.printf
-            "=== Pre %i, Ind %i ===\n%s\n+++AND+++\n%s\n+++NOT INCLUDED+++\n%s\n"
+            "=== Pre %i, Ind %i ===\n%s\n+++AND+++\n%s\n+++NOT INCLUDED+++\n%s\n\n"
             i
             j
             (S.to_string d1)
