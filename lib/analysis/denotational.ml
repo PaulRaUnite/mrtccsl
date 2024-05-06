@@ -137,12 +137,12 @@ let rec texp_reduce f e =
   let reduce = texp_reduce f in
   let r =
     match e with
-    | TagVar _ | Const _ | Index _ -> f e
+    | TagVar _ | Const _ | Index _ -> e
     | Op (l, op, r) ->
       let l = reduce l in
       let r = reduce r in
       Op (l, op, r)
-    | ZeroCond (more, init) -> f (ZeroCond (reduce more, init))
+    | ZeroCond (more, init) -> ZeroCond (reduce more, init)
     | Min (l, r) ->
       let l = reduce l in
       let r = reduce r in

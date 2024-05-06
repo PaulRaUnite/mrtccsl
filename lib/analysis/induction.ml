@@ -3,12 +3,13 @@ open Prelude
 module type Var = sig
   open Interface
   include OrderedType
-  include Stringable with type t := t
+  include Interface.Debug with type t := t
 end
 
 module type Num = sig
   include Interface.OrderedType
   include Interface.Number.Field with type t := t
+  include Interface.Debug with type t := t
 end
 
 module type Domain = sig
@@ -27,13 +28,14 @@ module type Domain = sig
 end
 
 module Make (C : Var) (N : Num) = struct
+  open Denotational
+  open Rtccsl
+  open MakeDebug (C) (N)
+
   module N = struct
     include N
     include Interface.ExpOrder.Make (N)
   end
-
-  open Denotational
-  open Rtccsl
 
   exception NoExactConvexRelation
 
@@ -49,6 +51,15 @@ module Make (C : Var) (N : Num) = struct
       (out @ Stdlib.(i - d1)) = arg @ i
     | Fastest { out; left; right } -> out @ i = min (left @ i) (right @ i)
     | Slowest { out; left; right } -> out @ i = max (left @ i) (right @ i)
+    | CumulPeriodic { out; period; error = le, re; offset } ->
+      let prev = ZeroCond ((out @ Stdlib.(i - 1)), offset) in
+      (out @ i) - prev |> N.(Const (period + le), Const (period + re))
+    | AbsPeriodic { out; period; error = le, re; offset } ->
+      (out @ i) - (Const period * Index Stdlib.(i - 1)) - Const offset
+      |> (Const le, Const re)
+    | Sporadic { out; at_least; strict } ->
+      let diff = (out @ i) - ZeroCond ((out @ Stdlib.(i - 1)), N.zero) in
+      if strict then diff > Const at_least else diff >= Const at_least
     | _ -> raise NoExactConvexRelation
   ;;
 
@@ -141,17 +152,56 @@ module Make (C : Var) (N : Num) = struct
     SetC.elements clocks_set
   ;;
 
+  module MapOCMM = Map.Make (struct
+      type t = C.t option
+
+      let compare x y =
+        match x, y with
+        | None, None -> 0
+        | Some _, None -> -1
+        | None, Some _ -> 1
+        | Some x, Some y -> C.compare x y
+      ;;
+    end)
+
+  let index_ranges formula =
+    let rule c i acc =
+      let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(0, 0) in
+      MapOCMM.add c Int.(min i l, max i r) acc
+    in
+    fold_bexp rule MapOCMM.empty formula
+  ;;
+
+  let combine_index_ranges l =
+    let combine_records _ (min1, max1) (min2, max2) =
+      Some Int.(min min1 min2, max max1 max2)
+    in
+    List.fold_left
+      (fun acc lacc -> MapOCMM.union combine_records acc lacc)
+      MapOCMM.empty
+      l
+  ;;
+
+  let range_to_min_max r =
+    let reduce k (l, r) = function
+      | None -> Some ((k, l), (k, r))
+      | Some ((lc, gmin), (rc, gmax)) ->
+        let nmin = Int.min l gmin in
+        let nmax = Int.max r gmax in
+        let nlc = if nmin < gmin then k else lc in
+        let nrc = if nmax > gmax then k else rc in
+        Some ((nlc, nmin), (nrc, nmax))
+    in
+    let (lc, min), (rc, max) = Option.get @@ MapOCMM.fold reduce r None in
+    (* let _ = Printf.printf "%s,%i,%s,%i\n" (Option.map C.to_string lc |> Option.value ~default:"") min (Option.map C.to_string rc |> Option.value ~default:"") max in *)
+    if lc = rc then min + 1, max else min, max
+  ;;
+
   let postcondition formulae =
     let clocks = clocks_of_list formulae in
-    let intervals =
-      List.map (fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0)) formulae
-    in
-    let min, max =
-      List.fold_left
-        (fun (gmin, gmax) (lmin, lmax) -> Int.(min gmin lmin, max gmax lmax))
-        (0, 0)
-        intervals
-    in
+    let ranges = List.map index_ranges formulae in
+    let intervals = List.map range_to_min_max ranges in
+    let min, max = range_to_min_max (combine_index_ranges ranges) in
     let neg_ints = List.init (Int.neg min + 1) Int.neg in
     let clock_connections =
       List.map (fun (c, i) -> lc_connection c i) (List.cartesian clocks neg_ints)
@@ -184,30 +234,37 @@ module Make (C : Var) (N : Num) = struct
     | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
     | Min (Const l, Const r) -> Const (N.min l r)
     | Max (Const l, Const r) -> Const (N.max l r)
+    | ZeroCond (Const n, init) -> Const (N.max n init)
     | _ -> expr
   ;;
 
   let reduce_by_idx index expr =
     match expr with
-    | TagVar (_, i) when i = index -> Const N.zero
-    | Index i when i = index -> Const N.zero
-    | ZeroCond (Const n, init) -> Const (N.max n init)
-    | ZeroCond _ -> failwith "sus zerocond"
+    | (TagVar (_, i) | Index i) when i = index -> Const N.zero
+    | Index i -> Index i
+    | ZeroCond (Index i, _) when i > index -> Index i
+    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> v
+    | ZeroCond _ -> failwith "zerocond should be simplified by this point"
     | _ -> expr
   ;;
 
   let init_cond post =
-    let assume_init = texp_reduce (norm_texp_rule << reduce_by_idx 0) in
+    let _ = Printf.printf "init: %s\n" (string_of_bool_expr post) in
+    let assume_init = texp_reduce (norm_texp_rule << reduce_by_idx 0 << norm_texp_rule) in
     let init_cond_bexp = bexp_reduce assume_init Fun.id in
     let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
+    let _ = Printf.printf "%i, %i\n" min max in
     let _ = assert (max = 0) in
-    let post = post |> map_ind_bexp (fun _ i -> i - min) |> init_cond_bexp |> norm in
+    let post = post |> map_ind_bexp (fun _ i -> i - min) in
+    let _ = Printf.printf "init: %s\n" (string_of_bool_expr post) in
+    let post = post |> init_cond_bexp |> norm in
     let _ = assert (not @@ empty_bexp post) in
     post
   ;;
 
   let existence_proof formulae =
     let post_compound = postcondition formulae in
+    let _ = Printf.printf "post_comp: %s\n" (string_of_bool_expr post_compound) in
     let post = use_more_cond_bexp post_compound in
     let cond = inductive_step formulae in
     let pre = precondition post in
@@ -321,10 +378,10 @@ module Make (C : Var) (N : Num) = struct
 
     let unsolved { init; steps; inclusion; _ } =
       (* let _ = Array.iteri (fun i (_, sat) -> Printf.printf "%i:%b\n" i sat) init in
-      let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
-      let _ =
-        Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
-      in *)
+         let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
+         let _ =
+         Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
+         in *)
       let len = Array.length init in
       let marks = Hashtbl.create ((len * len) + (2 * len)) in
       let add_vertex v = Hashtbl.replace marks v false in
