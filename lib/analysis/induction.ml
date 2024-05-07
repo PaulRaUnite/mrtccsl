@@ -23,6 +23,7 @@ module type Domain = sig
   val is_bottom : t -> bool
   val is_top : t -> bool
   val meet : t -> t -> t
+  val diff : t -> t -> t list
 
   include Interface.Stringable with type t := t
 end
@@ -117,7 +118,7 @@ module Make (C : Var) (N : Num) = struct
 
   let vars_set formula =
     let vars =
-      fold_bexp
+      BoolExpr.fold
         (fun x i set ->
           match x with
           | Some v -> SetCI.add (v, i) set
@@ -136,14 +137,14 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let inductive_step formulae =
-    use_more_cond_bexp
+    BoolExpr.use_more_cond
     @@ And (formulae @ List.map (fun (c, i) -> lc_connection c i) (vars_of_list formulae))
   ;;
 
   let clocks_of_list formulae =
     let module SetC = Set.Make (C) in
     let fold_formula =
-      fold_bexp (fun c _ acc ->
+      BoolExpr.fold (fun c _ acc ->
         match c with
         | Some c -> SetC.add c acc
         | None -> acc)
@@ -169,7 +170,7 @@ module Make (C : Var) (N : Num) = struct
       let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(0, 0) in
       MapOCMM.add c Int.(min i l, max i r) acc
     in
-    fold_bexp rule MapOCMM.empty formula
+    BoolExpr.fold rule MapOCMM.empty formula
   ;;
 
   let combine_index_ranges l =
@@ -194,7 +195,7 @@ module Make (C : Var) (N : Num) = struct
     in
     let (lc, min), (rc, max) = Option.get @@ MapOCMM.fold reduce r None in
     (* let _ = Printf.printf "%s,%i,%s,%i\n" (Option.map C.to_string lc |> Option.value ~default:"") min (Option.map C.to_string rc |> Option.value ~default:"") max in *)
-    if lc = rc then min + 1, max else min, max
+    if lc = rc then min, max else min, max
   ;;
 
   let postcondition formulae =
@@ -209,7 +210,7 @@ module Make (C : Var) (N : Num) = struct
     let _ = assert (max = 0) in
     let expand f min =
       let neg_ints = List.init (Int.neg min + 1) Int.neg in
-      List.map (fun i -> map_ind_bexp (fun _ j -> i + j) f) neg_ints
+      List.map (fun i -> BoolExpr.map_idx (fun _ j -> i + j) f) neg_ints
     in
     let expanded_formulae =
       List.flatten
@@ -219,7 +220,7 @@ module Make (C : Var) (N : Num) = struct
     And (expanded_formulae @ clock_connections)
   ;;
 
-  let precondition post = map_ind_bexp (fun _ i -> i - 1) post
+  let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
 
   (*TODO: move to proper module*)
   let norm_texp_rule expr =
@@ -249,27 +250,51 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let init_cond post =
-    let _ = Printf.printf "init: %s\n" (string_of_bool_expr post) in
-    let assume_init = texp_reduce (norm_texp_rule << reduce_by_idx 0 << norm_texp_rule) in
-    let init_cond_bexp = bexp_reduce assume_init Fun.id in
-    let min, max = fold_bexp (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
+    let assume_init =
+      NumExpr.rewrite (norm_texp_rule << reduce_by_idx 0 << norm_texp_rule)
+    in
+    let init_cond_bexp = BoolExpr.rewrite assume_init Fun.id in
+    let min, max = BoolExpr.fold (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
     let _ = Printf.printf "%i, %i\n" min max in
     let _ = assert (max = 0) in
-    let post = post |> map_ind_bexp (fun _ i -> i - min) in
-    let _ = Printf.printf "init: %s\n" (string_of_bool_expr post) in
-    let post = post |> init_cond_bexp |> norm in
-    let _ = assert (not @@ empty_bexp post) in
+    let post =
+      post |> BoolExpr.map_idx (fun _ i -> i - min) |> init_cond_bexp |> BoolExpr.norm
+    in
+    let _ = assert (not @@ BoolExpr.is_empty post) in
     post
+  ;;
+
+  let pre_post f =
+    let almost_post = BoolExpr.use_more_cond f in
+    let _ =
+      Printf.printf "almost_post: %s\n" (string_of_bool_expr (BoolExpr.norm almost_post))
+    in
+    let pre = precondition almost_post in
+    let clocks = vars f in
+    let min, _ = range_to_min_max (index_ranges f) in
+    let post =
+      And
+        (almost_post
+         :: List.filter_map
+              (fun (c, i) -> if i = min then Some (lc_connection c min) else None)
+              clocks)
+    in
+    pre, post
   ;;
 
   let existence_proof formulae =
     let post_compound = postcondition formulae in
-    let _ = Printf.printf "post_comp: %s\n" (string_of_bool_expr post_compound) in
-    let post = use_more_cond_bexp post_compound in
+    let _ =
+      Printf.printf "post_comp: %s\n" (string_of_bool_expr (BoolExpr.norm post_compound))
+    in
     let cond = inductive_step formulae in
-    let pre = precondition post in
+    let pre, post = pre_post post_compound in
     let init = init_cond post_compound in
-    Tuple.map4 norm (init, pre, cond, post)
+    let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
+    let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
+    let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
+    let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
+    init, pre, cond, post
   ;;
 
   module Solver = struct
@@ -281,6 +306,7 @@ module Make (C : Var) (N : Num) = struct
       val sat : t -> bool
       val ( <= ) : t -> t -> bool
       val ( && ) : t -> t -> t
+      val diff : t -> t -> t list
 
       include Interface.Stringable with type t := t
     end
@@ -315,7 +341,7 @@ module Make (C : Var) (N : Num) = struct
 
     let solve formulae =
       let init, pre, ind, post =
-        List.map fact_disj_bexp formulae
+        List.map BoolExpr.fact_disj formulae
         |> List.general_cartesian
         |> List.map existence_proof
         |> List.split4
@@ -450,12 +476,27 @@ module Make (C : Var) (N : Num) = struct
           let d2 = Array.get g.ind j in
           let d3 = Array.get g.post j in
           Printf.printf
-            "=== Pre %i, Ind %i ===\n%s\n+++AND+++\n%s\n+++NOT INCLUDED+++\n%s\n\n"
+            "=== Pre %i ===\n\
+             %s\n\
+             +++AND Ind %i+++\n\
+             %s\n\
+             +++RESULTS IN+++\n\
+             %s\n\
+             +++NOT SUBSET OF+++\n\
+             %s\n\n\
+            \             +++CONFLICTS+++\n\n\
+            \             %s\n\n"
             i
-            j
             (S.to_string d1)
+            j
             (S.to_string d2)
+            S.(to_string (d1 && d2))
             (S.to_string d3)
+            S.(
+              List.fold_left
+                (fun acc d -> Printf.sprintf "%s%s\n" acc (to_string d))
+                ""
+                (diff d3 (d1 && d2 && d3)))
         | Post i ->
           let d = Array.get g.post i in
           Printf.printf "=== Postcondition %i : UNREACHABLE ===\n%s\n" i (S.to_string d)
@@ -466,6 +507,16 @@ module Make (C : Var) (N : Num) = struct
        let leq g g' =
     *)
   end
+  (*
+     module PropertyProof (S : Solver.S) = struct
+     module E = ExistenceProof (S)
+
+     type ('f, 's) t = ('f, 's) E.t * ('f, 's) E.t * (int E.vertix, 's) Hashtbl.t
+
+     let solve base prop = ()
+     let unsolved (base, prop, relations) = ()
+     let print_problems problems = ()
+     end *)
 end
 
 module type Alloc = sig
@@ -551,6 +602,7 @@ struct
   let is_top = Apron.Abstract1.is_top A.alloc
   let to_string d = Format.asprintf "%a" Abstract1.print d
   let meet = Apron.Abstract1.meet A.alloc
+  let diff _ _ = failwith "not implemented"
 end
 
 module VPLDomain
@@ -626,6 +678,8 @@ struct
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
       D.assume (D.of_cond lincond) domain
   ;;
+
+  let diff = D.diff
 end
 
 module MakeWithPolyhedra
@@ -636,7 +690,7 @@ struct
   include Make (V) (N)
 
   let to_polyhedra index_name formula =
-    let formula = Denotational.norm formula in
+    let formula = Denotational.BoolExpr.norm formula in
     D.add_constraint index_name (D.top index_name (vars formula)) formula
   ;;
 
