@@ -1,7 +1,7 @@
 open Prelude
 open Sexplib0.Sexp_conv
 
-(*TODO: refactor numerical and boolean formula into their own modules?*)
+(*Cannot refactor further, because the implementations and definitions depend on each other which requires mutually recursive modules which are simply annoying.*)
 
 type num_op =
   | Add
@@ -10,15 +10,15 @@ type num_op =
   | Div
 [@@deriving sexp]
 
-type ('c, 'n) tag_expr =
+type ('c, 'n) num_expr =
   | TagVar of 'c * int
   | Const of 'n
   | Index of int
-  | Op of ('c, 'n) tag_expr * num_op * ('c, 'n) tag_expr
-  | ZeroCond of ('c, 'n) tag_expr * 'n
-    (*needed because otherwise will collide with max in factoring out min/max*)
-  | Min of ('c, 'n) tag_expr * ('c, 'n) tag_expr
-  | Max of ('c, 'n) tag_expr * ('c, 'n) tag_expr
+  | Op of ('c, 'n) num_expr * num_op * ('c, 'n) num_expr
+  | ZeroCond of ('c, 'n) num_expr * 'n
+  (** [ZeroCond] variant is needed because otherwise will collide with max in factoring out min/max*)
+  | Min of ('c, 'n) num_expr * ('c, 'n) num_expr
+  | Max of ('c, 'n) num_expr * ('c, 'n) num_expr
 [@@deriving sexp]
 
 type num_rel =
@@ -32,7 +32,7 @@ type num_rel =
 type ('c, 'n) bool_expr =
   | Or of ('c, 'n) bool_expr list
   | And of ('c, 'n) bool_expr list
-  | Linear of ('c, 'n) tag_expr * num_rel * ('c, 'n) tag_expr
+  | Linear of ('c, 'n) num_expr * num_rel * ('c, 'n) num_expr
 [@@deriving sexp]
 
 module Syntax = struct
@@ -53,151 +53,184 @@ module Syntax = struct
   let ( || ) l r = Or [ l; r ]
 end
 
-let rec fold_texp f acc = function
-  | TagVar (v, i) -> f (Some v) i acc
-  | Op (left, _, right) | Min (left, right) | Max (left, right) ->
-    let acc = fold_texp f acc left in
-    fold_texp f acc right
-  | Index i -> f None i acc
-  | Const _ -> acc
-  | ZeroCond (more, _) -> fold_texp f acc more
-;;
+module NumExpr = struct
+  type ('c, 'n) t = ('c, 'n) num_expr
 
-let rec fold_bexp f acc = function
-  | Or list | And list -> List.fold_left (fold_bexp f) acc list
-  | Linear (left, _, right) ->
-    let acc = fold_texp f acc left in
-    fold_texp f acc right
-;;
+  let rec fold f acc = function
+    | TagVar (v, i) -> f (Some v) i acc
+    | Op (left, _, right) | Min (left, right) | Max (left, right) ->
+      let acc = fold f acc left in
+      fold f acc right
+    | Index i -> f None i acc
+    | Const _ -> acc
+    | ZeroCond (more, _) -> fold f acc more
+  ;;
 
-let rec map_ind_texp f = function
-  | TagVar (v, i) -> TagVar (v, f (Some v) i)
-  | Index i -> Index (f None i)
-  | Const c -> Const c
-  | Op (left, op, right) -> Op (map_ind_texp f left, op, map_ind_texp f right)
-  | ZeroCond (more, init_value) -> ZeroCond (map_ind_texp f more, init_value)
-  | Min (l, r) -> Min (map_ind_texp f l, map_ind_texp f r)
-  | Max (l, r) -> Max (map_ind_texp f l, map_ind_texp f r)
-;;
-
-let rec map_ind_bexp f = function
-  | Or list -> Or (List.map (map_ind_bexp f) list)
-  | And list -> And (List.map (map_ind_bexp f) list)
-  | Linear (left, op, right) -> Linear (map_ind_texp f left, op, map_ind_texp f right)
-;;
-
-let rec use_more_cond_texp = function
-  | ZeroCond (more, _) -> more
-  | Op (l, op, r) -> Op (use_more_cond_texp l, op, use_more_cond_texp r)
-  | _ as e -> e
-;;
-
-let rec use_more_cond_bexp = function
-  | Or list -> Or (List.map use_more_cond_bexp list)
-  | And list -> And (List.map use_more_cond_bexp list)
-  | Linear (l, op, r) -> Linear (use_more_cond_texp l, op, use_more_cond_texp r)
-;;
-
-let rec fact_disj_texp exp =
-  match exp with
-  | TagVar _ | Index _ | Const _ | ZeroCond _ -> [ [], exp ]
-  | Op (l, op, r) ->
-    let lvariants = fact_disj_texp l in
-    let rvariants = fact_disj_texp r in
-    List.cartesian lvariants rvariants
-    |> List.map (fun ((lcond, l), (rcond, r)) -> lcond @ rcond, Op (l, op, r))
-  | Min (l, r) | Max (l, r) ->
-    let lcond = Syntax.(l >= r) in
-    let rcond = Syntax.(l <= r) in
-    (match exp with
-     | Min _ -> [ [ lcond ], r; [ rcond ], l ]
-     | Max _ -> [ [ lcond ], l; [ rcond ], r ]
-     | _ -> failwith "unreachable")
-;;
-
-(** Factors out disjunctions from semi-linear formula into a list of linear ones. *)
-let rec fact_disj_bexp = function
-  | Or list -> List.flat_map fact_disj_bexp list
-  | And list ->
-    List.map (fun l -> And l) (List.general_cartesian (List.map fact_disj_bexp list))
-  | Linear (l, op, r) ->
-    let lvariants = fact_disj_texp l in
-    let rvariants = fact_disj_texp r in
-    List.cartesian lvariants rvariants
-    |> List.map (fun ((lcond, l), (rcond, r)) ->
-      And ((Linear (l, op, r) :: lcond) @ rcond))
-;;
-
-let empty_bexp = function
-  | Or [] | And [] -> true
-  | _ -> false
-;;
-
-let rec texp_reduce f e =
-  let reduce = texp_reduce f in
-  let r =
+  let rec eliminate f e =
+    let elim = eliminate f in
     match e with
-    | TagVar _ | Const _ | Index _ -> e
+    | TagVar _ | Const _ | Index _ -> f e
     | Op (l, op, r) ->
-      let l = reduce l in
-      let r = reduce r in
-      Op (l, op, r)
-    | ZeroCond (more, init) -> ZeroCond (reduce more, init)
+      let* l = elim l in
+      let* r = elim r in
+      Some (Op (l, op, r))
+    | ZeroCond (more, init) ->
+      let* more = elim more in
+      Some (ZeroCond (more, init))
     | Min (l, r) ->
-      let l = reduce l in
-      let r = reduce r in
-      Min (l, r)
+      let* l = elim l in
+      let* r = elim r in
+      Some (Min (l, r))
     | Max (l, r) ->
-      let l = reduce l in
-      let r = reduce r in
-      Max (l, r)
-  in
-  f r
-;;
+      let* l = elim l in
+      let* r = elim r in
+      Some (Max (l, r))
+  ;;
 
-let rec bexp_reduce f g e =
-  let reduce = bexp_reduce f g in
-  let r =
+  let rec rewrite rule e =
+    let reduce = rewrite rule in
+    let r =
+      match e with
+      | TagVar _ | Const _ | Index _ -> e
+      | Op (l, op, r) ->
+        let l = reduce l in
+        let r = reduce r in
+        Op (l, op, r)
+      | ZeroCond (more, init) -> ZeroCond (reduce more, init)
+      | Min (l, r) ->
+        let l = reduce l in
+        let r = reduce r in
+        Min (l, r)
+      | Max (l, r) ->
+        let l = reduce l in
+        let r = reduce r in
+        Max (l, r)
+    in
+    rule r
+  ;;
+
+  let rec fact_disj exp =
+    match exp with
+    | TagVar _ | Index _ | Const _ | ZeroCond _ -> [ [], exp ]
+    | Op (l, op, r) ->
+      let lvariants = fact_disj l in
+      let rvariants = fact_disj r in
+      List.cartesian lvariants rvariants
+      |> List.map (fun ((lcond, l), (rcond, r)) -> lcond @ rcond, Op (l, op, r))
+    | Min (l, r) | Max (l, r) ->
+      let lcond = Syntax.(l >= r) in
+      let rcond = Syntax.(l <= r) in
+      (match exp with
+       | Min _ -> [ [ lcond ], r; [ rcond ], l ]
+       | Max _ -> [ [ lcond ], l; [ rcond ], r ]
+       | _ -> failwith "unreachable")
+  ;;
+end
+
+module BoolExpr = struct
+  type ('c, 'n) t = ('c, 'n) bool_expr
+
+  let rec fold f acc = function
+    | Or list | And list -> List.fold_left (fold f) acc list
+    | Linear (left, _, right) ->
+      let acc = NumExpr.fold f acc left in
+      NumExpr.fold f acc right
+  ;;
+
+  let rec eliminate f e =
+    let elim = eliminate f in
     match e with
-    | And list -> And (List.map reduce list)
-    | Or list -> Or (List.map reduce list)
-    | Linear (l, op, r) -> Linear (f l, op, f r)
-  in
-  g r
-;;
+    | And list ->
+      let list = List.filter_map elim list in
+      if List.is_empty list then None else Some (And list)
+    | Or list ->
+      let list = List.filter_map elim list in
+      if List.is_empty list then None else Some (Or list)
+    | Linear (l, op, r) ->
+      let* l = f l
+      and* r = f r in
+      Some (Linear (l, op, r))
+  ;;
 
-let norm_rule = function
-  | Or [] -> And []
-  | Or [ x ] -> x
-  | Or list ->
-    let to_flatten, others =
-      List.partition_map
-        (fun f ->
-          match f with
-          | Or l -> Either.Left l
-          | _ as other -> Either.Right other)
-        list
+  let rec rewrite f bexp_rule e =
+    let reduce = rewrite f bexp_rule in
+    let r =
+      match e with
+      | And list -> And (List.map reduce list)
+      | Or list -> Or (List.map reduce list)
+      | Linear (l, op, r) -> Linear (f l, op, f r)
     in
-    Or (others @ List.flatten to_flatten)
-  | And [ x ] -> x
-  | And list ->
-    let to_flatten, others =
-      List.partition_map
-        (fun f ->
-          match f with
-          | And l -> Either.Left l
-          | _ as other -> Either.Right other)
-        list
+    bexp_rule r
+  ;;
+
+  let map_idx f e =
+    let rule = function
+      | TagVar (v, i) -> TagVar (v, f (Some v) i)
+      | Index i -> Index (f None i)
+      | e -> e
     in
-    And (others @ List.flatten to_flatten)
-  | _ as lin -> lin
-;;
+    rewrite (NumExpr.rewrite rule) Fun.id e
+  ;;
 
-let norm e = bexp_reduce Fun.id norm_rule e
+  let use_more_cond e =
+    let use_more_rule = function
+      | ZeroCond (more, _) -> more
+      | _ as e -> e
+    in
+    rewrite (NumExpr.rewrite use_more_rule) Fun.id e
+  ;;
 
-open Prelude
+  let norm_rule = function
+    | Or [] -> And []
+    | Or [ x ] -> x
+    | Or list ->
+      let to_flatten, others =
+        List.partition_map
+          (fun f ->
+            match f with
+            | Or l -> Either.Left l
+            | _ as other -> Either.Right other)
+          list
+      in
+      Or (others @ List.flatten to_flatten)
+    | And [ x ] -> x
+    | And list ->
+      let to_flatten, others =
+        List.partition_map
+          (fun f ->
+            match f with
+            | And l -> Either.Left l
+            | _ as other -> Either.Right other)
+          list
+      in
+      And (others @ List.flatten to_flatten)
+    | _ as lin -> lin
+  ;;
+
+  let norm e = rewrite Fun.id norm_rule e
+
+  let is_empty = function
+    | Or [] | And [] -> true
+    | _ -> false
+  ;;
+
+  (** Factors out disjunctions from semi-linear formula into a list of linear ones. *)
+  let rec fact_disj = function
+    | Or list -> List.flat_map fact_disj list
+    | And list ->
+      List.map (fun l -> And l) (List.general_cartesian (List.map fact_disj list))
+    | Linear (l, op, r) ->
+      let lvariants = NumExpr.fact_disj l in
+      let rvariants = NumExpr.fact_disj r in
+      List.cartesian lvariants rvariants
+      |> List.map (fun ((lcond, l), (rcond, r)) ->
+        And ((Linear (l, op, r) :: lcond) @ rcond))
+  ;;
+end
 
 module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
+  open Prelude
+
   let string_of_num_op = function
     | Add -> "+"
     | Sub -> "-"
