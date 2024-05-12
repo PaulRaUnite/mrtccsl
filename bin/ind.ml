@@ -30,7 +30,7 @@ let _ =
         RTdelay { out = "del"; arg = "in"; delay = 1, 2 }
       ; Precedence { cause = "ts"; effect = "tf" }
         (* ; Precedence { cause = "tf"; effect = "ts" } *)
-        (* Delay { out = "out"; arg = "in"; delay = 2, 2; base = None } *)
+        ;Delay { out = "out"; arg = "in"; delay = 2, 2; base = None }
         (* ; Sporadic {out="in"; at_least = 5; strict=true} *)
       ]
   in

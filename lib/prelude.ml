@@ -109,6 +109,8 @@ module List = struct
   let unfold_until f init n : 'a list = Seq.unfold f init |> Seq.take n |> List.of_seq
   let any = List.exists Fun.id
   let all = List.for_all Fun.id
+
+  let flat l = filter_map Fun.id l 
 end
 
 module String = struct
@@ -234,6 +236,8 @@ module Tuple = struct
   let map2 f (x, y) = f x, f y
   let map3 f (x, y, z) = f x, f y, f z
   let map4 f (x, y, z, w) = f x, f y, f z, f w
+  
+  let fn2 f (x,y) = f x y
 end
 
 module Hashtbl = struct
@@ -246,3 +250,13 @@ module Hashtbl = struct
 
   let value tbl key default = Hashtbl.find_opt tbl key |> Option.value ~default
 end
+
+
+let fixpoint init eq trans start = 
+  let rec aux value = 
+    let next = trans value in
+    if eq next value then 
+      next
+  else
+    aux next
+  in aux (init start)

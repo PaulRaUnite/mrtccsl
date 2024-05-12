@@ -137,9 +137,9 @@ module BoolExpr = struct
       NumExpr.fold f acc right
   ;;
 
-  let rec eliminate f e =
-    let elim = eliminate f in
-    match e with
+  let rec eliminate f g e =
+    let elim = eliminate f g in
+    let* e = (match e with
     | And list ->
       let list = List.filter_map elim list in
       if List.is_empty list then None else Some (And list)
@@ -149,7 +149,9 @@ module BoolExpr = struct
     | Linear (l, op, r) ->
       let* l = f l
       and* r = f r in
-      Some (Linear (l, op, r))
+      Some (Linear (l, op, r)) )
+    in 
+    g e
   ;;
 
   let rec rewrite f bexp_rule e =
@@ -226,6 +228,28 @@ module BoolExpr = struct
       |> List.map (fun ((lcond, l), (rcond, r)) ->
         And ((Linear (l, op, r) :: lcond) @ rcond))
   ;;
+
+  let vars f = fold (fun c _ acc -> c :: acc) [] f
+  let indexed_vars f = fold (fun c i acc -> (c, i) :: acc) [] f
+
+  let vars_except_i f =
+    List.filter_map
+      (fun (c, i) ->
+        let* c = c in
+        Some (c, i))
+      (indexed_vars f)
+  ;;
+
+  let shift_by f i = map_idx (fun _ j -> i + j) f
+
+  (* module VariableWatch = struct
+    type ('c,'n)f = ('c,'n) t 
+    type ('c, 'n) t = {coverage: ('c option, (int, bool) Hashtbl.t) Hashtbl.t; offsets: ('c option, int ) Hashtbl.t; formula: ('c,'n) f}
+
+    let of_formula f = let coverage = List.fold_left (fun c tbl -> ) (Hashtbl.create 4) (vars f)
+  end*)
+
+  let is_stateful f = fold (fun _ i acc -> if i <> 0 then true else acc) false f
 end
 
 module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct

@@ -116,6 +116,14 @@ module Make (C : Var) (N : Num) = struct
       ;;
     end)
 
+  module SetC = Set.Make (C)
+
+  module SetOC = Set.Make (struct
+      type t = C.t option
+
+      let compare = Option.compare C.compare
+    end)
+
   let vars_set formula =
     let vars =
       BoolExpr.fold
@@ -137,20 +145,15 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let inductive_step formulae =
-    BoolExpr.use_more_cond
-    @@ And (formulae @ List.map (fun (c, i) -> lc_connection c i) (vars_of_list formulae))
-  ;;
-
-  let clocks_of_list formulae =
-    let module SetC = Set.Make (C) in
-    let fold_formula =
-      BoolExpr.fold (fun c _ acc ->
-        match c with
-        | Some c -> SetC.add c acc
-        | None -> acc)
+    let unique_num_vars =
+      formulae
+      |> List.to_seq
+      |> Seq.flat_map (fun f -> f |> BoolExpr.vars_except_i |> List.to_seq)
+      |> SetCI.of_seq
+      |> SetCI.elements
     in
-    let clocks_set = List.fold_left fold_formula SetC.empty formulae in
-    SetC.elements clocks_set
+    let connections = List.map (Tuple.fn2 lc_connection) unique_num_vars in
+    And (And (List.map BoolExpr.use_more_cond formulae) :: connections)
   ;;
 
   module MapOCMM = Map.Make (struct
@@ -198,28 +201,6 @@ module Make (C : Var) (N : Num) = struct
     if lc = rc then min, max else min, max
   ;;
 
-  let postcondition formulae =
-    let clocks = clocks_of_list formulae in
-    let ranges = List.map index_ranges formulae in
-    let intervals = List.map range_to_min_max ranges in
-    let min, max = range_to_min_max (combine_index_ranges ranges) in
-    let neg_ints = List.init (Int.neg min + 1) Int.neg in
-    let clock_connections =
-      List.map (fun (c, i) -> lc_connection c i) (List.cartesian clocks neg_ints)
-    in
-    let _ = assert (max = 0) in
-    let expand f min =
-      let neg_ints = List.init (Int.neg min + 1) Int.neg in
-      List.map (fun i -> BoolExpr.map_idx (fun _ j -> i + j) f) neg_ints
-    in
-    let expanded_formulae =
-      List.flatten
-      @@ List.map (fun (f, (lmin, _)) -> expand f (min - lmin))
-      @@ List.combine formulae intervals
-    in
-    And (expanded_formulae @ clock_connections)
-  ;;
-
   let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
 
   (*TODO: move to proper module*)
@@ -239,60 +220,179 @@ module Make (C : Var) (N : Num) = struct
     | _ -> expr
   ;;
 
-  let reduce_by_idx index expr =
-    match expr with
-    | (TagVar (_, i) | Index i) when i = index -> Const N.zero
-    | Index i -> Index i
-    | ZeroCond (Index i, _) when i > index -> Index i
-    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> v
-    | ZeroCond _ -> failwith "zerocond should be simplified by this point"
-    | _ -> expr
+  let reduce_by_idx index = function
+    | ZeroCond (Index i, _) when i > index -> Some (Index i)
+    | ZeroCond (Index i, init) when i = index -> Some (Const init)
+    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
+    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
+    | ZeroCond _ -> None
+    | _ as e -> Some e
   ;;
 
-  let init_cond post =
-    let assume_init =
-      NumExpr.rewrite (norm_texp_rule << reduce_by_idx 0 << norm_texp_rule)
+  module SetOCI = Set.Make (struct
+      type t = C.t option * int
+
+      let compare (c1, i1) (c2, i2) =
+        let comp = Option.compare C.compare c1 c2 in
+        if comp = 0 then Int.compare i1 i2 else comp
+      ;;
+    end)
+
+  let mul l r =
+    let livars = BoolExpr.indexed_vars l in
+    let rivars = BoolExpr.indexed_vars r in
+    let make_shift_table ivars =
+      List.fold_left
+        (fun tbl (c, i) ->
+          Hashtbl.entry tbl (fun prev -> Int.min prev i) c i;
+          tbl)
+        (Hashtbl.create 16)
+        ivars
     in
-    let init_cond_bexp = BoolExpr.rewrite assume_init Fun.id in
-    let min, max = BoolExpr.fold (fun _ i (l, r) -> Int.(min i l, max i r)) (0, 0) post in
-    let _ = Printf.printf "%i, %i\n" min max in
-    let _ = assert (max = 0) in
-    let post =
-      post |> BoolExpr.map_idx (fun _ i -> i - min) |> init_cond_bexp |> BoolExpr.norm
+    let shift_lvars = make_shift_table livars in
+    let shift_rvars = make_shift_table rivars in
+    let saturate_one f shift_vars to_visit =
+      let formulae, visited =
+        to_visit
+        |> SetOCI.to_seq
+        |> Seq.filter_map (fun (c, i) ->
+          let* offset_in_f = Hashtbl.find_opt shift_vars c in
+          let offset = i - offset_in_f in
+          let _ = assert (i < 0) in
+          let shifted = BoolExpr.shift_by f offset in
+          Some (shifted, (c, i)))
+        |> List.of_seq
+        |> List.split
+      in
+      formulae, SetOCI.of_list visited
     in
-    let _ = assert (not @@ BoolExpr.is_empty post) in
-    post
+    let saturation_step (prev, visited_by_l, visited_by_r) =
+      let new_ls, new_lvisits =
+        saturate_one l shift_lvars (SetOCI.diff visited_by_r visited_by_l)
+      in
+      let new_rs, new_rvisits =
+        saturate_one r shift_rvars (SetOCI.diff visited_by_l visited_by_r)
+      in
+      ( And (And (prev :: new_ls) :: new_rs)
+      , SetOCI.union visited_by_l new_lvisits
+      , SetOCI.union visited_by_r new_rvisits )
+    in
+    let f, _, _ =
+      fixpoint
+        (fun () -> And [ l; r ], SetOCI.of_list livars, SetOCI.of_list rivars)
+        (fun (_, a, b) (_, c, d) -> SetOCI.equal a c && SetOCI.equal b d)
+        saturation_step
+        ()
+    in
+    f
   ;;
 
-  let pre_post f =
-    let almost_post = BoolExpr.use_more_cond f in
-    let _ =
-      Printf.printf "almost_post: %s\n" (string_of_bool_expr (BoolExpr.norm almost_post))
+  let stateful_hull formulae =
+    let stateful, stateless = List.partition BoolExpr.is_stateful formulae in
+    let product =
+      match stateful with
+      | [] -> And []
+      | x :: [] -> x
+      | f :: tail -> List.fold_left mul f tail
     in
-    let pre = precondition almost_post in
-    let clocks = vars f in
-    let min, _ = range_to_min_max (index_ranges f) in
-    let post =
-      And
-        (almost_post
-         :: List.filter_map
-              (fun (c, i) -> if i = min then Some (lc_connection c min) else None)
-              clocks)
+    product, stateless
+  ;;
+
+  let postcondition formulae =
+    let hull, stateless = stateful_hull formulae in
+    let vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
+    let stateless_vars =
+      stateless
+      |> List.map (List.to_seq << BoolExpr.indexed_vars)
+      |> List.to_seq
+      |> Seq.concat
     in
-    pre, post
+    let vars = SetOCI.add_seq stateless_vars vars in
+    let indexes =
+      vars
+      |> SetOCI.to_seq
+      |> Seq.map (fun (_, i) -> i)
+      |> List.of_seq
+      |> List.sort_uniq Int.compare
+    in
+    let stateless_vars =
+      List.map (fun f -> f, SetOCI.of_list (BoolExpr.indexed_vars f)) stateless
+    in
+    let shift_if_present ((f, vars), i) =
+      let shifted_vars = SetOCI.map (fun (c, j) -> c, j + i) vars in
+      if SetOCI.subset shifted_vars vars
+      then Some (BoolExpr.map_idx (fun _ i -> i) f)
+      else None
+    in
+    let constraint_filling =
+      Seq.product (List.to_seq stateless_vars) (List.to_seq indexes)
+      |> Seq.filter_map shift_if_present
+      |> List.of_seq
+    in
+    let logical_clocks =
+      SetOCI.fold
+        (fun (c, i) tbl ->
+          match c with
+          | Some c ->
+            Hashtbl.entry tbl (fun list -> i :: list) c [];
+            tbl
+          | None -> tbl)
+        vars
+        (Hashtbl.create 32)
+    in
+    let rec connect_indices c = function
+      | [] | _ :: [] -> []
+      | x :: y :: tail ->
+        Denotational.Syntax.(c @ x < c @ y) :: connect_indices c (y :: tail)
+    in
+    let connect_clocks (c, indices) =
+      let indices = List.fast_sort Int.compare indices in
+      List.to_seq (connect_indices c indices)
+    in
+    let logical_filling =
+      logical_clocks |> Hashtbl.to_seq |> Seq.flat_map connect_clocks |> List.of_seq
+    in
+    BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
+  ;;
+
+  let init_cond width formulae =
+    let num_reduction f =
+      let f = norm_texp_rule f in
+      let* f = reduce_by_idx 0 f in
+      Some (norm_texp_rule f)
+    in
+    let assume_init = BoolExpr.eliminate (NumExpr.eliminate num_reduction) Option.some in
+    let conjs =
+      Seq.product (List.to_seq formulae) (Seq.int_seq width |> Seq.map (Int.add 1))
+      |> Seq.filter_map (fun (f, i) ->
+        let f = BoolExpr.shift_by f i in
+        let _ = Printf.printf "f: %s\n" (string_of_bool_expr f) in
+        assume_init f)
+      |> List.of_seq
+    in
+    let vars =
+      formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
+    in
+    let logic_connections =
+      Seq.product (List.to_seq vars) (Seq.int_seq width |> Seq.map (Int.add 1))
+      |> Seq.map (fun (c, i) -> lc_connection c i)
+      |> List.of_seq
+    in
+    let clock_starts = List.map lc_init vars in
+    And (And (And conjs :: logic_connections) :: clock_starts)
   ;;
 
   let existence_proof formulae =
-    let post_compound = postcondition formulae in
-    let _ =
-      Printf.printf "post_comp: %s\n" (string_of_bool_expr (BoolExpr.norm post_compound))
-    in
+    let post = postcondition formulae in
     let cond = inductive_step formulae in
-    let pre, post = pre_post post_compound in
-    let init = init_cond post_compound in
+    let pre = precondition post in
+    let min, _ = range_to_min_max (index_ranges post) in
+    let width = 1 - min in
+    let init = init_cond width formulae in
     let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
     let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
     let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
+    let _ = Printf.printf "step: %s\n" (string_of_bool_expr cond) in
     let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
     init, pre, cond, post
   ;;
@@ -468,6 +568,7 @@ module Make (C : Var) (N : Num) = struct
 
     let print_problems g l =
       let print = function
+        (* add init back in*)
         | Pre i ->
           let d = Array.get g.pre i in
           Printf.printf "=== Precondition %i : NO SAT STEPS ===\n%s\n" i (S.to_string d)
