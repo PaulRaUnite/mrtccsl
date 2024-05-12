@@ -68,23 +68,26 @@ module NumExpr = struct
 
   let rec eliminate f e =
     let elim = eliminate f in
-    match e with
-    | TagVar _ | Const _ | Index _ -> f e
-    | Op (l, op, r) ->
-      let* l = elim l in
-      let* r = elim r in
-      Some (Op (l, op, r))
-    | ZeroCond (more, init) ->
-      let* more = elim more in
-      Some (ZeroCond (more, init))
-    | Min (l, r) ->
-      let* l = elim l in
-      let* r = elim r in
-      Some (Min (l, r))
-    | Max (l, r) ->
-      let* l = elim l in
-      let* r = elim r in
-      Some (Max (l, r))
+    let* e =
+      match e with
+      | TagVar _ | Const _ | Index _ -> Some e
+      | Op (l, op, r) ->
+        let* l = elim l in
+        let* r = elim r in
+        Some (Op (l, op, r))
+      | ZeroCond (more, init) ->
+        let* more = elim more in
+        Some (ZeroCond (more, init))
+      | Min (l, r) ->
+        let* l = elim l in
+        let* r = elim r in
+        Some (Min (l, r))
+      | Max (l, r) ->
+        let* l = elim l in
+        let* r = elim r in
+        Some (Max (l, r))
+    in
+    f e
   ;;
 
   let rec rewrite rule e =
@@ -139,18 +142,19 @@ module BoolExpr = struct
 
   let rec eliminate f g e =
     let elim = eliminate f g in
-    let* e = (match e with
-    | And list ->
-      let list = List.filter_map elim list in
-      if List.is_empty list then None else Some (And list)
-    | Or list ->
-      let list = List.filter_map elim list in
-      if List.is_empty list then None else Some (Or list)
-    | Linear (l, op, r) ->
-      let* l = f l
-      and* r = f r in
-      Some (Linear (l, op, r)) )
-    in 
+    let* e =
+      match e with
+      | And list ->
+        let list = List.filter_map elim list in
+        if List.is_empty list then None else Some (And list)
+      | Or list ->
+        let list = List.filter_map elim list in
+        if List.is_empty list then None else Some (Or list)
+      | Linear (l, op, r) ->
+        let* l = f l
+        and* r = f r in
+        Some (Linear (l, op, r))
+    in
     g e
   ;;
 

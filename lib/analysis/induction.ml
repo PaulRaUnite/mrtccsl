@@ -49,7 +49,7 @@ module Make (C : Var) (N : Num) = struct
     | Causality { cause; effect } -> cause @ i <= effect @ i
     | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
     | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
-      (out @ Stdlib.(i - d1)) = arg @ i
+      (arg @ Stdlib.(i - d1)) = out @ i
     | Fastest { out; left; right } -> out @ i = min (left @ i) (right @ i)
     | Slowest { out; left; right } -> out @ i = max (left @ i) (right @ i)
     | CumulPeriodic { out; period; error = le, re; offset } ->
@@ -220,12 +220,15 @@ module Make (C : Var) (N : Num) = struct
     | _ -> expr
   ;;
 
+  (*FIXME: variables and indexes out of zerocond need to be eliminated too*)
+  (*FIXME: zerocond is not reduced in some cases*)
   let reduce_by_idx index = function
     | ZeroCond (Index i, _) when i > index -> Some (Index i)
     | ZeroCond (Index i, init) when i = index -> Some (Const init)
     | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
     | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
     | ZeroCond _ -> None
+    | (Index i | TagVar (_, i)) when i <= index -> None
     | _ as e -> Some e
   ;;
 
@@ -366,15 +369,17 @@ module Make (C : Var) (N : Num) = struct
       Seq.product (List.to_seq formulae) (Seq.int_seq width |> Seq.map (Int.add 1))
       |> Seq.filter_map (fun (f, i) ->
         let f = BoolExpr.shift_by f i in
-        let _ = Printf.printf "f: %s\n" (string_of_bool_expr f) in
-        assume_init f)
+        (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
+        let* f = assume_init f in
+        (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
+        Some f)
       |> List.of_seq
     in
     let vars =
       formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
     in
     let logic_connections =
-      Seq.product (List.to_seq vars) (Seq.int_seq width |> Seq.map (Int.add 1))
+      Seq.product (List.to_seq vars) (Seq.int_seq (width-1) |> Seq.map (Int.add 2))
       |> Seq.map (fun (c, i) -> lc_connection c i)
       |> List.of_seq
     in
