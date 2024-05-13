@@ -24,6 +24,8 @@ module type Domain = sig
   val is_top : t -> bool
   val meet : t -> t -> t
   val diff : t -> t -> t list
+  val more_precise : t -> t -> bool
+  val infinite_in : v -> t -> bool
 
   include Interface.Stringable with type t := t
 end
@@ -333,9 +335,12 @@ module Make (C : Var) (N : Num) = struct
     let use_init_and_simplify =
       elimination_of_texp_only (norm_reduce_nonzero index_to_reduce)
     in
-    let remove_sub_zero_refs = elimination_of_texp_only (reduce_negative index_to_reduce) in
+    let remove_sub_zero_refs =
+      elimination_of_texp_only (reduce_negative index_to_reduce)
+    in
     let shifted_formulae =
-      Seq.product (List.to_seq formulae) (Seq.int_seq_inclusive (1,width)) (*skip zero because clocks start at 1*)
+      Seq.product (List.to_seq formulae) (Seq.int_seq_inclusive (1, width))
+      (*skip zero because clocks start at 1*)
       |> Seq.filter_map (fun (f, i) ->
         let f = BoolExpr.shift_by f i in
         (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
@@ -349,7 +354,8 @@ module Make (C : Var) (N : Num) = struct
     in
     let clock_starts = List.map lc_init vars in
     let clock_connections =
-      Seq.product (List.to_seq vars) (Seq.int_seq_inclusive (2,width)) (*skip zero and first because they are handled before*)
+      Seq.product (List.to_seq vars) (Seq.int_seq_inclusive (2, width))
+      (*skip zero and first because they are handled before*)
       |> Seq.map (fun (c, i) -> lc_connection c i)
       |> List.of_seq
     in
@@ -374,6 +380,7 @@ module Make (C : Var) (N : Num) = struct
   module Solver = struct
     module type S = sig
       type t
+      type v
       type f = (C.t, N.t) bool_expr
 
       val of_formula : f -> t
@@ -381,6 +388,9 @@ module Make (C : Var) (N : Num) = struct
       val ( <= ) : t -> t -> bool
       val ( && ) : t -> t -> t
       val diff : t -> t -> t list
+      val more_precise : t -> t -> bool
+      val index_name : v
+      val infinite_in : v -> t -> bool
 
       include Interface.Stringable with type t := t
     end
@@ -404,16 +414,27 @@ module Make (C : Var) (N : Num) = struct
   end
 
   module ExistenceProof (S : Solver.S) = struct
-    (*TODO: add check for precodnition inside inductive step.*)
-    (*TODO: return printing of failure in init step*)
+    type 'a vertix =
+      | Init of 'a
+      | Pre of 'a
+      | Step of 'a * 'a
+      | Post of 'a
+    [@@deriving sexp]
+
     type ('f, 's) t =
-      { init : ('f * 's) array
+      { init : 'f array
       ; pre : 'f array
       ; ind : 'f array
       ; post : 'f array
-      ; steps : (int * int, 's) Hashtbl.t
-      ; inclusion : (int * int * int, 's) Hashtbl.t
+      ; arrows : (int vertix * int vertix, 's) Hashtbl.t
+      ; vertices : (int vertix, 's) Hashtbl.t
       }
+
+    type test =
+      | InitPre of int
+      | PreStep of int * int
+      | StepPost of int * int * int
+      | PostPre of int
 
     let solve formulae =
       let init, pre, ind, post =
@@ -424,69 +445,129 @@ module Make (C : Var) (N : Num) = struct
         |> Tuple.map4 Array.of_list
       in
       let len = Array.length init in
-      let steps = Hashtbl.create (len * len) in
-      let inclusion = Hashtbl.create (len * len * len) in
-      let init =
-        Array.map
-          (fun f ->
-            let dom = S.of_formula f in
-            dom, S.sat dom)
-          init
+      let vertices = Hashtbl.create ((len * len) + (3 * len)) in
+      let add_vertex v r = Hashtbl.replace vertices v r in
+      let arrows = Hashtbl.create (2 * ((len * len) + (3 * len))) in
+      let add_arrow from into r = Hashtbl.replace arrows (from, into) r in
+      let init, pre, ind, post =
+        Tuple.map4 (Array.map S.of_formula) (init, pre, ind, post)
       in
-      let pre, ind, post = Tuple.map3 (Array.map S.of_formula) (pre, ind, post) in
-      let steps_by_pre i = Seq.int_seq (Array.length ind) |> Seq.map (fun j -> i, j) in
-      let inclusions_by_step (i, j) =
-        Seq.int_seq (Array.length post) |> Seq.map (fun k -> i, j, k)
+      let steps_by_pre i =
+        Seq.int_seq (Array.length ind)
+        |> Seq.filter (fun j -> not (Hashtbl.mem arrows (Pre i, Step (i, j))))
+        |> Seq.map (fun j -> PreStep (i, j))
       in
-      let reachable_steps =
-        ref
-          (init
-           |> Array.to_seqi
-           |> Seq.filter (fun (_, (_, sat)) -> sat)
-           |> Seq.flat_map (fun (i, _) -> steps_by_pre i))
+      let post_inclusions_by_step (i, j) =
+        Seq.int_seq (Array.length post)
+        |> Seq.filter (fun k ->
+          let r = not (Hashtbl.mem arrows (Step (i, j), Post k)) in
+          (* Printf.printf "filter: %b\n" r; *)
+          r)
+        |> Seq.map (fun k -> StepPost (i, j, k))
       in
-      let reachable_inclusions = ref Seq.empty in
-      let process_steps q =
+      let test_queue = ref (Array.to_seq (Array.mapi (fun i _ -> InitPre i) init)) in
+      let process q =
         q
-        |> Seq.filter (fun (p, i) ->
-          let result = S.sat S.(Array.get pre p && Array.get ind i) in
-          let _ = Hashtbl.replace steps (p, i) result in
-          result)
-        |> Seq.flat_map (fun (p, i) -> inclusions_by_step (p, i))
-        |> Seq.filter (fun key -> not (Hashtbl.value inclusion key false))
-      in
-      let process_inclusions q =
-        q
-        |> Seq.filter (fun (pr, i, po) ->
-          let result = S.((Array.get pre pr && Array.get ind i) <= Array.get post po) in
-          let _ = Hashtbl.replace inclusion (pr, i, po) result in
-          result)
-        |> Seq.flat_map (fun (_, _, po) -> steps_by_pre po)
-        |> Seq.filter (fun key -> not (Hashtbl.value steps key false))
+        |> Seq.flat_map (function
+          | InitPre i ->
+            let sat = S.sat (Array.get init i) in
+            let _ =
+              (* Printf.printf "InitPre\n"; *)
+              add_vertex (Init i) sat
+            in
+            if sat
+            then (
+              let sat = S.sat (Array.get pre i) in
+              let _ = add_vertex (Pre i) sat in
+              if sat
+              then (
+                add_arrow (Init i) (Pre i) sat;
+                steps_by_pre i)
+              else Seq.empty)
+            else Seq.empty
+          | PreStep (p, i) ->
+            let pre = Array.get pre p in
+            let ind = Array.get ind i in
+            let step = S.(pre && ind) in
+            let sat = S.sat step && S.infinite_in S.index_name step in
+            let includes = S.(more_precise pre step) in
+            let _ =
+              (* Printf.printf "PreStep: %b %b\n" sat includes; *)
+              add_arrow (Pre p) (Step (p, i)) includes;
+              add_vertex (Step (p, i)) sat
+            in
+            if sat && includes then post_inclusions_by_step (p, i) else Seq.empty
+          | StepPost (i, j, k) ->
+            let pre = Array.get pre i in
+            let ind = Array.get ind j in
+            let post = Array.get post k in
+            let step = S.(pre && ind) in
+            let sat = S.sat post in
+            let includes = S.(step <= post) in
+            let _ =
+              (* Printf.printf "StepPost: %b %b\n" sat includes; *)
+              add_arrow (Step (i, j)) (Post k) includes;
+              add_vertex (Post k) sat
+            in
+            if sat && includes && not (Hashtbl.mem arrows (Post k, Pre k))
+            then Seq.return (PostPre k)
+            else Seq.empty
+          | PostPre i ->
+            let sat = S.sat (Array.get pre i) in
+            let _ =
+              (* Printf.printf "PostPre\n"; *)
+              add_vertex (Pre i) sat;
+              add_arrow (Post i) (Pre i) sat
+            in
+            if sat then steps_by_pre i else Seq.empty)
+        |> List.of_seq
+        |> List.to_seq
       in
       let _ =
-        while not (Seq.is_empty !reachable_steps && Seq.is_empty !reachable_inclusions) do
-          reachable_inclusions := process_steps !reachable_steps;
-          reachable_steps := process_inclusions !reachable_inclusions
+        while not (Seq.is_empty !test_queue) do
+          test_queue := process !test_queue
         done
       in
-      { init; pre; ind; post; steps; inclusion }
+      { init; pre; ind; post; arrows; vertices }
     ;;
 
-    type 'a vertix =
-      | Pre of 'a
-      | Step of 'a * 'a
-      | Post of 'a
+    type problem =
+      | NoSolutions
+      | InitIsLast of int
+      | PreIsLast of int
+      | StepIsLast of int * int
 
-    let unsolved { init; steps; inclusion; _ } =
-      (* let _ = Array.iteri (fun i (_, sat) -> Printf.printf "%i:%b\n" i sat) init in
-         let _ = Hashtbl.iter (fun (i, j) v -> Printf.printf "%i,%i,%b\n" i j v) steps in
+    let vertix_to_string v =
+      v |> sexp_of_vertix Sexplib0.Sexp_conv.sexp_of_int |> Sexplib0.Sexp.to_string
+    ;;
+
+    let report { init; vertices; arrows; _ } =
+      (* let _ =
+         Hashtbl.iter
+         (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
+         vertices
+         in
          let _ =
-         Hashtbl.iter (fun (i, j, k) v -> Printf.printf "%i,%i,%i,%b\n" i j k v) inclusion
+         Hashtbl.iter
+         (fun (f, t) sat ->
+         Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
+         arrows
          in *)
       let len = Array.length init in
-      let marks = Hashtbl.create ((len * len) + (2 * len)) in
-      let add_vertex v = Hashtbl.replace marks v false in
+      let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
+      let mark_cyclic v = Hashtbl.replace in_cycle v true in
+      let visited = Hashtbl.create ((len * len) + (2 * len)) in
+      let is_cyclic v = Hashtbl.value in_cycle v false || Hashtbl.mem visited v in
+      let visit v = Hashtbl.replace visited v () in
+      let next =
+        arrows
+        |> Hashtbl.to_seq
+        |> Seq.fold_left
+             (fun tbl ((f, t), sat) ->
+               if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
+               tbl)
+             (Hashtbl.create (Hashtbl.length vertices))
+      in
       (* let print_marks m =
          Hashtbl.iter
          (fun k v ->
@@ -496,93 +577,104 @@ module Make (C : Var) (N : Num) = struct
          | Post i -> Printf.printf "post %i: %b\n" i v)
          m
          in *)
-      let visited = Hashtbl.create ((len * len) + (2 * len)) in
-      let next = Hashtbl.create (Hashtbl.length steps + Hashtbl.length inclusion) in
-      let add_arrow v v' = Hashtbl.entry next (List.cons v') v [] in
-      let _ =
-        for i = 0 to len - 1 do
-          add_vertex (Pre i);
-          add_vertex (Post i);
-          add_arrow (Post i) (Pre i);
-          for j = 0 to len - 1 do
-            if Hashtbl.find_opt steps (i, j) |> Option.value ~default:false
-            then (
-              add_vertex (Step (i, j));
-              add_arrow (Pre i) (Step (i, j)));
-            if Hashtbl.find_opt inclusion (i, j, j) |> Option.value ~default:false
-            then add_arrow (Step (i, j)) (Post j)
-          done
-        done
-      in
       (* let _ = print_marks marks in *)
-      let roots =
-        init
-        |> Array.to_seqi
-        |> Seq.filter_map (fun (i, (_, sat)) -> if sat then Some (Pre i) else None)
-      in
-      let rec dfs v =
-        if Hashtbl.find marks v || Hashtbl.mem visited v
+      let rec dfs (v : int vertix) =
+        if is_cyclic v
         then (
-          let _ = Hashtbl.replace visited v () in
-          let _ = Hashtbl.replace marks v true in
-          true)
+          visit v;
+          mark_cyclic v;
+          true, [])
         else (
-          let _ = Hashtbl.replace visited v () in
-          if List.any (List.map dfs (Hashtbl.value next v []))
+          visit v;
+          let cycles, problems = List.split (List.map dfs (Hashtbl.value next v [])) in
+          let problems = List.concat problems in
+          if List.any cycles
           then (
-            let _ = Hashtbl.replace marks v true in
-            true)
-          else false)
+            mark_cyclic v;
+            true, problems)
+          else if List.is_empty problems
+          then (
+            let p =
+              match v with
+              | Init i -> InitIsLast i
+              | Pre i -> PreIsLast i
+              | Step (i, j) -> StepIsLast (i, j)
+              | Post _ -> failwith "doesn't make sense for the graph"
+            in
+            false, [ p ])
+          else false, problems)
       in
-      let _ = Seq.iter (ignore << dfs) roots in
-      (* let _ = Printf.printf "after\n"in
-         let _ = print_marks marks in *)
-      Hashtbl.to_seq marks
-      |> Seq.filter_map (fun (v, sat) -> if sat then None else Some v)
-      |> List.of_seq
+      let valid_starts, problems =
+        init
+        |> Array.to_list
+        |> List.mapi (fun i dom -> if S.sat dom then dfs (Init i) else false, [])
+        |> List.split
+      in
+      let problems = List.concat problems in
+      if not (List.any valid_starts) then NoSolutions :: problems else problems
     ;;
 
-    let print_problems g l =
+    let print_problems g problems =
+      let pre i = Array.get g.pre i in
+      let ind i = Array.get g.ind i in
+      let post i = Array.get g.post i in
+      let str_pre i = S.to_string (pre i) in
+      let str_ind i = S.to_string (ind i) in
+      let str_post i = S.to_string (post i) in
       let print = function
-        (* add init back in*)
-        | Pre i ->
-          let d = Array.get g.pre i in
-          Printf.printf "=== Precondition %i : NO SAT STEPS ===\n%s\n" i (S.to_string d)
-        | Step (i, j) ->
-          let d1 = Array.get g.pre i in
-          let d2 = Array.get g.ind j in
-          let d3 = Array.get g.post j in
-          Printf.printf
-            "=== Pre %i ===\n\
-             %s\n\
-             +++AND Ind %i+++\n\
-             %s\n\
-             +++RESULTS IN+++\n\
-             %s\n\
-             +++NOT SUBSET OF+++\n\
-             %s\n\n\
-            \             +++CONFLICTS+++\n\n\
-            \             %s\n\n"
-            i
-            (S.to_string d1)
-            j
-            (S.to_string d2)
-            S.(to_string (d1 && d2))
-            (S.to_string d3)
-            S.(
-              List.fold_left
-                (fun acc d -> Printf.sprintf "%s%s\n" acc (to_string d))
-                ""
-                (diff d3 (d1 && d2 && d3)))
-        | Post i ->
-          let d = Array.get g.post i in
-          Printf.printf "=== Postcondition %i : UNREACHABLE ===\n%s\n" i (S.to_string d)
+        | NoSolutions -> Printf.printf "No solutions, all inits are empty\n"
+        | InitIsLast i -> Printf.printf "Precondition is empty: %s\n" (str_pre i)
+        | PreIsLast i ->
+          Array.iteri
+            (fun j dom ->
+              if S.sat dom
+              then
+                Printf.printf
+                  "Non-empty unreachable step:\n\
+                   Infinite in index: %b\n\
+                   Pre %i:\n\
+                   %s\n\
+                   Ind %i:\n\
+                   %s\n\
+                   Both:\n\
+                   %s\n\
+                   Diff:\n\
+                   %s\n"
+                  (S.infinite_in S.index_name dom)
+                  i
+                  (str_pre i)
+                  j
+                  (str_ind j)
+                  S.(to_string (pre i && ind j))
+                  ""
+              else Printf.printf "Empty step: %i %i\n" i j)
+            g.ind
+        | StepIsLast (i, j) ->
+          Array.iteri
+            (fun k dom ->
+              if S.sat dom
+              then
+                Printf.printf
+                  "Non-empty unreachable post: %i %i % i\n\
+                   pre:\n\
+                   %s\n\
+                   ind:\n\
+                   %s\n\
+                   post:\n\
+                   %s\n\
+                   %b"
+                  i
+                  j
+                  k
+                  (str_pre i)
+                  (str_ind j)
+                  (str_post k)
+                  S.((pre i && ind j) <= post k)
+              else Printf.printf "Empty post: %i\n" k)
+            g.post
       in
-      List.iter print l
+      List.iter print problems
     ;;
-    (*
-       let leq g g' =
-    *)
   end
   (*
      module PropertyProof (S : Solver.S) = struct
@@ -680,6 +772,8 @@ struct
   let to_string d = Format.asprintf "%a" Abstract1.print d
   let meet = Apron.Abstract1.meet A.alloc
   let diff _ _ = failwith "not implemented"
+  let more_precise _ _ = failwith "not implemented"
+  let infinite_in _ _ = failwith "not implemented"
 end
 
 module VPLDomain
@@ -702,7 +796,7 @@ struct
 
   module D = Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedQ) (Ident) (Term)
 
-  type t = Vpl.UserInterface.UncertifiedQ.t
+  type t = D.b_expr list * D.t
   type v = V.t
   type n = N.t
 
@@ -714,14 +808,14 @@ struct
   ;;
 
   let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
-  let top _ _ = D.top
-  let leq = D.leq
-  let meet = D.meet
+  let top _ _ = [], D.top
+  let leq (_, x) (_, y) = D.leq x y
+  let meet (cx, x) (cy, y) = cx @ cy, D.meet x y
 
   (*FIXME: need more tests to check if it actually works in all cases*)
-  let is_top d = d = D.top
-  let is_bottom = D.is_bottom
-  let to_string = D.to_string V.to_string
+  let is_top (_, d) = d = D.top
+  let is_bottom (_, x) = D.is_bottom x
+  let to_string (_, x) = D.to_string V.to_string x
 
   let rec te2ae index = function
     | TagVar (v, i) -> D.Term.Var (var (v, i))
@@ -747,16 +841,36 @@ struct
     | LessEq -> Vpl.Cstr_type.LE
   ;;
 
-  let rec add_constraint index domain = function
-    | And [] -> domain
-    | And list -> List.fold_left (add_constraint index) domain list
+  let rec add_constraint index (bexprs, domain) = function
+    | And [] -> bexprs, domain
+    | And list -> List.fold_left (add_constraint index) (bexprs, domain) list
     | Or _ -> invalid_arg "polyhedra only supports conjunctions"
     | Linear (l, op, r) ->
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
-      D.assume (D.of_cond lincond) domain
+      let bexp = D.of_cond lincond in
+      bexp :: bexprs, D.assume bexp domain
   ;;
 
-  let diff = D.diff
+  let diff (_, x) (_, y) = List.map (fun x -> [], x) (D.diff x y)
+
+  (** Checks that b is strictly more precise than a.*)
+  let more_precise (exprs, _) (_, b) =
+    List.all
+      (List.map
+         (fun e ->
+           (* Printf.printf "%s\n" (D.b_expr_to_string e); *)
+           D.asserts e b)
+         exprs)
+  ;;
+
+  let infinite_in var (_, dom) =
+    let var = D.Term.Var (Ident.toVar @@ V.to_string var) in
+    D.get_upper_bound var dom
+    |> Option.map (function
+      | Vpl.Pol.Infty -> true
+      | _ -> false)
+    |> Option.value ~default:false
+  ;;
 end
 
 module MakeWithPolyhedra
