@@ -61,8 +61,9 @@ module Make (C : Var) (N : Num) = struct
       (out @ i) - (Const period * Index Stdlib.(i - 1)) - Const offset
       |> (Const le, Const re)
     | Sporadic { out; at_least; strict } ->
-      let diff = (out @ i) - ZeroCond ((out @ Stdlib.(i - 1)), N.zero) in
-      if strict then diff > Const at_least else diff >= Const at_least
+      let diff = (out @ i) - (out @ Stdlib.(i - 1)) in
+      let at_least = Const at_least in
+      if strict then diff > at_least else diff >= at_least
     | _ -> raise ExactRelationUnavailable
   ;;
 
@@ -101,7 +102,6 @@ module Make (C : Var) (N : Num) = struct
          && arg @ i |> (ZeroCond ((base @ Stdlib.(i - 1)), N.zero), base @ i)
        | _ -> raise UnderApproximationUnavailable)
   ;;
-
 
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
@@ -206,9 +206,11 @@ module Make (C : Var) (N : Num) = struct
         |> Seq.filter_map (fun (c, i) ->
           let* offset_in_f = Hashtbl.find_opt shift_vars c in
           let offset = i - offset_in_f in
-          let _ = assert (i < 0) in
-          let shifted = BoolExpr.shift_by f offset in
-          Some (shifted, (c, i)))
+          if offset <= 0
+          then (
+            let shifted = BoolExpr.shift_by f offset in
+            Some (shifted, (c, i)))
+          else None)
         |> List.of_seq
         |> List.split
       in
@@ -248,14 +250,14 @@ module Make (C : Var) (N : Num) = struct
 
   let postcondition formulae =
     let hull, stateless = stateful_hull formulae in
-    let vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
+    let hull_vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
     let stateless_vars =
       stateless
       |> List.map (List.to_seq << BoolExpr.indexed_vars)
       |> List.to_seq
       |> Seq.concat
     in
-    let vars = SetOCI.add_seq stateless_vars vars in
+    let vars = SetOCI.add_seq stateless_vars hull_vars in
     let indexes =
       vars
       |> SetOCI.to_seq
@@ -335,7 +337,7 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 1)
-  
+
   let init_cond width formulae =
     let num_reduction index f =
       let f = norm_texp_rule f in
@@ -372,6 +374,7 @@ module Make (C : Var) (N : Num) = struct
     And (And (And shifted_formulae :: logic_connections) :: clock_starts)
   ;;
 
+  (*TODO: go though the code and make it readable*)
   let existence_proof formulae =
     let post = postcondition formulae in
     let cond = inductive_step formulae in
@@ -420,6 +423,8 @@ module Make (C : Var) (N : Num) = struct
   end
 
   module ExistenceProof (S : Solver.S) = struct
+    (*TODO: add check for precodnition inside inductive step.*)
+    (*TODO: return printing of failure in init step*)
     type ('f, 's) t =
       { init : ('f * 's) array
       ; pre : 'f array
