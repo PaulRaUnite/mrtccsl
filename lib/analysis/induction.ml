@@ -38,6 +38,8 @@ module Make (C : Var) (N : Num) = struct
     include Interface.ExpOrder.Make (N)
   end
 
+  module NumExpr = MakeExtNumExpr (N)
+
   exception ExactRelationUnavailable
   exception OverApproximationUnavailable
   exception UnderApproximationUnavailable
@@ -305,23 +307,6 @@ module Make (C : Var) (N : Num) = struct
     BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
   ;;
 
-  (*TODO: move to proper module*)
-  let norm_texp_rule expr =
-    match expr with
-    | Op (Const n, op, Const n') ->
-      Const
-        (match op with
-         | Add -> N.(n + n')
-         | Sub -> N.(n - n')
-         | Mul -> N.(n * n')
-         | Div -> N.(n / n'))
-    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
-    | Min (Const l, Const r) -> Const (N.min l r)
-    | Max (Const l, Const r) -> Const (N.max l r)
-    | ZeroCond (Const n, init) -> Const (N.max n init)
-    | _ -> expr
-  ;;
-
   let reduce_zerocond index = function
     | ZeroCond (Index i, _) when i > index -> Some (Index i)
     | ZeroCond (Index i, init) when i = index -> Some (Const init)
@@ -340,9 +325,9 @@ module Make (C : Var) (N : Num) = struct
 
   let init_cond width formulae =
     let num_reduction index f =
-      let f = norm_texp_rule f in
+      let f = NumExpr.norm_rule f in
       let* f = reduce_zerocond index f in
-      Some (norm_texp_rule f)
+      Some (NumExpr.norm_rule f)
     in
     let index_shift_to_reduce = 0 in
     let elimination_of_texp rule =

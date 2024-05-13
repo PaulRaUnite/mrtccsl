@@ -130,6 +130,38 @@ module NumExpr = struct
   ;;
 end
 
+module type Num = sig
+  include Interface.OrderedType
+  include Interface.Number.Field with type t := t
+end
+
+module MakeExtNumExpr (N : Num) = struct
+  module N = struct
+    include N
+    include Interface.ExpOrder.Make (N)
+  end
+
+  include NumExpr
+
+  let norm_rule expr =
+    match expr with
+    | Op (Const n, op, Const n') ->
+      Const
+        (match op with
+         | Add -> N.(n + n')
+         | Sub -> N.(n - n')
+         | Mul -> N.(n * n')
+         | Div -> N.(n / n'))
+    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
+    | Min (Const l, Const r) -> Const (N.min l r)
+    | Max (Const l, Const r) -> Const (N.max l r)
+    | ZeroCond (Const n, init) -> Const (N.max n init)
+    | _ -> expr
+  ;;
+
+  let norm f = rewrite norm_rule f
+end
+
 module BoolExpr = struct
   type ('c, 'n) t = ('c, 'n) bool_expr
 
@@ -245,14 +277,6 @@ module BoolExpr = struct
   ;;
 
   let shift_by f i = map_idx (fun _ j -> i + j) f
-
-  (* module VariableWatch = struct
-    type ('c,'n)f = ('c,'n) t 
-    type ('c, 'n) t = {coverage: ('c option, (int, bool) Hashtbl.t) Hashtbl.t; offsets: ('c option, int ) Hashtbl.t; formula: ('c,'n) f}
-
-    let of_formula f = let coverage = List.fold_left (fun c tbl -> ) (Hashtbl.create 4) (vars f)
-  end*)
-
   let is_stateful f = fold (fun _ i acc -> if i <> 0 then true else acc) false f
 end
 
