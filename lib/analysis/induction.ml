@@ -44,6 +44,7 @@ module Make (C : Var) (N : Num) = struct
   exception OverApproximationUnavailable
   exception UnderApproximationUnavailable
 
+  (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
     let open Syntax in
     let i = 0 in
@@ -73,6 +74,7 @@ module Make (C : Var) (N : Num) = struct
     And (List.map exact_rel s)
   ;;
 
+  (** Returns overapproximation denotational relation of a RTCCSL constraint. Raises [OverApproximationUnavailable] otherwise.*)
   let over_rel c =
     try exact_rel c with
     | ExactRelationUnavailable ->
@@ -90,6 +92,7 @@ module Make (C : Var) (N : Num) = struct
     | ExactRelationUnavailable | OverApproximationUnavailable -> And []
   ;;
 
+  (** Returns underapproximation denotational relation of a RTCCSL constraint. Raises [UnderApproximationUnavailable] if doesn't exist.*)
   let under_rel c =
     try exact_rel c with
     | ExactRelationUnavailable ->
@@ -120,6 +123,7 @@ module Make (C : Var) (N : Num) = struct
     List.sort_uniq (Tuple.compare2 C.compare Int.compare) (BoolExpr.vars_except_i formula)
   ;;
 
+  (**Intersects all [formulae] with logical clocks related to their past.*)
   let inductive_step formulae =
     let unique_num_vars =
       formulae
@@ -128,8 +132,8 @@ module Make (C : Var) (N : Num) = struct
       |> SetCI.of_seq
       |> SetCI.elements
     in
-    let connections = List.map (Tuple.fn2 lc_connection) unique_num_vars in
-    And (And (List.map BoolExpr.use_more_cond formulae) :: connections)
+    let connections_to_past = List.map (Tuple.fn2 lc_connection) unique_num_vars in
+    And (And (List.map BoolExpr.use_more_cond formulae) :: connections_to_past)
   ;;
 
   module MapOCMM = Map.Make (struct
@@ -144,7 +148,7 @@ module Make (C : Var) (N : Num) = struct
       ;;
     end)
 
-  let index_ranges formula =
+  let clock_index_ranges formula =
     let rule c i acc =
       let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(0, 0) in
       MapOCMM.add c Int.(min i l, max i r) acc
@@ -152,31 +156,12 @@ module Make (C : Var) (N : Num) = struct
     BoolExpr.fold rule MapOCMM.empty formula
   ;;
 
-  let combine_index_ranges l =
-    let combine_records _ (min1, max1) (min2, max2) =
-      Some Int.(min min1 min2, max max1 max2)
-    in
-    List.fold_left
-      (fun acc lacc -> MapOCMM.union combine_records acc lacc)
-      MapOCMM.empty
-      l
+  let ranges_union r =
+    let reduce _ (lmin, lmax) (gmin, gmax) = Int.min lmin gmin, Int.max lmax gmax in
+    MapOCMM.fold reduce r (0, 0)
   ;;
 
-  let range_to_min_max r =
-    let reduce k (l, r) = function
-      | None -> Some ((k, l), (k, r))
-      | Some ((lc, gmin), (rc, gmax)) ->
-        let nmin = Int.min l gmin in
-        let nmax = Int.max r gmax in
-        let nlc = if nmin < gmin then k else lc in
-        let nrc = if nmax > gmax then k else rc in
-        Some ((nlc, nmin), (nrc, nmax))
-    in
-    let (lc, min), (rc, max) = Option.get @@ MapOCMM.fold reduce r None in
-    (* let _ = Printf.printf "%s,%i,%s,%i\n" (Option.map C.to_string lc |> Option.value ~default:"") min (Option.map C.to_string rc |> Option.value ~default:"") max in *)
-    if lc = rc then min, max else min, max
-  ;;
-
+  (** Construsts inductive precondition from postcondition [post].*)
   let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
 
   module SetOCI = Set.Make (struct
@@ -188,6 +173,7 @@ module Make (C : Var) (N : Num) = struct
       ;;
     end)
 
+  (** Multiplies two formulae using fixpoint saturation.*)
   let mul l r =
     let livars = BoolExpr.indexed_vars l in
     let rivars = BoolExpr.indexed_vars r in
@@ -239,6 +225,7 @@ module Make (C : Var) (N : Num) = struct
     f
   ;;
 
+  (** Forms a formula hull from stateful (past-referencing) formulae, returns the hull and all statelss formulae.*)
   let stateful_hull formulae =
     let stateful, stateless = List.partition BoolExpr.is_stateful formulae in
     let product =
@@ -250,6 +237,7 @@ module Make (C : Var) (N : Num) = struct
     product, stateless
   ;;
 
+  (** Returns minimal precondition to inductive step from the given [formulae].*)
   let postcondition formulae =
     let hull, stateless = stateful_hull formulae in
     let hull_vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
@@ -259,25 +247,26 @@ module Make (C : Var) (N : Num) = struct
       |> List.to_seq
       |> Seq.concat
     in
-    let vars = SetOCI.add_seq stateless_vars hull_vars in
-    let indexes =
-      vars
+    let present_vars = SetOCI.add_seq stateless_vars hull_vars in
+    let present_indices =
+      present_vars
       |> SetOCI.to_seq
       |> Seq.map (fun (_, i) -> i)
       |> List.of_seq
       |> List.sort_uniq Int.compare
     in
-    let stateless_vars =
+    let stateless_with_vars =
       List.map (fun f -> f, SetOCI.of_list (BoolExpr.indexed_vars f)) stateless
     in
     let shift_if_present ((f, vars), i) =
       let shifted_vars = SetOCI.map (fun (c, j) -> c, j + i) vars in
-      if SetOCI.subset shifted_vars vars
+      if SetOCI.subset shifted_vars vars (*all variables should be present in the hull*)
       then Some (BoolExpr.map_idx (fun _ i -> i) f)
       else None
     in
     let constraint_filling =
-      Seq.product (List.to_seq stateless_vars) (List.to_seq indexes)
+      Seq.product (List.to_seq stateless_with_vars) (List.to_seq present_indices)
+      (*product of stateless with indices is to not go though the same indices several times, which can happen in case of using all present variables*)
       |> Seq.filter_map shift_if_present
       |> List.of_seq
     in
@@ -289,7 +278,7 @@ module Make (C : Var) (N : Num) = struct
             Hashtbl.entry tbl (fun list -> i :: list) c [];
             tbl
           | None -> tbl)
-        vars
+        present_vars
         (Hashtbl.create 32)
     in
     let rec connect_indices c = function
@@ -301,12 +290,17 @@ module Make (C : Var) (N : Num) = struct
       let indices = List.fast_sort Int.compare indices in
       List.to_seq (connect_indices c indices)
     in
+    (*adds c[i]<c[j] relation for clocks; i < j*)
     let logical_filling =
       logical_clocks |> Hashtbl.to_seq |> Seq.flat_map connect_clocks |> List.of_seq
     in
     BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
   ;;
 
+  (** The rule to unpack zerocond expressions.
+      i > index -> use indexed expression
+      i = index -> use initial condition
+      i < index -> remove*)
   let reduce_zerocond index = function
     | ZeroCond (Index i, _) when i > index -> Some (Index i)
     | ZeroCond (Index i, init) when i = index -> Some (Const init)
@@ -316,56 +310,58 @@ module Make (C : Var) (N : Num) = struct
     | _ as e -> Some e
   ;;
 
+  (** The rule to remove all expressions that reference non-existent past in initial condition: i < index.*)
   let reduce_negative index = function
     | (Index i | TagVar (_, i)) when i <= index -> None
     | _ as e -> Some e
   ;;
 
+  (** Returns basic condition for a logical clock: [0 < c[1]]*)
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 1)
 
+  (** Returns initial condition for the [formulae] of the given [width].*)
   let init_cond width formulae =
-    let num_reduction index f =
+    let norm_reduce_nonzero index f =
       let f = NumExpr.norm_rule f in
       let* f = reduce_zerocond index f in
       Some (NumExpr.norm_rule f)
     in
-    let index_shift_to_reduce = 0 in
-    let elimination_of_texp rule =
+    let index_to_reduce = 0 in
+    let elimination_of_texp_only rule =
       BoolExpr.eliminate (NumExpr.eliminate rule) Option.some
     in
     let use_init_and_simplify =
-      elimination_of_texp (num_reduction index_shift_to_reduce)
+      elimination_of_texp_only (norm_reduce_nonzero index_to_reduce)
     in
-    let remove_negative = elimination_of_texp (reduce_negative index_shift_to_reduce) in
+    let remove_sub_zero_refs = elimination_of_texp_only (reduce_negative index_to_reduce) in
     let shifted_formulae =
-      Seq.product (List.to_seq formulae) (Seq.int_seq width |> Seq.map (Int.add 1))
+      Seq.product (List.to_seq formulae) (Seq.int_seq_inclusive (1,width)) (*skip zero because clocks start at 1*)
       |> Seq.filter_map (fun (f, i) ->
         let f = BoolExpr.shift_by f i in
         (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
         let* f = use_init_and_simplify f in
         (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
-        remove_negative f)
+        remove_sub_zero_refs f)
       |> List.of_seq
     in
     let vars =
       formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
     in
-    let logic_connections =
-      Seq.product (List.to_seq vars) (Seq.int_seq (width - 1) |> Seq.map (Int.add 2))
+    let clock_starts = List.map lc_init vars in
+    let clock_connections =
+      Seq.product (List.to_seq vars) (Seq.int_seq_inclusive (2,width)) (*skip zero and first because they are handled before*)
       |> Seq.map (fun (c, i) -> lc_connection c i)
       |> List.of_seq
     in
-    let clock_starts = List.map lc_init vars in
-    And (And (And shifted_formulae :: logic_connections) :: clock_starts)
+    And (And (And shifted_formulae :: clock_connections) :: clock_starts)
   ;;
 
-  (*TODO: go though the code and make it readable*)
   let existence_proof formulae =
     let post = postcondition formulae in
     let cond = inductive_step formulae in
     let pre = precondition post in
-    let min, _ = range_to_min_max (index_ranges post) in
-    let width = 1 - min in
+    let min_index, _ = ranges_union (clock_index_ranges post) in
+    let width = -min_index + 1 in
     let init = init_cond width formulae in
     let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
     let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in

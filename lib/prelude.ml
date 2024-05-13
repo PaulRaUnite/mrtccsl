@@ -228,6 +228,10 @@ module Seq = struct
 
   let int_seq n = take n (ints 0)
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
+
+  let int_seq_inclusive (starts,ends) = take (ends-starts+1) (ints starts)
+  let%test _ = List.of_seq (int_seq_inclusive (0,2)) = [ 0; 1; 2 ]
+
 end
 
 module Tuple = struct
