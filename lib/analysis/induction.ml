@@ -38,7 +38,9 @@ module Make (C : Var) (N : Num) = struct
     include Interface.ExpOrder.Make (N)
   end
 
-  exception NoExactConvexRelation
+  exception ExactRelationUnavailable
+  exception OverApproximationUnavailable
+  exception UnderApproximationUnavailable
 
   let exact_rel c =
     let open Syntax in
@@ -61,37 +63,33 @@ module Make (C : Var) (N : Num) = struct
     | Sporadic { out; at_least; strict } ->
       let diff = (out @ i) - ZeroCond ((out @ Stdlib.(i - 1)), N.zero) in
       if strict then diff > Const at_least else diff >= Const at_least
-    | _ -> raise NoExactConvexRelation
+    | _ -> raise ExactRelationUnavailable
   ;;
 
   let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr =
     And (List.map exact_rel s)
   ;;
 
-  exception NoOverApproximation
-
   let over_rel c =
     try exact_rel c with
-    | NoExactConvexRelation ->
+    | ExactRelationUnavailable ->
       let open Syntax in
       let i = 0 in
       (match c with
        | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
          let _ = arg in
          (base @ Stdlib.(i - 1)) < out @ i && out @ i <= base @ i
-       | _ -> raise NoOverApproximation)
+       | _ -> raise OverApproximationUnavailable)
   ;;
 
   let safe_over_rel c =
     try over_rel c with
-    | NoExactConvexRelation | NoOverApproximation -> And []
+    | ExactRelationUnavailable | OverApproximationUnavailable -> And []
   ;;
-
-  exception NoUnderApproximation
 
   let under_rel c =
     try exact_rel c with
-    | NoExactConvexRelation ->
+    | ExactRelationUnavailable ->
       let open Syntax in
       let i = 0 in
       (match c with
@@ -101,10 +99,10 @@ module Make (C : Var) (N : Num) = struct
        | Sample { out; arg; base } ->
          out @ i = base @ i
          && arg @ i |> (ZeroCond ((base @ Stdlib.(i - 1)), N.zero), base @ i)
-       | _ -> raise NoUnderApproximation)
+       | _ -> raise UnderApproximationUnavailable)
   ;;
 
-  let lc_init c = Denotational.Syntax.(Const N.zero < c @ 0)
+
   let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
 
   module SetCI = Set.Make (struct
@@ -116,32 +114,8 @@ module Make (C : Var) (N : Num) = struct
       ;;
     end)
 
-  module SetC = Set.Make (C)
-
-  module SetOC = Set.Make (struct
-      type t = C.t option
-
-      let compare = Option.compare C.compare
-    end)
-
-  let vars_set formula =
-    let vars =
-      BoolExpr.fold
-        (fun x i set ->
-          match x with
-          | Some v -> SetCI.add (v, i) set
-          | None -> set)
-        SetCI.empty
-        formula
-    in
-    vars
-  ;;
-
-  let vars formula = SetCI.elements (vars_set formula)
-
-  let vars_of_list formulae =
-    SetCI.elements
-    @@ List.fold_left (fun acc f -> SetCI.union acc (vars_set f)) SetCI.empty formulae
+  let vars formula =
+    List.sort_uniq (Tuple.compare2 C.compare Int.compare) (BoolExpr.vars_except_i formula)
   ;;
 
   let inductive_step formulae =
@@ -202,35 +176,6 @@ module Make (C : Var) (N : Num) = struct
   ;;
 
   let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
-
-  (*TODO: move to proper module*)
-  let norm_texp_rule expr =
-    match expr with
-    | Op (Const n, op, Const n') ->
-      Const
-        (match op with
-         | Add -> N.(n + n')
-         | Sub -> N.(n - n')
-         | Mul -> N.(n * n')
-         | Div -> N.(n / n'))
-    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
-    | Min (Const l, Const r) -> Const (N.min l r)
-    | Max (Const l, Const r) -> Const (N.max l r)
-    | ZeroCond (Const n, init) -> Const (N.max n init)
-    | _ -> expr
-  ;;
-
-  (*FIXME: variables and indexes out of zerocond need to be eliminated too*)
-  (*FIXME: zerocond is not reduced in some cases*)
-  let reduce_by_idx index = function
-    | ZeroCond (Index i, _) when i > index -> Some (Index i)
-    | ZeroCond (Index i, init) when i = index -> Some (Const init)
-    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
-    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
-    | ZeroCond _ -> None
-    | (Index i | TagVar (_, i)) when i <= index -> None
-    | _ as e -> Some e
-  ;;
 
   module SetOCI = Set.Make (struct
       type t = C.t option * int
@@ -358,33 +303,73 @@ module Make (C : Var) (N : Num) = struct
     BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
   ;;
 
+  (*TODO: move to proper module*)
+  let norm_texp_rule expr =
+    match expr with
+    | Op (Const n, op, Const n') ->
+      Const
+        (match op with
+         | Add -> N.(n + n')
+         | Sub -> N.(n - n')
+         | Mul -> N.(n * n')
+         | Div -> N.(n / n'))
+    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
+    | Min (Const l, Const r) -> Const (N.min l r)
+    | Max (Const l, Const r) -> Const (N.max l r)
+    | ZeroCond (Const n, init) -> Const (N.max n init)
+    | _ -> expr
+  ;;
+
+  let reduce_zerocond index = function
+    | ZeroCond (Index i, _) when i > index -> Some (Index i)
+    | ZeroCond (Index i, init) when i = index -> Some (Const init)
+    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
+    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
+    | ZeroCond _ -> None
+    | _ as e -> Some e
+  ;;
+
+  let reduce_negative index = function
+    | (Index i | TagVar (_, i)) when i <= index -> None
+    | _ as e -> Some e
+  ;;
+
+  let lc_init c = Denotational.Syntax.(Const N.zero < c @ 1)
+  
   let init_cond width formulae =
-    let num_reduction f =
+    let num_reduction index f =
       let f = norm_texp_rule f in
-      let* f = reduce_by_idx 0 f in
+      let* f = reduce_zerocond index f in
       Some (norm_texp_rule f)
     in
-    let assume_init = BoolExpr.eliminate (NumExpr.eliminate num_reduction) Option.some in
-    let conjs =
+    let index_shift_to_reduce = 0 in
+    let elimination_of_texp rule =
+      BoolExpr.eliminate (NumExpr.eliminate rule) Option.some
+    in
+    let use_init_and_simplify =
+      elimination_of_texp (num_reduction index_shift_to_reduce)
+    in
+    let remove_negative = elimination_of_texp (reduce_negative index_shift_to_reduce) in
+    let shifted_formulae =
       Seq.product (List.to_seq formulae) (Seq.int_seq width |> Seq.map (Int.add 1))
       |> Seq.filter_map (fun (f, i) ->
         let f = BoolExpr.shift_by f i in
         (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
-        let* f = assume_init f in
+        let* f = use_init_and_simplify f in
         (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
-        Some f)
+        remove_negative f)
       |> List.of_seq
     in
     let vars =
       formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
     in
     let logic_connections =
-      Seq.product (List.to_seq vars) (Seq.int_seq (width-1) |> Seq.map (Int.add 2))
+      Seq.product (List.to_seq vars) (Seq.int_seq (width - 1) |> Seq.map (Int.add 2))
       |> Seq.map (fun (c, i) -> lc_connection c i)
       |> List.of_seq
     in
     let clock_starts = List.map lc_init vars in
-    And (And (And conjs :: logic_connections) :: clock_starts)
+    And (And (And shifted_formulae :: logic_connections) :: clock_starts)
   ;;
 
   let existence_proof formulae =
