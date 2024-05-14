@@ -795,8 +795,17 @@ struct
   end
 
   module D = Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedQ) (Ident) (Term)
+  module VarSet = Set.Make (String)
 
-  type t = D.b_expr list * D.t
+  type aux =
+    { b_expr : D.b_expr list
+    ; vars : VarSet.t
+    }
+
+  let aux_union x y = { b_expr = x.b_expr @ y.b_expr; vars = VarSet.union x.vars y.vars }
+  let aux_empty = { b_expr = []; vars = VarSet.empty }
+
+  type t = aux * D.t
   type v = V.t
   type n = N.t
 
@@ -807,10 +816,12 @@ struct
     Q.make (Z.of_int num) (Z.of_int den)
   ;;
 
-  let var (v, i) = Ident.toVar @@ Printf.sprintf "%s[%i]" (V.to_string v) i
-  let top _ _ = [], D.top
+  let var_str (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
+  let var (v, i) = Ident.toVar (var_str (v, i))
+  let index_var index = Ident.toVar @@ V.to_string index
+  let top _ _ = aux_empty, D.top
   let leq (_, x) (_, y) = D.leq x y
-  let meet (cx, x) (cy, y) = cx @ cy, D.meet x y
+  let meet (auxx, x) (auxy, y) = aux_union auxx auxy, D.meet x y
 
   (*FIXME: need more tests to check if it actually works in all cases*)
   let is_top (_, d) = d = D.top
@@ -820,8 +831,7 @@ struct
   let rec te2ae index = function
     | TagVar (v, i) -> D.Term.Var (var (v, i))
     | Const n -> D.Term.Cte (to_q n)
-    | Index i ->
-      D.Term.Add (D.Term.Var (Ident.toVar @@ V.to_string index), D.Term.Cte (Q.of_int i))
+    | Index i -> D.Term.Add (D.Term.Var (index_var index), D.Term.Cte (Q.of_int i))
     | Op (l, op, r) ->
       let l = te2ae index l in
       let r = te2ae index r in
@@ -841,26 +851,31 @@ struct
     | LessEq -> Vpl.Cstr_type.LE
   ;;
 
-  let rec add_constraint index (bexprs, domain) = function
-    | And [] -> bexprs, domain
-    | And list -> List.fold_left (add_constraint index) (bexprs, domain) list
+  let rec add_constraint index (aux, domain) = function
+    | And [] -> aux, domain
+    | And list -> List.fold_left (add_constraint index) (aux, domain) list
     | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) ->
+    | Linear (l, op, r) as e ->
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
       let bexp = D.of_cond lincond in
-      bexp :: bexprs, D.assume bexp domain
+      let vars =
+        e
+        |> BoolExpr.indexed_vars
+        |> List.map (function
+          | Some v, i -> var_str (v, i)
+          | None, _ -> V.to_string index)
+        |> VarSet.of_list
+      in
+      aux_union aux { b_expr = [ bexp ]; vars }, D.assume bexp domain
   ;;
 
-  let diff (_, x) (_, y) = List.map (fun x -> [], x) (D.diff x y)
+  let diff (_, x) (_, y) = List.map (fun x -> aux_empty, x) (D.diff x y)
 
   (** Checks that b is strictly more precise than a.*)
-  let more_precise (exprs, _) (_, b) =
-    List.all
-      (List.map
-         (fun e ->
-           (* Printf.printf "%s\n" (D.b_expr_to_string e); *)
-           D.asserts e b)
-         exprs)
+  let more_precise (aa, a) (ab, b) =
+    (* let _ = List.iter (fun v -> Printf.printf "%s " v) (VarSet.elements aa.vars) in *)
+    let diffvars = VarSet.elements @@ VarSet.diff ab.vars aa.vars in
+    D.leq a (D.project diffvars b)
   ;;
 
   let infinite_in var (_, dom) =
