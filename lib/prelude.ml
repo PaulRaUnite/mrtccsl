@@ -50,6 +50,12 @@ module List = struct
     | [], [], [] | [], _, _ | _, [], _ | _, _, [] -> []
     | a1 :: l1, a2 :: l2, a3 :: l3 -> (a1, a2, a3) :: zip3 l1 l2 l3
   ;;
+  let rec zip4 l1 l2 l3 l4 =
+    match l1, l2, l3, l4 with
+    | [], [], [], [] -> []
+    | a1 :: l1, a2 :: l2, a3 :: l3, a4::l4 -> (a1, a2, a3, a4) :: zip4 l1 l2 l3 l4
+    | _ -> invalid_arg "lists in the tuple should have the same length"
+  ;;
 
   let rec split3 = function
     | [] -> [], [], []
@@ -228,10 +234,9 @@ module Seq = struct
 
   let int_seq n = take n (ints 0)
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
-
-  let int_seq_inclusive (starts,ends) = take (ends-starts+1) (ints starts)
-  let%test _ = List.of_seq (int_seq_inclusive (0,2)) = [ 0; 1; 2 ]
-
+  let int_seq_inclusive (starts, ends) = take (ends - starts + 1) (ints starts)
+  let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
+  let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3;-2;-1;0 ]
 end
 
 module Tuple = struct
@@ -251,6 +256,18 @@ module Hashtbl = struct
   ;;
 
   let value tbl key default = Hashtbl.find_opt tbl key |> Option.value ~default
+
+  module Collect = struct
+    let count ?(size = 64) seq =
+      let tbl = Hashtbl.create size in
+      Seq.fold_left
+        (fun tbl v ->
+          entry tbl (Int.add 1) v 0;
+          tbl)
+        tbl
+        seq
+    ;;
+  end
 end
 
 let fixpoint init eq trans start =
