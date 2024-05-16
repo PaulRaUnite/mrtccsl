@@ -242,10 +242,12 @@ module BoolExpr = struct
           list
       in
       And (others @ List.flatten to_flatten)
-    | _ as lin -> lin
+    | Linear (l, More, r) -> Linear (r, Less, l)
+    | Linear (l, MoreEq, r) -> Linear (r, LessEq, l)
+    | Linear _ as e -> e
   ;;
 
-  let norm e = rewrite Fun.id norm_rule e
+  let logical_norm e = rewrite Fun.id norm_rule e
 
   let is_empty = function
     | Or [] | And [] -> true
@@ -278,6 +280,17 @@ module BoolExpr = struct
 
   let shift_by f i = map_idx (fun _ j -> i + j) f
   let is_stateful f = fold (fun _ i acc -> if i <> 0 then true else acc) false f
+end
+
+module MakeExpr (N : Num) = struct
+  module NumExpr = MakeExtNumExpr (N)
+
+  module BoolExpr = struct
+    include BoolExpr
+
+    (** Normalizes boolear expressions to be as small as we can, including numerical part.*)
+    let norm f = rewrite NumExpr.norm_rule norm_rule f
+  end
 end
 
 module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
