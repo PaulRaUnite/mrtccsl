@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 open Analysis
 open Denotational.MakeDebug (String) (Number.Integer)
-module P = Induction.Make (String) (Number.Integer)
+module I = Induction.Make (String) (Number.Integer)
 
 (* module D =
    Induction.PolkaDomain
@@ -13,34 +13,34 @@ module P = Induction.Make (String) (Number.Integer)
    end)
    (String)
    (Number.Integer) *)
-module D = Induction.VPLDomain (String) (Number.Integer)
+module D = Domain.VPL (String) (Number.Integer)
 
-module S = P.Solver.MakeFromDomain (struct
+module S = I.Solver.MakeFromDomain (struct
     include D
 
     let index_name = "i"
   end)
 
-module E = P.ExistenceProof (S)
+module E = I.ExistenceProof (S)
+module P = I.PropertyProof (S)
 
 let _ =
   let spec =
     Rtccsl.
-      [ 
-        RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
-       ; RTdelay { out = "r"; arg = "in"; delay = 3, 4 }
-      (* ; Precedence { cause = "ts"; effect = "tf" } *)
+      [ RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
+      ; RTdelay { out = "r"; arg = "in"; delay = 3, 4 }
+        (* ; Precedence { cause = "ts"; effect = "tf" } *)
         (* ; Precedence { cause = "tf"; effect = "ts" } *)
         (* ; Delay { out = "out"; arg = "in"; delay = 2, 2; base = None } *)
         (* ; Sporadic {out="in"; at_least = 5; strict=true} *)
-        ; Fastest {out="f"; left="l"; right="r"}
-        ; Precedence {cause=""; effect="r"}
+        (* ; Fastest { out = "f"; left = "l"; right = "r" }
+      ; Precedence { cause = "f"; effect = "r" } *)
       ]
   in
   (* let pre = S.of_formula Denotational.Syntax.(TagVar ("a", 0) < TagVar("a", 1)) in
-  let bottom = S.of_formula Denotational.Syntax.(TagVar ("a", 0) < TagVar("a", 1) && TagVar("a", 1) < TagVar("a", 1)) in
-  let _ = Printf.printf "satisfies? %b\n" (S.more_precise pre bottom); Printf.printf "%s\n" (S.to_string bottom) in *)
-  let denot_formulae = List.map P.exact_rel spec in
+     let bottom = S.of_formula Denotational.Syntax.(TagVar ("a", 0) < TagVar("a", 1) && TagVar("a", 1) < TagVar("a", 1)) in
+     let _ = Printf.printf "satisfies? %b\n" (S.more_precise pre bottom); Printf.printf "%s\n" (S.to_string bottom) in *)
+  let denot_formulae = List.map I.exact_rel spec in
   Printf.printf "Original formulae:\n";
   let _ =
     List.iteri
@@ -49,5 +49,23 @@ let _ =
   in
   let sol = E.solve denot_formulae in
   let problems = E.report sol in
-  E.print_problems sol problems
+  let _ = E.print_problems sol problems in
+  let spec =
+    Rtccsl.
+      [ RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
+      ; RTdelay { out = "r"; arg = "in"; delay = 3, 4 }
+      ]
+  in
+  let prop =
+    Rtccsl.
+      [ Fastest { out = "f"; left = "l"; right = "r" }
+      ; Precedence { cause = "f"; effect = "r" }
+      ]
+  in
+  let spec = List.map I.exact_rel spec in
+  let prop = List.map I.exact_rel prop in
+  let spec_sol, prop_sol, sim_sol = P.solve spec prop in
+  E.print_problems spec_sol (E.report spec_sol);
+  E.print_problems prop_sol (E.report prop_sol);
+  Printf.printf "property problems: %i\n" (List.length (E.report sim_sol))
 ;;

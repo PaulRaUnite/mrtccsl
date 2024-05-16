@@ -12,24 +12,6 @@ module type Num = sig
   include Interface.Debug with type t := t
 end
 
-module type Domain = sig
-  type t
-  type v
-  type n
-
-  val top : v -> (v * int) list -> t
-  val add_constraint : v -> t -> (v, n) Denotational.bool_expr -> t
-  val leq : t -> t -> bool
-  val is_bottom : t -> bool
-  val is_top : t -> bool
-  val meet : t -> t -> t
-  val diff : t -> t -> t list
-  val more_precise : t -> t -> bool
-  val infinite_in : v -> t -> bool
-
-  include Interface.Stringable with type t := t
-end
-
 module Make (C : Var) (N : Num) = struct
   open Denotational
   open Rtccsl
@@ -40,7 +22,9 @@ module Make (C : Var) (N : Num) = struct
     include Interface.ExpOrder.Make (N)
   end
 
-  module NumExpr = MakeExtNumExpr (N)
+  open MakeExpr (N)
+
+  type expr = (C.t, N.t) bool_expr
 
   exception ExactRelationUnavailable
   exception OverApproximationUnavailable
@@ -152,15 +136,18 @@ module Make (C : Var) (N : Num) = struct
 
   let clock_index_ranges formula =
     let rule c i acc =
-      let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(0, 0) in
+      let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(i, i) in
       MapOCMM.add c Int.(min i l, max i r) acc
     in
     BoolExpr.fold rule MapOCMM.empty formula
   ;;
 
   let ranges_union r =
-    let reduce _ (lmin, lmax) (gmin, gmax) = Int.min lmin gmin, Int.max lmax gmax in
-    MapOCMM.fold reduce r (0, 0)
+    let reduce _ (lmin, lmax) = function
+      | Some (gmin, gmax) -> Some (Int.min lmin gmin, Int.max lmax gmax)
+      | None -> Some (lmin, lmax)
+    in
+    MapOCMM.fold reduce r None |> Option.get
   ;;
 
   (** Construsts inductive precondition from postcondition [post].*)
@@ -377,6 +364,19 @@ module Make (C : Var) (N : Num) = struct
     init, pre, cond, post
   ;;
 
+  let print_proofs (init, pre, ind, post) =
+    let init, pre, ind, post = Tuple.map4 Array.to_list (init, pre, ind, post) in
+    List.iteri
+      (fun i (init, pre, ind, post) ->
+        let _ = Printf.printf "Print variant %i:\n" i in
+        let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
+        let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
+        let _ = Printf.printf "ind: %s\n" (string_of_bool_expr ind) in
+        let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
+        ())
+      (List.zip4 init pre ind post)
+  ;;
+
   module Solver = struct
     module type S = sig
       type t
@@ -396,7 +396,7 @@ module Make (C : Var) (N : Num) = struct
     end
 
     module type D = sig
-      include Domain with type v = C.t and type n = N.t
+      include Domain.S with type v = C.t and type n = N.t
 
       val index_name : v
     end
@@ -421,13 +421,13 @@ module Make (C : Var) (N : Num) = struct
       | Post of 'a
     [@@deriving sexp]
 
-    type ('f, 's) t =
+    type 'f t =
       { init : 'f array
       ; pre : 'f array
       ; ind : 'f array
       ; post : 'f array
-      ; arrows : (int vertix * int vertix, 's) Hashtbl.t
-      ; vertices : (int vertix, 's) Hashtbl.t
+      ; edges : (int vertix * int vertix, bool) Hashtbl.t
+      ; vertices : (int vertix, bool) Hashtbl.t
       }
 
     type test =
@@ -436,31 +436,33 @@ module Make (C : Var) (N : Num) = struct
       | StepPost of int * int * int
       | PostPre of int
 
-    let solve formulae =
-      let init, pre, ind, post =
-        List.map BoolExpr.fact_disj formulae
-        |> List.general_cartesian
-        |> List.map existence_proof
-        |> List.split4
-        |> Tuple.map4 Array.of_list
-      in
+    let bulk_existence_proof formulae =
+      List.map BoolExpr.fact_disj formulae
+      |> List.general_cartesian
+      |> List.map existence_proof
+      |> List.split4
+      |> Tuple.map4 Array.of_list
+    ;;
+
+    let solve_from_parts (init, pre, ind, post) =
       let len = Array.length init in
       let vertices = Hashtbl.create ((len * len) + (3 * len)) in
       let add_vertex v r = Hashtbl.replace vertices v r in
-      let arrows = Hashtbl.create (2 * ((len * len) + (3 * len))) in
-      let add_arrow from into r = Hashtbl.replace arrows (from, into) r in
+      let edges = Hashtbl.create (2 * ((len * len) + (3 * len))) in
+      let add_arrow from into r = Hashtbl.replace edges (from, into) r in
       let init, pre, ind, post =
         Tuple.map4 (Array.map S.of_formula) (init, pre, ind, post)
       in
+      let get = Array.get in
       let steps_by_pre i =
         Seq.int_seq (Array.length ind)
-        |> Seq.filter (fun j -> not (Hashtbl.mem arrows (Pre i, Step (i, j))))
+        |> Seq.filter (fun j -> not (Hashtbl.mem edges (Pre i, Step (i, j))))
         |> Seq.map (fun j -> PreStep (i, j))
       in
       let post_inclusions_by_step (i, j) =
         Seq.int_seq (Array.length post)
         |> Seq.filter (fun k ->
-          let r = not (Hashtbl.mem arrows (Step (i, j), Post k)) in
+          let r = not (Hashtbl.mem edges (Step (i, j), Post k)) in
           (* Printf.printf "filter: %b\n" r; *)
           r)
         |> Seq.map (fun k -> StepPost (i, j, k))
@@ -470,14 +472,14 @@ module Make (C : Var) (N : Num) = struct
         q
         |> Seq.flat_map (function
           | InitPre i ->
-            let sat = S.sat (Array.get init i) in
+            let sat = S.sat (get init i) in
             let _ =
               (* Printf.printf "InitPre\n"; *)
               add_vertex (Init i) sat
             in
             if sat
             then (
-              let sat = S.sat (Array.get pre i) in
+              let sat = S.sat (get pre i) in
               let _ = add_vertex (Pre i) sat in
               if sat
               then (
@@ -486,8 +488,8 @@ module Make (C : Var) (N : Num) = struct
               else Seq.empty)
             else Seq.empty
           | PreStep (p, i) ->
-            let pre = Array.get pre p in
-            let ind = Array.get ind i in
+            let pre = get pre p in
+            let ind = get ind i in
             let step = S.(pre && ind) in
             let sat = S.sat step && S.infinite_in S.index_name step in
             let includes = S.(more_precise pre step) in
@@ -498,9 +500,9 @@ module Make (C : Var) (N : Num) = struct
             in
             if sat && includes then post_inclusions_by_step (p, i) else Seq.empty
           | StepPost (i, j, k) ->
-            let pre = Array.get pre i in
-            let ind = Array.get ind j in
-            let post = Array.get post k in
+            let pre = get pre i in
+            let ind = get ind j in
+            let post = get post k in
             let step = S.(pre && ind) in
             let sat = S.sat post in
             let includes = S.(step <= post) in
@@ -509,11 +511,11 @@ module Make (C : Var) (N : Num) = struct
               add_arrow (Step (i, j)) (Post k) includes;
               add_vertex (Post k) sat
             in
-            if sat && includes && not (Hashtbl.mem arrows (Post k, Pre k))
+            if sat && includes && not (Hashtbl.mem edges (Post k, Pre k))
             then Seq.return (PostPre k)
             else Seq.empty
           | PostPre i ->
-            let sat = S.sat (Array.get pre i) in
+            let sat = S.sat (get pre i) in
             let _ =
               (* Printf.printf "PostPre\n"; *)
               add_vertex (Pre i) sat;
@@ -528,8 +530,10 @@ module Make (C : Var) (N : Num) = struct
           test_queue := process !test_queue
         done
       in
-      { init; pre; ind; post; arrows; vertices }
+      { init; pre; ind; post; edges; vertices }
     ;;
+
+    let solve formulae = solve_from_parts (bulk_existence_proof formulae)
 
     type problem =
       | NoSolutions
@@ -541,7 +545,7 @@ module Make (C : Var) (N : Num) = struct
       v |> sexp_of_vertix Sexplib0.Sexp_conv.sexp_of_int |> Sexplib0.Sexp.to_string
     ;;
 
-    let report { init; vertices; arrows; _ } =
+    let report { init; vertices; edges; _ } =
       (* let _ =
          Hashtbl.iter
          (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
@@ -551,7 +555,7 @@ module Make (C : Var) (N : Num) = struct
          Hashtbl.iter
          (fun (f, t) sat ->
          Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
-         arrows
+         edges
          in *)
       let len = Array.length init in
       let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
@@ -560,7 +564,7 @@ module Make (C : Var) (N : Num) = struct
       let is_cyclic v = Hashtbl.value in_cycle v false || Hashtbl.mem visited v in
       let visit v = Hashtbl.replace visited v () in
       let next =
-        arrows
+        edges
         |> Hashtbl.to_seq
         |> Seq.fold_left
              (fun tbl ((f, t), sat) ->
@@ -607,13 +611,15 @@ module Make (C : Var) (N : Num) = struct
       let valid_starts, problems =
         init
         |> Array.to_list
-        |> List.mapi (fun i dom -> if S.sat dom then dfs (Init i) else false, [])
+        |> List.mapi (fun i _ ->
+          if Hashtbl.find vertices (Init i) then dfs (Init i) else false, [])
         |> List.split
       in
       let problems = List.concat problems in
       if not (List.any valid_starts) then NoSolutions :: problems else problems
     ;;
 
+    (*TODO: modify the function to print pairs too.*)
     let print_problems g problems =
       let pre i = Array.get g.pre i in
       let ind i = Array.get g.ind i in
@@ -676,233 +682,138 @@ module Make (C : Var) (N : Num) = struct
       List.iter print problems
     ;;
   end
-  (*
-     module PropertyProof (S : Solver.S) = struct
-     module E = ExistenceProof (S)
 
-     type ('f, 's) t = ('f, 's) E.t * ('f, 's) E.t * (int E.vertix, 's) Hashtbl.t
+  module PropertyProof (S : Solver.S) = struct
+    module E = ExistenceProof (S)
 
-     let solve base prop = ()
-     let unsolved (base, prop, relations) = ()
-     let print_problems problems = ()
-     end *)
-end
+    module OptVarSet = Set.Make (struct
+        type t = C.t option
 
-module type Alloc = sig
-  type dom
+        let compare = Option.compare C.compare
+      end)
 
-  val alloc : dom Apron.Manager.t
-end
+    module ExprSet = Set.Make (struct
+        type t = expr
 
-exception NonConvex
+        let compare = compare
+      end)
 
-module PolkaDomain
-    (A : Alloc)
-    (V : Var)
-    (N : sig
-       type t
+    let remove_by_var_rule vars = function
+      | TagVar (c, _) when OptVarSet.mem (Some c) vars -> None
+      | Index _ when OptVarSet.mem None vars -> None
+      | _ as e -> Some e
+    ;;
 
-       val to_rational : t -> Number.Rational.t
-     end) =
-struct
-  open Denotational
-  open Apron
+    let eliminate_by_clocks vars formula =
+      BoolExpr.eliminate (remove_by_var_rule vars) Option.some formula |> Option.get
+    ;;
 
-  type t = A.dom Abstract1.t
-  type n = N.t
-  type v = V.t
+    let rec flatten_formula = function
+      | Or list | And list -> List.flat_map flatten_formula list
+      | Linear _ as e -> [ e ]
+    ;;
 
-  let pp_var (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
-  let v_to_var = Var.of_string << V.to_string
+    let remove_by_match_rule constraints f =
+      match f with
+      | Linear _ ->
+        let _, max = ranges_union (clock_index_ranges f) in
+        let shifted = BoolExpr.shift_by f (-max) in
+        if ExprSet.mem shifted constraints then None else Some f
+      | _ -> Some f
+    ;;
 
-  let top index reals =
-    let index_var = v_to_var index in
-    let reals = Array.of_seq (Seq.map (Var.of_string << pp_var) (List.to_seq reals)) in
-    Abstract1.top A.alloc (Environment.make [| index_var |] reals)
-  ;;
+    let remove_matching to_remove formula =
+      BoolExpr.eliminate Option.some (remove_by_match_rule to_remove) formula
+      |> Option.value ~default:(And [])
+    ;;
 
-  let rec add_constraint index domain =
-    let env = Abstract1.env domain in
-    let index_var = v_to_var index in
-    let op2op = function
-      | Add -> Texpr1.Add
-      | Sub -> Texpr1.Sub
-      | Mul -> Texpr1.Mul
-      | Div -> Texpr1.Div
-    in
-    let rec te2te = function
-      | TagVar (v, i) ->
-        let var = Var.of_string (pp_var (v, i)) in
-        Texpr1.var env var
-      | Index i ->
-        Texpr1.binop
-          Texpr1.Add
-          (Texpr1.var env index_var)
-          (Texpr1.cst env (Coeff.s_of_int i))
-          Texpr1.Int
-          Texpr1.Near
-      | Const c -> Texpr1.cst env (Coeff.s_of_mpqf @@ N.to_rational c)
-      | Op (l, op, r) -> Texpr1.binop (op2op op) (te2te l) (te2te r) Texpr1.Real Near
-      | ZeroCond _ | Min _ | Max _ -> raise NonConvex
-    in
-    function
-    | And [] -> domain
-    | And list -> List.fold_left (add_constraint index) domain list
-    | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) ->
-      let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
-      let op, expr =
-        match op with
-        | Eq -> Tcons1.EQ, diff
-        | Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-        | LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-        | More -> Tcons1.SUP, diff
-        | MoreEq -> Tcons1.SUPEQ, diff
+    let remove_extension parts s p =
+      let constraint_set formulae =
+        formulae
+        |> List.to_seq
+        |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
+        |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
+        |> ExprSet.of_seq
       in
-      let lincond = Tcons1.make expr op in
-      let _ = Format.printf "%a\n" Tcons1.print lincond in
-      let array = Tcons1.array_make env 1 in
-      let _ = Tcons1.array_set array 0 lincond in
-      Abstract1.meet_tcons_array A.alloc domain array
-  ;;
+      let struct_set = constraint_set s in
+      let property_set = constraint_set p in
+      let diff_constraints = ExprSet.diff property_set struct_set in
+      let minus_p_constraints = remove_matching diff_constraints in
+      let var_families formulae =
+        List.fold_right
+          (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
+          formulae
+          OptVarSet.empty
+      in
+      let struct_families = var_families s in
+      let property_families = var_families p in
+      let diff_families = OptVarSet.diff property_families struct_families in
+      let minus_p_clocks = eliminate_by_clocks diff_families in
+      Tuple.map4
+        (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
+        parts
+    ;;
 
-  let leq = Apron.Abstract1.is_leq A.alloc
-  let is_bottom = Apron.Abstract1.is_bottom A.alloc
-  let is_top = Apron.Abstract1.is_top A.alloc
-  let to_string d = Format.asprintf "%a" Abstract1.print d
-  let meet = Apron.Abstract1.meet A.alloc
-  let diff _ _ = failwith "not implemented"
-  let more_precise _ _ = failwith "not implemented"
-  let infinite_in _ _ = failwith "not implemented"
-end
+    let simulate (s : S.t E.t) (sp : S.t E.t) =
+      let get = Array.get in
+      let init = Array.combine s.init sp.init in
+      let pre = Array.combine s.pre sp.pre in
+      let ind = Array.combine s.ind sp.ind in
+      let post = Array.combine s.post sp.post in
+      let check (s, sp) = S.more_precise s sp in
+      let vertices =
+        s.vertices
+        |> Hashtbl.to_seq
+        |> Seq.map (fun (v, _) ->
+          let sat =
+            match v with
+            | E.Init i -> check (get init i)
+            | E.Pre i -> check (get pre i)
+            | E.Step (i, j) ->
+              let s_pre, sp_pre = get pre i in
+              let s_ind, sp_ind = get ind j in
+              check S.(s_pre && s_ind, sp_pre && sp_ind)
+            | E.Post i -> check (get post i)
+          in
+          v, sat)
+        |> Hashtbl.of_seq
+      in
+      let edges =
+        s.edges
+        |> Hashtbl.to_seq
+        |> Seq.map (fun ((f, t), sat) ->
+          let sat = sat && Hashtbl.find vertices t in
+          (f, t), sat)
+        |> Hashtbl.of_seq
+      in
+      E.{ init; pre; ind; post; edges; vertices }
+    ;;
 
-module VPLDomain
-    (V : Var)
-    (N : sig
-       type t
+    let solve s p =
+      let sp_parts = E.bulk_existence_proof (s @ p) in
+      let sp_solution = E.solve_from_parts sp_parts in
+      let s_parts = remove_extension sp_parts s p in
+      let s_solution = E.solve_from_parts s_parts in
+      let simulation_relation = simulate s_solution sp_solution in
+      s_solution, sp_solution, simulation_relation
+    ;;
 
-       val to_rational : t -> Number.Rational.t
-     end) =
-struct
-  open Denotational
-  module Ident = Vpl.UserInterface.Lift_Ident (String)
-
-  module Term = struct
-    type t = Vpl.WrapperTraductors.Interface(Vpl.Domains.UncertifiedQ.Coeff).Term.t
-
-    let to_term t = t
-    let of_term t = t
+    let report s_sim_sp sp = E.report s_sim_sp, E.report sp
+    let is_sat (s, sp) = List.is_empty s && List.is_empty sp
   end
-
-  module D = Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedQ) (Ident) (Term)
-  module VarSet = Set.Make (String)
-
-  type aux =
-    { b_expr : D.b_expr list
-    ; vars : VarSet.t
-    }
-
-  let aux_union x y = { b_expr = x.b_expr @ y.b_expr; vars = VarSet.union x.vars y.vars }
-  let aux_empty = { b_expr = []; vars = VarSet.empty }
-
-  type t = aux * D.t
-  type v = V.t
-  type n = N.t
-
-  let to_q x =
-    let x = N.to_rational x in
-    let num = Mpz.get_int (Mpqf.get_num x) in
-    let den = Mpz.get_int (Mpqf.get_den x) in
-    Q.make (Z.of_int num) (Z.of_int den)
-  ;;
-
-  let var_str (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
-  let var (v, i) = Ident.toVar (var_str (v, i))
-  let index_var index = Ident.toVar @@ V.to_string index
-  let top _ _ = aux_empty, D.top
-  let leq (_, x) (_, y) = D.leq x y
-  let meet (auxx, x) (auxy, y) = aux_union auxx auxy, D.meet x y
-
-  (*FIXME: need more tests to check if it actually works in all cases*)
-  let is_top (_, d) = d = D.top
-  let is_bottom (_, x) = D.is_bottom x
-  let to_string (_, x) = D.to_string V.to_string x
-
-  let rec te2ae index = function
-    | TagVar (v, i) -> D.Term.Var (var (v, i))
-    | Const n -> D.Term.Cte (to_q n)
-    | Index i -> D.Term.Add (D.Term.Var (index_var index), D.Term.Cte (Q.of_int i))
-    | Op (l, op, r) ->
-      let l = te2ae index l in
-      let r = te2ae index r in
-      (match op with
-       | Add -> D.Term.Add (l, r)
-       | Sub -> D.Term.Add (l, D.Term.Opp r)
-       | Mul -> D.Term.Mul (l, r)
-       | Div -> D.Term.Div (l, r))
-    | ZeroCond _ | Min _ | Max _ -> raise NonConvex
-  ;;
-
-  let op2op = function
-    | Eq -> Vpl.Cstr_type.EQ
-    | More -> Vpl.Cstr_type.GT
-    | Less -> Vpl.Cstr_type.LT
-    | MoreEq -> Vpl.Cstr_type.GE
-    | LessEq -> Vpl.Cstr_type.LE
-  ;;
-
-  let rec add_constraint index (aux, domain) = function
-    | And [] -> aux, domain
-    | And list -> List.fold_left (add_constraint index) (aux, domain) list
-    | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) as e ->
-      let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
-      let bexp = D.of_cond lincond in
-      let vars =
-        e
-        |> BoolExpr.indexed_vars
-        |> List.map (function
-          | Some v, i -> var_str (v, i)
-          | None, _ -> V.to_string index)
-        |> VarSet.of_list
-      in
-      aux_union aux { b_expr = [ bexp ]; vars }, D.assume bexp domain
-  ;;
-
-  let diff (_, x) (_, y) = List.map (fun x -> aux_empty, x) (D.diff x y)
-
-  (** Checks that b is strictly more precise than a.*)
-  let more_precise (aa, a) (ab, b) =
-    (* let _ = List.iter (fun v -> Printf.printf "%s " v) (VarSet.elements aa.vars) in *)
-    let diffvars = VarSet.elements @@ VarSet.diff ab.vars aa.vars in
-    D.leq a (D.project diffvars b)
-  ;;
-
-  let infinite_in var (_, dom) =
-    let var = D.Term.Var (Ident.toVar @@ V.to_string var) in
-    D.get_upper_bound var dom
-    |> Option.map (function
-      | Vpl.Pol.Infty -> true
-      | _ -> false)
-    |> Option.value ~default:false
-  ;;
 end
 
 module MakeWithPolyhedra
     (V : Var)
     (N : Num)
-    (D : Domain with type v = V.t and type n = N.t) =
+    (D : Domain.S with type v = V.t and type n = N.t) =
 struct
   include Make (V) (N)
 
   let to_polyhedra index_name formula =
-    let formula = Denotational.BoolExpr.norm formula in
+    let formula = Denotational.BoolExpr.logical_norm formula in
     D.add_constraint index_name (D.top index_name (vars formula)) formula
   ;;
-
-  type report = unit
-
-  (* let analyze index_name spec assertion : report = () *)
 end
 
 module Test
@@ -913,7 +824,7 @@ module Test
 
           val to_rational : t -> Number.Rational.t
         end)
-       -> Domain with type v = V.t and type n = N.t) =
+       -> Domain.S with type v = V.t and type n = N.t) =
 struct
   module N = struct
     include Number.Rational
@@ -943,7 +854,7 @@ end
 
 let%test_module _ =
   (module struct
-    include Test (PolkaDomain (struct
+    include Test (Domain.Polka (struct
         type dom = Polka.loose Polka.t
 
         let alloc = Polka.manager_alloc_loose ()
@@ -953,6 +864,6 @@ let%test_module _ =
 
 let%test_module _ =
   (module struct
-    include Test (VPLDomain)
+    include Test (Domain.VPL)
   end)
 ;;
