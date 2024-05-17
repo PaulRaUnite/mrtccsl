@@ -6,11 +6,11 @@ module N = Integer
 module A = Automata.Simple.MakeExtendedString (N)
 
 let wall_test spec names_traces_results =
-  let check (name, case, result) =
+  let check (name, case, expected) =
     let test () =
       let automaton = A.of_spec spec in
-      Alcotest.(check bool) "same result" result
-      @@ Option.is_some (A.accept_trace automaton N.zero case)
+      let trace_exist = Option.is_some (A.accept_trace automaton N.zero case) in
+      Alcotest.(check bool) "same result" expected trace_exist
     in
     Alcotest.(test_case name `Quick) test
   in
@@ -164,12 +164,12 @@ let () =
           [ "o", [ 4 ]; "ooo", [ 1; 5; 11 ] ] )
     ; ( "abs-period"
       , rtwt
-          [ AbsPeriodic {out="o";period= 4;error= (-1, 1);offset= 2} ]
+          [ AbsPeriodic { out = "o"; period = 4; error = -1, 1; offset = 2 } ]
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
-          [ Sporadic {out="a";at_least= 2;strict=false} ]
+          [ Sporadic { out = "a"; at_least = 2; strict = false } ]
           [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]
