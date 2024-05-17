@@ -1,4 +1,14 @@
-(test 
-(name simple)
-(modules simple)
-(libraries mrtccsl alcotest))
+(test
+ (name simple)
+ (modules simple)
+ (libraries mrtccsl alcotest))
+
+(test
+ (name induction)
+ (modules induction)
+ (libraries mrtccsl alcotest))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))
