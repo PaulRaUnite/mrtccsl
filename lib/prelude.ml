@@ -50,10 +50,11 @@ module List = struct
     | [], [], [] | [], _, _ | _, [], _ | _, _, [] -> []
     | a1 :: l1, a2 :: l2, a3 :: l3 -> (a1, a2, a3) :: zip3 l1 l2 l3
   ;;
+
   let rec zip4 l1 l2 l3 l4 =
     match l1, l2, l3, l4 with
     | [], [], [], [] -> []
-    | a1 :: l1, a2 :: l2, a3 :: l3, a4::l4 -> (a1, a2, a3, a4) :: zip4 l1 l2 l3 l4
+    | a1 :: l1, a2 :: l2, a3 :: l3, a4 :: l4 -> (a1, a2, a3, a4) :: zip4 l1 l2 l3 l4
     | _ -> invalid_arg "lists in the tuple should have the same length"
   ;;
 
@@ -236,7 +237,7 @@ module Seq = struct
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
   let int_seq_inclusive (starts, ends) = take (ends - starts + 1) (ints starts)
   let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
-  let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3;-2;-1;0 ]
+  let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
 end
 
 module Tuple = struct
@@ -245,6 +246,12 @@ module Tuple = struct
   let map4 f (x, y, z, w) = f x, f y, f z, f w
   let fn2 f (x, y) = f x y
   let compare2 c1 c2 (x1, y1) (x2, y2) = if c1 x1 x2 = 0 then c2 y1 y2 else c1 x1 x2
+  let extend2 (x, y) z = x, y, z
+  let extend3 (x, y, z) w = x, y, z, w
+  let all2 (x, y) = x && y
+  let all3 (x, y, z) = x && y && z
+  let any2 (x, y) = x || y
+  let any3 (x, y, z) = x || y || z
 end
 
 module Hashtbl = struct
