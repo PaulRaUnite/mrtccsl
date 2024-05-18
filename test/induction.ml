@@ -33,14 +33,14 @@ let example3 d1 d2 t =
 
 let example4 d1 n t =
   ( [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 1 } ]
-  , [ RTdelay { out = "b"; arg = "e"; delay = d1,d1 }
+  , [ RTdelay { out = "b"; arg = "e"; delay = d1, d1 }
     ; Sample { out = "c"; arg = "b"; base = "base" }
-    ; Delay { out = "d"; arg = "c"; delay = n,n; base = Some "base" }
+    ; Delay { out = "d"; arg = "c"; delay = n, n; base = Some "base" }
     ]
   , [ FirstSampled { out = "fb"; arg = "b"; base = "base" }
     ; Precedence { cause = "fa"; effect = "fb" }
     ; Subclocking { sub = "fa"; super = "a" }
-    ; RTdelay { out = "fad"; arg = "fa"; delay = t,t }
+    ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
     ; Precedence { cause = "e"; effect = "fad" }
     ] )
 ;;
@@ -56,16 +56,17 @@ let example5 =
 ;;
 
 open Analysis
-module I = Induction.Make (String) (Number.Integer)
 module D = Domain.VPL (String) (Number.Integer)
 
-module S = I.Solver.MakeFromDomain (struct
-    include D
+module S =
+  Induction.Solver.MakeFromDomain (String) (Number.Integer)
+    (struct
+      include D
 
-    let index_name = "i"
-  end)
+      let index_name = "i"
+    end)
 
-module P = I.Proof (S)
+module I = Induction.Make (String) (Number.Integer) (S)
 
 type target =
   | Over
@@ -81,10 +82,10 @@ let to_alcotest (name, t, (a, s, p), expected) =
       | Exact -> I.exact_spec
     in
     let a, s, p = Tuple.map3 to_formulae (a, s, p) in
-    let assumption_test = P.Property.solve a s in
-    let property_test = P.Property.solve (a @ s) p in
-    let assumption_correct = P.Property.is_sat assumption_test in
-    let property_correct = P.Property.is_sat property_test in
+    let assumption_test = I.Property.solve a s in
+    let property_test = I.Property.solve (a @ s) p in
+    let assumption_correct = I.Property.is_sat assumption_test in
+    let property_correct = I.Property.is_sat property_test in
     let result = assumption_correct && property_correct in
     if not result then Printf.printf "a=%b;p=%b" assumption_correct property_correct;
     Alcotest.(check bool) "same result" expected result
@@ -105,7 +106,7 @@ let _ =
           [ "+d1=[1,2],d2=[2,3],t=[3,3]", Exact, example3 (1, 2) (2, 3) (3, 3), true
           ; "-d1=[1,2],d2=[2,3],t=[2,2]", Exact, example3 (1, 2) (2, 3) (2, 2), false
           ] )
-    ; "example4", cases ["", Under, example4 1 2 152, true]
+    ; "example4", cases [ "", Under, example4 1 2 152, true ]
     ; "example5", cases []
     ]
 ;;

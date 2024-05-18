@@ -2,7 +2,17 @@ open Mrtccsl
 open Prelude
 open Analysis
 open Denotational.MakeDebug (String) (Number.Integer)
-module I = Induction.Make (String) (Number.Integer)
+module D = Domain.VPL (String) (Number.Integer)
+
+module S =
+  Induction.Solver.MakeFromDomain (String) (Number.Integer)
+    (struct
+      include D
+
+      let index_name = "i"
+    end)
+
+module I = Induction.Make (String) (Number.Integer) (S)
 
 (* module D =
    Induction.PolkaDomain
@@ -13,16 +23,6 @@ module I = Induction.Make (String) (Number.Integer)
    end)
    (String)
    (Number.Integer) *)
-module D = Domain.VPL (String) (Number.Integer)
-
-module S = I.Solver.MakeFromDomain (struct
-    include D
-
-    let index_name = "i"
-  end)
-
-module E = I.ExistenceProof (S)
-module P = I.PropertyProof (S)
 
 let _ =
   let spec =
@@ -47,9 +47,9 @@ let _ =
       (fun i f -> Printf.printf "%i: %s\n" i (string_of_bool_expr f))
       denot_formulae
   in
-  let sol = E.solve denot_formulae in
-  let problems = E.report sol in
-  let _ = E.print_problems sol problems in
+  let sol = I.Existence.solve denot_formulae in
+  let problems = I.report sol in
+  let _ = I.print_problems sol problems in
   let spec =
     Rtccsl.
       [ RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
@@ -64,8 +64,8 @@ let _ =
   in
   let spec = List.map I.exact_rel spec in
   let prop = List.map I.exact_rel prop in
-  let spec_sol, prop_sol, sim_sol = P.solve spec prop in
-  E.print_problems spec_sol (E.report spec_sol);
-  E.print_problems prop_sol (E.report prop_sol);
-  Printf.printf "property problems: %i\n" (List.length (E.report sim_sol))
+  let spec_sol, prop_sol, sim_sol = I.Property.solve spec prop in
+  I.print_problems spec_sol (I.report spec_sol);
+  I.print_problems prop_sol (I.report prop_sol);
+  Printf.printf "property problems: %i\n" (List.length (I.report sim_sol))
 ;;

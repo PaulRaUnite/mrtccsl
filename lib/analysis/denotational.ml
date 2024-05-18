@@ -278,6 +278,10 @@ module BoolExpr = struct
       (indexed_vars f)
   ;;
 
+  let unique_vars comp formula =
+    List.sort_uniq (Tuple.compare2 comp Int.compare) (vars_except_i formula)
+  ;;
+
   let shift_by f i = map_idx (fun _ j -> i + j) f
   let is_stateful f = fold (fun _ i acc -> if i <> 0 then true else acc) false f
 end

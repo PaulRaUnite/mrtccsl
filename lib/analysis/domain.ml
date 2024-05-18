@@ -7,9 +7,9 @@ module type Var = sig
 end
 
 module type Num = sig
-  include Interface.OrderedType
-  include Interface.Number.Field with type t := t
-  include Interface.Debug with type t := t
+  type t
+
+  val to_rational : t -> Number.Rational.t
 end
 
 module type S = sig
@@ -41,11 +41,7 @@ exception NonConvex
 module Polka
     (A : Alloc)
     (V : Var)
-    (N : sig
-       type t
-
-       val to_rational : t -> Number.Rational.t
-     end) =
+    (N : Num) =
 struct
   open Denotational
   open Apron
@@ -120,11 +116,7 @@ end
 
 module VPL
     (V : Var)
-    (N : sig
-       type t
-
-       val to_rational : t -> Number.Rational.t
-     end) =
+    (N : Num) =
 struct
   open Denotational
   module Ident = Vpl.UserInterface.Lift_Ident (String)
