@@ -38,11 +38,7 @@ end
 
 exception NonConvex
 
-module Polka
-    (A : Alloc)
-    (V : Var)
-    (N : Num) =
-struct
+module Polka (A : Alloc) (V : Var) (N : Num) = struct
   open Denotational
   open Apron
 
@@ -91,6 +87,7 @@ struct
       let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
       let op, expr =
         match op with
+        | Neq -> failwith "neq is not convex"
         | Eq -> Tcons1.EQ, diff
         | Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
         | LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
@@ -114,10 +111,7 @@ struct
   let infinite_in _ _ = failwith "not implemented"
 end
 
-module VPL
-    (V : Var)
-    (N : Num) =
-struct
+module VPL (V : Var) (N : Num) = struct
   open Denotational
   module Ident = Vpl.UserInterface.Lift_Ident (String)
 
@@ -178,6 +172,7 @@ struct
   ;;
 
   let op2op = function
+    | Neq -> failwith "neq is not convex"
     | Eq -> Vpl.Cstr_type.EQ
     | More -> Vpl.Cstr_type.GT
     | Less -> Vpl.Cstr_type.LT

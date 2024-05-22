@@ -22,6 +22,7 @@ type ('c, 'n) num_expr =
 [@@deriving sexp]
 
 type num_rel =
+  | Neq
   | Eq
   | More
   | Less
@@ -36,17 +37,18 @@ type ('c, 'n) bool_expr =
 [@@deriving sexp]
 
 module Syntax = struct
-  let ( @ ) c i = TagVar (c, i)
+  let ( .@[] ) c i = TagVar (c, i)
   let ( < ) x y = Linear (x, Less, y)
   let ( <= ) x y = Linear (x, LessEq, y)
   let ( > ) x y = Linear (x, More, y)
   let ( >= ) x y = Linear (x, MoreEq, y)
-  let ( = ) x y = Linear (x, Eq, y)
-  let ( + ) x y = Op (x, Add, y)
-  let ( - ) x y = Op (x, Sub, y)
-  let ( * ) x y = Op (x, Mul, y)
-  let ( / ) x y = Op (x, Div, y)
-  let ( |> ) expr (l, r) = And [ l <= expr; expr <= r ]
+  let ( == ) x y = Linear (x, Eq, y)
+  let ( != ) x y = Linear (x, Neq, y)
+  let ( &+ ) x y = Op (x, Add, y)
+  let ( &- ) x y = Op (x, Sub, y)
+  let ( &* ) x y = Op (x, Mul, y)
+  let ( &/ ) x y = Op (x, Div, y)
+  let ( &|> ) expr (l, r) = And [ l <= expr; expr <= r ]
   let min x y = Min (x, y)
   let max x y = Max (x, y)
   let ( && ) l r = And [ l; r ]
@@ -360,6 +362,7 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
   ;;
 
   let string_of_num_rel = function
+    | Neq -> "<>"
     | Eq -> "="
     | More -> ">"
     | Less -> "<"
