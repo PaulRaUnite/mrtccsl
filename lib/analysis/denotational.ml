@@ -128,6 +128,25 @@ module NumExpr = struct
        | Max _ -> [ [ lcond ], l; [ rcond ], r ]
        | _ -> failwith "unreachable")
   ;;
+
+  (** The rule to unpack zerocond expressions.
+      i > index -> use indexed expression
+      i = index -> use initial condition
+      i < index -> remove*)
+  let reduce_zerocond_rule index = function
+    | ZeroCond (Index i, _) when i > index -> Some (Index i)
+    | ZeroCond (Index i, init) when i = index -> Some (Const init)
+    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
+    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
+    | ZeroCond _ -> None
+    | _ as e -> Some e
+  ;;
+
+  (** The rule to remove all expressions that reference non-existent past in initial condition: i < index.*)
+  let reduce_negative_rule index = function
+    | (Index i | TagVar (_, i)) when i <= index -> None
+    | _ as e -> Some e
+  ;;
 end
 
 module type Num = sig
@@ -208,6 +227,10 @@ module BoolExpr = struct
       | e -> e
     in
     rewrite (NumExpr.rewrite rule) Fun.id e
+  ;;
+
+  let eliminate_zerocond index f =
+    eliminate (NumExpr.reduce_zerocond_rule index) Option.some f
   ;;
 
   let use_more_cond e =
@@ -368,5 +391,9 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
           (string_of_tag_expr r)
     in
     aux 0
+  ;;
+
+  let print_bool_exprs list =
+    List.iter (fun f -> Printf.printf "%s\n" (string_of_bool_expr f)) list
   ;;
 end

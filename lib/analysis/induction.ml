@@ -129,10 +129,14 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
        | _ -> raise OverApproximationUnavailable)
   ;;
 
+  let over_rel_spec spec = List.map over_rel spec
+
   (** [safe_ver_rel c] returns overapproximation defined in [over_rel] or empty rel (always valid overapproximation).*)
   let safe_over_rel c =
     try over_rel c with
-    | ExactRelationUnavailable | OverApproximationUnavailable -> And []
+    | OverApproximationUnavailable ->
+      let clocks = Rtccsl.clocks c in
+      And (List.map (fun c -> Syntax.(Const N.zero < c @ 0)) clocks)
   ;;
 
   let safe_over_rel_spec spec = List.map safe_over_rel spec
@@ -336,25 +340,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
   ;;
 
-  (** The rule to unpack zerocond expressions.
-      i > index -> use indexed expression
-      i = index -> use initial condition
-      i < index -> remove*)
-  let reduce_zerocond index = function
-    | ZeroCond (Index i, _) when i > index -> Some (Index i)
-    | ZeroCond (Index i, init) when i = index -> Some (Const init)
-    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
-    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
-    | ZeroCond _ -> None
-    | _ as e -> Some e
-  ;;
-
-  (** The rule to remove all expressions that reference non-existent past in initial condition: i < index.*)
-  let reduce_negative index = function
-    | (Index i | TagVar (_, i)) when i <= index -> None
-    | _ as e -> Some e
-  ;;
-
   (** Returns basic condition for a logical clock: [0 < c[1]]*)
   let lc_init c = Denotational.Syntax.(Const N.zero < c @ 1)
 
@@ -362,7 +347,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   let init_cond width formulae =
     let norm_reduce_nonzero index f =
       let f = NumExpr.norm_rule f in
-      let* f = reduce_zerocond index f in
+      let* f = NumExpr.reduce_zerocond_rule index f in
       Some (NumExpr.norm_rule f)
     in
     let index_to_reduce = 0 in
@@ -373,7 +358,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       elimination_of_texp_only (norm_reduce_nonzero index_to_reduce)
     in
     let remove_sub_zero_refs =
-      elimination_of_texp_only (reduce_negative index_to_reduce)
+      elimination_of_texp_only (NumExpr.reduce_negative_rule index_to_reduce)
     in
     let shifted_formulae =
       Seq.product (List.to_seq formulae) (Seq.int_seq_inclusive (1, width))
@@ -407,6 +392,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let width = -min_index + 1 in
     let init = init_cond width formulae in
     let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
+    let _ = Printf.printf "existence proof:\n" in
     let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
     let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
     let _ = Printf.printf "step: %s\n" (string_of_bool_expr cond) in
@@ -687,7 +673,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       { init; pre; ind; post; edges; vertices }
     ;;
 
-    let solve formulae = solve_from_parts (bulk_existence_proof formulae)
+    let solve formulae =
+      let proofs = bulk_existence_proof formulae in
+      solve_from_parts proofs
+    ;;
   end
 
   module Property = struct
@@ -733,31 +722,45 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       |> Option.value ~default:(And [])
     ;;
 
-    let remove_extension parts s p =
-      let constraint_set formulae =
-        formulae
-        |> List.to_seq
-        |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
-        |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
-        |> ExprSet.of_seq
-      in
-      let struct_set = constraint_set s in
-      let property_set = constraint_set p in
-      let diff_constraints = ExprSet.diff property_set struct_set in
-      let minus_p_constraints = remove_matching diff_constraints in
-      let var_families formulae =
-        List.fold_right
-          (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
+    (** [enum_specialized] enumerates specialized versions of the formula [f]: for initial condition and for the non initial (split by zero cond).*)
+    let enum_specialized f =
+      BoolExpr.use_more_cond f :: Option.to_list (BoolExpr.eliminate_zerocond 0 f)
+    ;;
+
+    (** [remove_difference] returns proof obligations without constraints that are in [p] but not in [s]*)
+    let remove_difference parts s p =
+      if s = []
+      then (
+        let trivial = Array.make 1 (And []) in
+        trivial, trivial, trivial, trivial)
+      else if p = []
+      then parts
+      else (
+        let constraint_set formulae =
           formulae
-          OptVarSet.empty
-      in
-      let struct_families = var_families s in
-      let property_families = var_families p in
-      let diff_families = OptVarSet.diff property_families struct_families in
-      let minus_p_clocks = eliminate_by_clocks diff_families in
-      Tuple.map4
-        (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
-        parts
+          |> List.to_seq
+          |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
+          |> Seq.flat_map (List.to_seq << enum_specialized)
+          |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
+          |> ExprSet.of_seq
+        in
+        let struct_set = constraint_set s in
+        let property_set = constraint_set p in
+        let diff_constraints = ExprSet.diff property_set struct_set in
+        let minus_p_constraints = remove_matching diff_constraints in
+        let var_families formulae =
+          List.fold_right
+            (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
+            formulae
+            OptVarSet.empty
+        in
+        let struct_families = var_families s in
+        let property_families = var_families p in
+        let diff_families = OptVarSet.diff property_families struct_families in
+        let minus_p_clocks = eliminate_by_clocks diff_families in
+        Tuple.map4
+          (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
+          parts)
     ;;
 
     let simulate (s : S.t t) (sp : S.t t) =
@@ -798,18 +801,54 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let solve s p =
       let sp_parts = Existence.bulk_existence_proof (s @ p) in
       let sp_solution = Existence.solve_from_parts sp_parts in
-      let s_parts = remove_extension sp_parts s p in
+      let s_parts = remove_difference sp_parts s p in
       let s_solution = Existence.solve_from_parts s_parts in
       let simulation_relation = simulate s_solution sp_solution in
       s_solution, sp_solution, simulation_relation
     ;;
 
     let report (s, sp, sim) = report s, report sp, report sim
+
+    let print_problems (a_sol, ab_sol, sim_sol) =
+      let a_problems, ab_problems, sim_problems = report (a_sol, ab_sol, sim_sol) in
+      let _ = print_problems a_sol a_problems in
+      let _ = print_problems ab_sol ab_problems in
+      let print = function
+        | NoSolutions -> Printf.printf "No valid simulation at all\n"
+        | InitIsLast i ->
+          let f, t = Array.get sim_sol.init i in
+          Printf.printf
+            "------INIT------\n%s\nDOES NOT SIMULATE\n%s\n"
+            (S.to_string f)
+            (S.to_string t)
+        | PreIsLast i ->
+          Printf.printf "Precondition %i doesn't have valid simulated steps" i
+        | StepIsLast (i, j) ->
+          Printf.printf "Step %i %i doesn't lead to valid simulated postconditions" i j
+      in
+      List.iter print sim_problems
+    ;;
+
     let is_sat results = results |> report |> Tuple.map3 List.is_empty |> Tuple.all3
   end
 
-  module Assumption = struct end
-  module System = struct end
+  module Module = struct
+
+    let solve (a, s, p) =
+      let assumption_test = Property.solve a s in
+      let property_test = Property.solve (a @ s) p in
+      assumption_test, property_test
+    ;;
+
+    let is_sat (as_sol, sp_sol) = Property.is_sat as_sol && Property.is_sat sp_sol
+
+    let print_problems (as_sol, sp_sol) =
+      Printf.printf "ASSUMPTION PROBLEMS:\n";
+      Property.print_problems as_sol;
+      Printf.printf "PROPERTY PROBLEMS:\n";
+      Property.print_problems sp_sol
+    ;;
+  end
 end
 
 module MakeWithDomain

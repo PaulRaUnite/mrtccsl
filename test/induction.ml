@@ -81,13 +81,10 @@ let to_alcotest (name, t, (a, s, p), expected) =
       | Under -> I.under_rel_spec
       | Exact -> I.exact_spec
     in
-    let a, s, p = Tuple.map3 to_formulae (a, s, p) in
-    let assumption_test = I.Property.solve a s in
-    let property_test = I.Property.solve (a @ s) p in
-    let assumption_correct = I.Property.is_sat assumption_test in
-    let property_correct = I.Property.is_sat property_test in
-    let result = assumption_correct && property_correct in
-    if not result then Printf.printf "a=%b;p=%b" assumption_correct property_correct;
+    let ccsl_module = Tuple.map3 to_formulae (a, s, p) in
+    let solution = I.Module.solve ccsl_module in
+    let result = I.Module.is_sat solution in
+    if not result then I.Module.print_problems solution;
     Alcotest.(check bool) "same result" expected result
   in
   Alcotest.(test_case name `Quick) test
