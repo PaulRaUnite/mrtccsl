@@ -3,13 +3,14 @@ open Prelude
 module type Var = sig
   open Interface
   include OrderedType
-  include Interface.Debug with type t := t
+  include Debug with type t := t
 end
 
 module type Num = sig
-  include Interface.OrderedType
-  include Interface.Number.Field with type t := t
-  include Interface.Debug with type t := t
+  open Interface
+  include OrderedType
+  include Number.Field with type t := t
+  include Debug with type t := t
 end
 
 module Solver = struct
@@ -44,11 +45,7 @@ module Solver = struct
 
   module MakeFromDomain
       (V : Var)
-      (N : sig
-         type t
-
-         val to_rational : t -> Number.Rational.t
-       end)
+      (N : Domain.Num)
       (D : D with type v = V.t and type n = N.t) =
   struct
     include D
@@ -80,8 +77,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   open MakeExpr (N)
 
-  type expr = (C.t, N.t) bool_expr
-
   exception ExactRelationUnavailable
   exception OverApproximationUnavailable
   exception UnderApproximationUnavailable
@@ -92,21 +87,35 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let i = 0 in
     (*dummy variable*)
     match c with
-    | Precedence { cause; effect } -> cause @ i < effect @ i
-    | Causality { cause; effect } -> cause @ i <= effect @ i
-    | RTdelay { out; arg; delay = e1, e2 } -> (out @ i) - (arg @ i) |> (Const e1, Const e2)
-    | Delay { out; arg; delay = d1, d2; base = None } when Stdlib.(d1 = d2) ->
-      (arg @ Stdlib.(i - d1)) = out @ i
-    | Fastest { out; left; right } -> out @ i = min (left @ i) (right @ i)
-    | Slowest { out; left; right } -> out @ i = max (left @ i) (right @ i)
+    | Precedence { cause; effect } -> cause.@[i] < effect.@[i]
+    | Causality { cause; effect } -> cause.@[i] <= effect.@[i]
+    | Coincidence list ->
+      let maybe_pair_chain =
+        List.fold_left
+          (fun acc c ->
+            match acc with
+            | None -> Some (c, [])
+            | Some (p, tail) -> Some (c, (p.@[i] == c.@[i]) :: tail))
+          None
+          list
+      in
+      let pair_chain =
+        (Option.fold ~none:[] ~some:(fun (_, list) -> list)) maybe_pair_chain
+      in
+      And pair_chain
+    | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
+    | RTdelay { out; arg; delay = e1, e2 } -> out.@[i] &- arg.@[i] &|> (Const e1, Const e2)
+    | Delay { out; arg; delay = d1, d2; base = None } when d1 = d2 ->
+      arg.@[i - d1] == out.@[i]
+    | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
+    | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
     | CumulPeriodic { out; period; error = le, re; offset } ->
-      let prev = ZeroCond ((out @ Stdlib.(i - 1)), offset) in
-      (out @ i) - prev |> N.(Const (period + le), Const (period + re))
+      let prev = ZeroCond (out.@[i - 1], offset) in
+      out.@[i] &- prev &|> N.(Const (period + le), Const (period + re))
     | AbsPeriodic { out; period; error = le, re; offset } ->
-      (out @ i) - (Const period * Index Stdlib.(i - 1)) - Const offset
-      |> (Const le, Const re)
+      out.@[i] &- (Const period &* Index (i - 1)) &- Const offset &|> (Const le, Const re)
     | Sporadic { out; at_least; strict } ->
-      let diff = (out @ i) - (out @ Stdlib.(i - 1)) in
+      let diff = out.@[i] &- out.@[i - 1] in
       let at_least = Const at_least in
       if strict then diff > at_least else diff >= at_least
     | _ -> raise ExactRelationUnavailable
@@ -123,9 +132,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let open Syntax in
       let i = 0 in
       (match c with
+       | Exclusion list ->
+         let pairwise_exclusions =
+           Seq.product (List.to_seq list) (List.to_seq list)
+           |> Seq.filter (fun (c1, c2) -> C.compare c1 c2 <> 0)
+           |> Seq.map (fun (c1, c2) -> c1.@[i] != c2.@[i])
+           |> List.of_seq
+         in
+         And pairwise_exclusions
        | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
          let _ = arg in
-         (base @ Stdlib.(i - 1)) < out @ i && out @ i <= base @ i
+         base.@[i - 1] < out.@[i] && out.@[i] <= base.@[i]
        | _ -> raise OverApproximationUnavailable)
   ;;
 
@@ -136,29 +153,72 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     try over_rel c with
     | OverApproximationUnavailable ->
       let clocks = Rtccsl.clocks c in
-      And (List.map (fun c -> Syntax.(Const N.zero < c @ 0)) clocks)
+      And (List.map (fun c -> Syntax.(Const N.zero < c.@[0])) clocks)
   ;;
 
   let safe_over_rel_spec spec = List.map safe_over_rel spec
 
+  (*TODO: add functions that prioritize approximations*)
+
   (** [under_rel c] returns underapproximation denotational relation of [c] constraint. Raises [UnderApproximationUnavailable] if doesn't exist.*)
-  let under_rel c =
+  let rec under_rel c =
     try exact_rel c with
     | ExactRelationUnavailable ->
       let open Syntax in
       let i = 0 in
       (match c with
+       | Exclusion list ->
+         let maybe_pair_chain =
+           List.fold_left
+             (fun acc c ->
+               match acc with
+               | None -> Some (c, c, [])
+               | Some (first, prev, conds) ->
+                 Some (first, c, (prev.@[i] < c.@[i]) :: conds)) (*order the clocks*)
+             None
+             list
+         in
+         let pair_chain =
+           (Option.fold ~none:[] ~some:(fun (first, last, conds) ->
+              (last.@[i - 1] < first.@[i]) :: conds))
+             (*close the chain with last clock in the past*)
+             maybe_pair_chain
+         in
+         And pair_chain
+       | Subclocking { sub; super } -> sub.@[i] == super.@[i]
+       | Minus { out; arg; except } ->
+         let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ])) in
+         (out.@[i] == arg.@[i] || out.@[i - 1] == arg.@[i - 1]) && exclude_arg_except
+       | Intersection { out; args } | Union { out; args } ->
+         exact_rel (Coincidence (out :: args))
+       | Sample { out; arg; base } ->
+         base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
+       | Delay { out; arg; delay = d1, d2; base = Some base } when d1 = d2 ->
+         out.@[i] == base.@[i]
+         && base.@[i - 1 - d1] < arg.@[i]
+         && arg.@[i] <= base.@[i - d1]
+       | AbsPeriodic { out; period; error; offset }
+       | CumulPeriodic { out; period; error; offset } ->
+         exact_rel (AbsPeriodic { out; period; error; offset })
        | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
          let _ = arg in
-         (base @ Stdlib.(i - 1)) < out @ i && out @ i = arg @ i && arg @ i <= base @ i
-       | Sample { out; arg; base } ->
-         out @ i = base @ i
-         && arg @ i |> (ZeroCond ((base @ Stdlib.(i - 1)), N.zero), base @ i)
+         base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
+       | Forbid { from; until; args } ->
+         And
+           (List.map
+              (fun a ->
+                (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
+                || (from.@[i - 1] <= until.@[i - 1]
+                    && until.@[i - 1] < a.@[i]
+                    && a.@[i] < from.@[i]))
+              args)
+       | Allow { from; until; args } ->
+         And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
        | _ -> raise UnderApproximationUnavailable)
   ;;
 
   let under_rel_spec spec = List.map under_rel spec
-  let lc_connection c i = Denotational.Syntax.((c @ Stdlib.(i - 1)) < c @ i)
+  let lc_connection c i = Denotational.Syntax.(c.@[i - 1] < c.@[i])
 
   module SetCI = Set.Make (struct
       type t = C.t * int
@@ -327,7 +387,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let rec connect_indices c = function
       | [] | _ :: [] -> []
       | x :: y :: tail ->
-        Denotational.Syntax.(c @ x < c @ y) :: connect_indices c (y :: tail)
+        Denotational.Syntax.(c.@[x] < c.@[y]) :: connect_indices c (y :: tail)
     in
     let connect_clocks (c, indices) =
       let indices = List.fast_sort Int.compare indices in
@@ -341,7 +401,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   ;;
 
   (** Returns basic condition for a logical clock: [0 < c[1]]*)
-  let lc_init c = Denotational.Syntax.(Const N.zero < c @ 1)
+  let lc_init c = Denotational.Syntax.(Const N.zero < c.@[1])
 
   (** Returns initial condition for the [formulae] of the given [width].*)
   let init_cond width formulae =
@@ -687,7 +747,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       end)
 
     module ExprSet = Set.Make (struct
-        type t = expr
+        type t = (C.t, N.t) bool_expr
 
         let compare = compare
       end)
@@ -833,7 +893,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   end
 
   module Module = struct
-
     let solve (a, s, p) =
       let assumption_test = Property.solve a s in
       let property_test = Property.solve (a @ s) p in
