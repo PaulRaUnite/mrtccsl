@@ -77,9 +77,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   open MakeExpr (N)
 
-  exception ExactRelationUnavailable
-  exception OverApproximationUnavailable
-  exception UnderApproximationUnavailable
+  exception ExactRelationUnavailable of (C.t, N.t) Rtccsl.constr
+  exception OverApproximationUnavailable of (C.t, N.t) Rtccsl.constr
+  exception UnderApproximationUnavailable of (C.t, N.t) Rtccsl.constr
 
   (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
@@ -118,7 +118,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let diff = out.@[i] &- out.@[i - 1] in
       let at_least = Const at_least in
       if strict then diff > at_least else diff >= at_least
-    | _ -> raise ExactRelationUnavailable
+    | _ -> raise (ExactRelationUnavailable c)
   ;;
 
   let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr list =
@@ -127,97 +127,99 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   (** Returns overapproximation denotational relation of a RTCCSL constraint. Raises [OverApproximationUnavailable] otherwise.*)
   let over_rel c =
-    try exact_rel c with
-    | ExactRelationUnavailable ->
-      let open Syntax in
-      let i = 0 in
-      (match c with
-       | Exclusion list ->
-         let pairwise_exclusions =
-           Seq.product (List.to_seq list) (List.to_seq list)
-           |> Seq.filter (fun (c1, c2) -> C.compare c1 c2 <> 0)
-           |> Seq.map (fun (c1, c2) -> c1.@[i] != c2.@[i])
-           |> List.of_seq
-         in
-         And pairwise_exclusions
-       | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
-         let _ = arg in
-         base.@[i - 1] < out.@[i] && out.@[i] <= base.@[i]
-       | _ -> raise OverApproximationUnavailable)
+    let open Syntax in
+    let i = 0 in
+    match c with
+    | Exclusion list ->
+      let pairwise_exclusions =
+        Seq.product (List.to_seq list) (List.to_seq list)
+        |> Seq.filter (fun (c1, c2) -> C.compare c1 c2 <> 0)
+        |> Seq.map (fun (c1, c2) -> c1.@[i] != c2.@[i])
+        |> List.of_seq
+      in
+      And pairwise_exclusions
+    | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
+      let _ = arg in
+      base.@[i - 1] < out.@[i] && out.@[i] <= base.@[i]
+    | _ -> raise (OverApproximationUnavailable c)
   ;;
 
-  let over_rel_spec spec = List.map over_rel spec
-
   (** [safe_ver_rel c] returns overapproximation defined in [over_rel] or empty rel (always valid overapproximation).*)
-  let safe_over_rel c =
+  let over_rel_priority_exact c =
     try over_rel c with
-    | OverApproximationUnavailable ->
+    | OverApproximationUnavailable _ ->
       let clocks = Rtccsl.clocks c in
       And (List.map (fun c -> Syntax.(Const N.zero < c.@[0])) clocks)
   ;;
 
-  let safe_over_rel_spec spec = List.map safe_over_rel spec
-
-  (*TODO: add functions that prioritize approximations*)
+  let over_rel_priority_over c =
+    try over_rel c with
+    | OverApproximationUnavailable _ -> exact_rel c
+  ;;
 
   (** [under_rel c] returns underapproximation denotational relation of [c] constraint. Raises [UnderApproximationUnavailable] if doesn't exist.*)
   let rec under_rel c =
-    try exact_rel c with
-    | ExactRelationUnavailable ->
-      let open Syntax in
-      let i = 0 in
-      (match c with
-       | Exclusion list ->
-         let maybe_pair_chain =
-           List.fold_left
-             (fun acc c ->
-               match acc with
-               | None -> Some (c, c, [])
-               | Some (first, prev, conds) ->
-                 Some (first, c, (prev.@[i] < c.@[i]) :: conds)) (*order the clocks*)
-             None
-             list
-         in
-         let pair_chain =
-           (Option.fold ~none:[] ~some:(fun (first, last, conds) ->
-              (last.@[i - 1] < first.@[i]) :: conds))
-             (*close the chain with last clock in the past*)
-             maybe_pair_chain
-         in
-         And pair_chain
-       | Subclocking { sub; super } -> sub.@[i] == super.@[i]
-       | Minus { out; arg; except } ->
-         let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ])) in
-         (out.@[i] == arg.@[i] || out.@[i - 1] == arg.@[i - 1]) && exclude_arg_except
-       | Intersection { out; args } | Union { out; args } ->
-         exact_rel (Coincidence (out :: args))
-       | Sample { out; arg; base } ->
-         base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
-       | Delay { out; arg; delay = d1, d2; base = Some base } when d1 = d2 ->
-         out.@[i] == base.@[i]
-         && base.@[i - 1 - d1] < arg.@[i]
-         && arg.@[i] <= base.@[i - d1]
-       | AbsPeriodic { out; period; error; offset }
-       | CumulPeriodic { out; period; error; offset } ->
-         exact_rel (AbsPeriodic { out; period; error; offset })
-       | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
-         let _ = arg in
-         base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
-       | Forbid { from; until; args } ->
-         And
-           (List.map
-              (fun a ->
-                (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
-                || (from.@[i - 1] <= until.@[i - 1]
-                    && until.@[i - 1] < a.@[i]
-                    && a.@[i] < from.@[i]))
-              args)
-       | Allow { from; until; args } ->
-         And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
-       | _ -> raise UnderApproximationUnavailable)
+    let open Syntax in
+    let i = 0 in
+    match c with
+    | Exclusion list ->
+      let maybe_pair_chain =
+        List.fold_left
+          (fun acc c ->
+            match acc with
+            | None -> Some (c, c, [])
+            | Some (first, prev, conds) -> Some (first, c, (prev.@[i] < c.@[i]) :: conds))
+            (*order the clocks*)
+          None
+          list
+      in
+      let pair_chain =
+        (Option.fold ~none:[] ~some:(fun (first, last, conds) ->
+           (last.@[i - 1] < first.@[i]) :: conds))
+          (*close the chain with last clock in the past*)
+          maybe_pair_chain
+      in
+      And pair_chain
+    | Subclocking { sub; super } -> sub.@[i] == super.@[i]
+    | Minus { out; arg; except } ->
+      let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ])) in
+      (out.@[i] == arg.@[i] || out.@[i - 1] == arg.@[i - 1]) && exclude_arg_except
+    | Intersection { out; args } | Union { out; args } ->
+      exact_rel (Coincidence (out :: args))
+    | Sample { out; arg; base } ->
+      base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
+    | Delay { out; arg; delay = d1, d2; base = Some base } when d1 = d2 ->
+      out.@[i] == base.@[i] && base.@[i - 1 - d1] < arg.@[i] && arg.@[i] <= base.@[i - d1]
+    | AbsPeriodic { out; period; error; offset }
+    | CumulPeriodic { out; period; error; offset } ->
+      exact_rel (AbsPeriodic { out; period; error; offset })
+    | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
+      let _ = arg in
+      base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
+    | Forbid { from; until; args } ->
+      And
+        (List.map
+           (fun a ->
+             (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
+             || (from.@[i - 1] <= until.@[i - 1]
+                 && until.@[i - 1] < a.@[i]
+                 && a.@[i] < from.@[i]))
+           args)
+    | Allow { from; until; args } ->
+      And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
+    | _ -> raise (UnderApproximationUnavailable c)
   ;;
 
-  let under_rel_spec spec = List.map under_rel spec
+  let under_rel_priority_exact c =
+    try exact_rel c with
+    | ExactRelationUnavailable _ -> under_rel c
+  ;;
+
+  let under_rel_priority_under c =
+    try under_rel c with
+    | UnderApproximationUnavailable _ -> exact_rel c
+  ;;
+
   let lc_connection c i = Denotational.Syntax.(c.@[i - 1] < c.@[i])
 
   module SetCI = Set.Make (struct
