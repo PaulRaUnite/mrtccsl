@@ -252,6 +252,9 @@ module Tuple = struct
   let all3 (x, y, z) = x && y && z
   let any2 (x, y) = x || y
   let any3 (x, y, z) = x || y || z
+  let list2 (x, y) = [ x; y ]
+  let list3 (x, y, z) = [ x; y; z ]
+  let list4 (x, y, z, w) = [ x; y; z; w ]
 end
 
 module Hashtbl = struct

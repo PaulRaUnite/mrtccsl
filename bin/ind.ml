@@ -47,9 +47,8 @@ let _ =
       (fun i f -> Printf.printf "%i: %s\n" i (string_of_bool_expr f))
       denot_formulae
   in
-  let sol = I.Existence.solve denot_formulae in
-  let problems = I.report sol in
-  let _ = I.print_problems sol problems in
+  let sol = I.Existence.solve_expr denot_formulae in
+  let _ = I.Existence.print_solution sol in
   let spec =
     Rtccsl.
       [ RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
@@ -62,10 +61,6 @@ let _ =
       ; Precedence { cause = "f"; effect = "r" }
       ]
   in
-  let spec = List.map I.exact_rel spec in
-  let prop = List.map I.exact_rel prop in
-  let spec_sol, prop_sol, sim_sol = I.Property.solve spec prop in
-  I.print_problems spec_sol (I.report spec_sol);
-  I.print_problems prop_sol (I.report prop_sol);
-  Printf.printf "property problems: %i\n" (List.length (I.report sim_sol))
+  let* sol = I.Property.solve spec prop in
+  Some (I.Simulation.print sol)
 ;;

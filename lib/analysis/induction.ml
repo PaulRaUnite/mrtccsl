@@ -68,14 +68,14 @@ end
 module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t) = struct
   open Denotational
   open Rtccsl
-  open MakeDebug (C) (N)
+  include MakeDebug (C) (N)
 
   module N = struct
     include N
     include Interface.ExpOrder.Make (N)
   end
 
-  open MakeExpr (N)
+  include MakeExpr (N)
 
   exception ExactRelationUnavailable of (C.t, N.t) Rtccsl.constr
   exception OverApproximationUnavailable of (C.t, N.t) Rtccsl.constr
@@ -110,8 +110,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
     | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
     | CumulPeriodic { out; period; error = le, re; offset } ->
-      let prev = ZeroCond (out.@[i - 1], offset) in
-      out.@[i] &- prev &|> N.(Const (period + le), Const (period + re))
+      let prev = ZeroCond (out.@[i - 1], N.(offset - period)) in
+      out.@[i] &- prev &- Const period &|> (Const le, Const re)
     | AbsPeriodic { out; period; error = le, re; offset } ->
       out.@[i] &- (Const period &* Index (i - 1)) &- Const offset &|> (Const le, Const re)
     | Sporadic { out; at_least; strict } ->
@@ -139,6 +139,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       And pairwise_exclusions
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
+      (*FIXME: a test is not passing because of first sampled*)
       let _ = arg in
       base.@[i - 1] < out.@[i] && out.@[i] <= base.@[i]
     | _ -> raise (OverApproximationUnavailable c)
@@ -218,6 +219,16 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   let under_rel_priority_under c =
     try under_rel c with
     | UnderApproximationUnavailable _ -> exact_rel c
+  ;;
+
+  let safe_exact_rel_spec spec =
+    try Some (List.map exact_rel spec) with
+    | ExactRelationUnavailable _ -> None
+  ;;
+
+  let safe_under_rel_priority_exact_spec spec =
+    try Some (List.map under_rel_priority_exact spec) with
+    | ExactRelationUnavailable _ | OverApproximationUnavailable _ -> None
   ;;
 
   let lc_connection c i = Denotational.Syntax.(c.@[i - 1] < c.@[i])
@@ -475,169 +486,117 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       (List.zip4 init pre ind post)
   ;;
 
-  type 'a vertix =
-    | Init of 'a
-    | Pre of 'a
-    | Step of 'a * 'a
-    | Post of 'a
-  [@@deriving sexp]
+  module Graph = struct
+    type 'a vertix =
+      | Init of 'a
+      | Pre of 'a
+      | Step of 'a * 'a
+      | Post of 'a
+    [@@deriving sexp]
 
-  let vertix_to_string v =
-    v |> sexp_of_vertix Sexplib0.Sexp_conv.sexp_of_int |> Sexplib0.Sexp.to_string
-  ;;
+    let vertix_to_string v =
+      v |> sexp_of_vertix Sexplib0.Sexp_conv.sexp_of_int |> Sexplib0.Sexp.to_string
+    ;;
 
-  type 'f t =
-    { init : 'f array
-    ; pre : 'f array
-    ; ind : 'f array
-    ; post : 'f array
-    ; edges : (int vertix * int vertix, bool) Hashtbl.t
-    ; vertices : (int vertix, bool) Hashtbl.t
-    }
+    type 'f t =
+      { init : 'f array
+      ; pre : 'f array
+      ; ind : 'f array
+      ; post : 'f array
+      ; edges : (int vertix * int vertix, bool) Hashtbl.t
+      ; vertices : (int vertix, bool) Hashtbl.t
+      }
 
-  type test =
-    | InitPre of int
-    | PreStep of int * int
-    | StepPost of int * int * int
-    | PostPre of int
+    type test =
+      | InitPre of int
+      | PreStep of int * int
+      | StepPost of int * int * int
+      | PostPre of int
 
-  type problem =
-    | NoSolutions
-    | InitIsLast of int
-    | PreIsLast of int
-    | StepIsLast of int * int
+    type problem =
+      | NoSolutions
+      | InitIsLast of int
+      | PreIsLast of int
+      | StepIsLast of int * int
 
-  let report { init; vertices; edges; _ } =
-    (* let _ =
-       Hashtbl.iter
-       (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
-       vertices
-       in
-       let _ =
-       Hashtbl.iter
-       (fun (f, t) sat ->
-       Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
-       edges
-       in *)
-    let len = Array.length init in
-    let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
-    let mark_cyclic v = Hashtbl.replace in_cycle v true in
-    let visited = Hashtbl.create ((len * len) + (2 * len)) in
-    let is_cyclic v = Hashtbl.value in_cycle v false || Hashtbl.mem visited v in
-    let visit v = Hashtbl.replace visited v () in
-    let next =
-      edges
-      |> Hashtbl.to_seq
-      |> Seq.fold_left
-           (fun tbl ((f, t), sat) ->
-             if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
-             tbl)
-           (Hashtbl.create (Hashtbl.length vertices))
-    in
-    (* let print_marks m =
-       Hashtbl.iter
-       (fun k v ->
-       match k with
-       | Pre i -> Printf.printf "pre %i: %b\n" i v
-       | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
-       | Post i -> Printf.printf "post %i: %b\n" i v)
-       m
-       in *)
-    (* let _ = print_marks marks in *)
-    let rec dfs (v : int vertix) =
-      if is_cyclic v
-      then (
-        visit v;
-        mark_cyclic v;
-        true, [])
-      else (
-        visit v;
-        let cycles, problems = List.split (List.map dfs (Hashtbl.value next v [])) in
-        let problems = List.concat problems in
-        if List.any cycles
+    let report { init; vertices; edges; _ } =
+      let _ =
+        Hashtbl.iter
+          (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
+          vertices
+      in
+      let _ =
+        Hashtbl.iter
+          (fun (f, t) sat ->
+            Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
+          edges
+      in
+      let len = Array.length init in
+      let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
+      let mark_cyclic v = Hashtbl.replace in_cycle v true in
+      let visited = Hashtbl.create ((len * len) + (2 * len)) in
+      let is_cyclic v = Hashtbl.value in_cycle v false || Hashtbl.mem visited v in
+      let visit v = Hashtbl.replace visited v () in
+      let next =
+        edges
+        |> Hashtbl.to_seq
+        |> Seq.fold_left
+             (fun tbl ((f, t), sat) ->
+               if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
+               tbl)
+             (Hashtbl.create (Hashtbl.length vertices))
+      in
+      (* let print_marks m =
+         Hashtbl.iter
+         (fun k v ->
+         match k with
+         | Pre i -> Printf.printf "pre %i: %b\n" i v
+         | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
+         | Post i -> Printf.printf "post %i: %b\n" i v)
+         m
+         in *)
+      (* let _ = print_marks marks in *)
+      let rec dfs (v : int vertix) =
+        if is_cyclic v
         then (
+          visit v;
           mark_cyclic v;
-          true, problems)
-        else if List.is_empty problems
-        then (
-          let p =
-            match v with
-            | Init i -> InitIsLast i
-            | Pre i -> PreIsLast i
-            | Step (i, j) -> StepIsLast (i, j)
-            | Post _ -> failwith "doesn't make sense for the graph"
-          in
-          false, [ p ])
-        else false, problems)
-    in
-    let valid_starts, problems =
-      init
-      |> Array.to_list
-      |> List.mapi (fun i _ ->
-        if Hashtbl.find vertices (Init i) then dfs (Init i) else false, [])
-      |> List.split
-    in
-    let problems = List.concat problems in
-    if not (List.any valid_starts) then NoSolutions :: problems else problems
-  ;;
-
-  (*TODO: modify the function to print pairs too.*)
-  let print_problems g problems =
-    let pre i = Array.get g.pre i in
-    let ind i = Array.get g.ind i in
-    let post i = Array.get g.post i in
-    let str_pre i = S.to_string (pre i) in
-    let str_ind i = S.to_string (ind i) in
-    let str_post i = S.to_string (post i) in
-    let print = function
-      | NoSolutions -> Printf.printf "No solutions, all inits are empty\n"
-      | InitIsLast i -> Printf.printf "Precondition is empty: %s\n" (str_pre i)
-      | PreIsLast i ->
-        Array.iteri
-          (fun j dom ->
-            if S.sat dom
-            then
-              Printf.printf
-                "Non-empty unreachable step:\n\
-                 Infinite in index: %b\n\
-                 Pre %i:\n\
-                 %s\n\
-                 Ind %i:\n\
-                 %s\n\
-                 Both:\n\
-                 %s\n\
-                 Diff:\n\
-                 %s\n"
-                (S.infinite_in S.index_name dom)
-                i
-                (str_pre i)
-                j
-                (str_ind j)
-                S.(to_string (pre i && ind j))
-                ""
-            else Printf.printf "Empty step: %i %i\n" i j)
-          g.ind
-      | StepIsLast (i, j) ->
-        Array.iteri
-          (fun k dom ->
-            if S.sat dom
-            then
-              Printf.printf
-                "Non-empty unreachable post: %i %i % i\npre:\n%s\nind:\n%s\npost:\n%s\n%b"
-                i
-                j
-                k
-                (str_pre i)
-                (str_ind j)
-                (str_post k)
-                S.((pre i && ind j) <= post k)
-            else Printf.printf "Empty post: %i\n" k)
-          g.post
-    in
-    List.iter print problems
-  ;;
+          true, [])
+        else (
+          visit v;
+          let cycles, problems = List.split (List.map dfs (Hashtbl.value next v [])) in
+          let problems = List.concat problems in
+          if List.any cycles
+          then (
+            mark_cyclic v;
+            true, problems)
+          else if List.is_empty problems
+          then (
+            let p =
+              match v with
+              | Init i -> InitIsLast i
+              | Pre i -> PreIsLast i
+              | Step (i, j) -> StepIsLast (i, j)
+              | Post _ -> failwith "doesn't make sense for the graph"
+            in
+            false, [ p ])
+          else false, problems)
+      in
+      let valid_starts, problems =
+        init
+        |> Array.to_list
+        |> List.mapi (fun i _ ->
+          if Hashtbl.find vertices (Init i) then dfs (Init i) else false, [])
+        |> List.split
+      in
+      let problems = List.concat problems in
+      if not (List.any valid_starts) then NoSolutions :: problems else problems
+    ;;
+  end
 
   module Existence = struct
+    open Graph
+
     let bulk_existence_proof formulae =
       List.map BoolExpr.fact_disj formulae
       |> List.general_cartesian
@@ -735,13 +694,134 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       { init; pre; ind; post; edges; vertices }
     ;;
 
-    let solve formulae =
-      let proofs = bulk_existence_proof formulae in
-      solve_from_parts proofs
+    type solution =
+      | Trivial (** Solution is [Trivial] when there are no constraints. *)
+      | Proof of S.t Graph.t * problem list
+
+    let solve_expr formulae =
+      if List.is_empty formulae
+      then Trivial
+      else (
+        let proofs = bulk_existence_proof formulae in
+        let solution = solve_from_parts proofs in
+        Proof (solution, report solution))
+    ;;
+
+    type report =
+      | Exact of solution
+      | Approximation of
+          { over : solution
+          ; under : solution option
+          }
+
+    let solution_is_correct = function
+      | Trivial -> true
+      | Proof (_, problems) -> List.is_empty problems
+    ;;
+
+    let report_is_correct = function
+      | Exact solution -> solution_is_correct solution
+      | Approximation { over; _ } -> solution_is_correct over
+    ;;
+
+    let solution_exists = function
+      | Exact solution -> solution_is_correct solution
+      | Approximation { under; _ } ->
+        Option.fold ~none:false ~some:solution_is_correct under
+    ;;
+
+    let solve spec =
+      let exact_formulae = safe_exact_rel_spec spec in
+      match exact_formulae with
+      | Some formulae -> Exact (solve_expr formulae)
+      | None ->
+        let over_formulae = List.map over_rel_priority_exact spec in
+        let over = solve_expr over_formulae in
+        let under_formulae = safe_under_rel_priority_exact_spec spec in
+        let under = Option.map solve_expr under_formulae in
+        Approximation { over; under }
+    ;;
+
+    let print_problems g problems =
+      let pre i = Array.get g.pre i in
+      let ind i = Array.get g.ind i in
+      let post i = Array.get g.post i in
+      let str_pre i = S.to_string (pre i) in
+      let str_ind i = S.to_string (ind i) in
+      let str_post i = S.to_string (post i) in
+      let print = function
+        | NoSolutions -> Printf.printf "No solutions, all inits are empty\n"
+        | InitIsLast i -> Printf.printf "Precondition is empty: %s\n" (str_pre i)
+        | PreIsLast i ->
+          Array.iteri
+            (fun j dom ->
+              if S.sat dom
+              then
+                Printf.printf
+                  "Non-empty unreachable step:\n\
+                   Infinite in index: %b\n\
+                   Pre %i:\n\
+                   %s\n\
+                   Ind %i:\n\
+                   %s\n\
+                   Both:\n\
+                   %s\n\
+                   Diff:\n\
+                   %s\n"
+                  (S.infinite_in S.index_name dom)
+                  i
+                  (str_pre i)
+                  j
+                  (str_ind j)
+                  S.(to_string (pre i && ind j))
+                  ""
+              else Printf.printf "Empty step: %i %i\n" i j)
+            g.ind
+        | StepIsLast (i, j) ->
+          Array.iteri
+            (fun k dom ->
+              if S.sat dom
+              then
+                Printf.printf
+                  "Non-empty unreachable post: %i %i % i\n\
+                   pre:\n\
+                   %s\n\
+                   ind:\n\
+                   %s\n\
+                   post:\n\
+                   %s\n\
+                   %b"
+                  i
+                  j
+                  k
+                  (str_pre i)
+                  (str_ind j)
+                  (str_post k)
+                  S.((pre i && ind j) <= post k)
+              else Printf.printf "Empty post: %i\n" k)
+            g.post
+      in
+      if List.is_empty problems
+      then Printf.printf "No problems\n"
+      else List.iter print problems
+    ;;
+
+    let print_solution = function
+      | Trivial -> Printf.printf "Specification is trivially correct.\n"
+      | Proof (g, problems) -> print_problems g problems
+    ;;
+
+    let print = function
+      | Exact solution -> print_solution solution
+      | Approximation { over; under } ->
+        print_solution over;
+        Option.iter print_solution under
     ;;
   end
 
-  module Property = struct
+  module Simulation = struct
+    open Graph
+
     module OptVarSet = Set.Make (struct
         type t = C.t option
 
@@ -791,38 +871,31 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     (** [remove_difference] returns proof obligations without constraints that are in [p] but not in [s]*)
     let remove_difference parts s p =
-      if s = []
-      then (
-        let trivial = Array.make 1 (And []) in
-        trivial, trivial, trivial, trivial)
-      else if p = []
-      then parts
-      else (
-        let constraint_set formulae =
+      let constraint_set formulae =
+        formulae
+        |> List.to_seq
+        |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
+        |> Seq.flat_map (List.to_seq << enum_specialized)
+        |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
+        |> ExprSet.of_seq
+      in
+      let struct_set = constraint_set s in
+      let property_set = constraint_set p in
+      let diff_constraints = ExprSet.diff property_set struct_set in
+      let minus_p_constraints = remove_matching diff_constraints in
+      let var_families formulae =
+        List.fold_right
+          (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
           formulae
-          |> List.to_seq
-          |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
-          |> Seq.flat_map (List.to_seq << enum_specialized)
-          |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
-          |> ExprSet.of_seq
-        in
-        let struct_set = constraint_set s in
-        let property_set = constraint_set p in
-        let diff_constraints = ExprSet.diff property_set struct_set in
-        let minus_p_constraints = remove_matching diff_constraints in
-        let var_families formulae =
-          List.fold_right
-            (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
-            formulae
-            OptVarSet.empty
-        in
-        let struct_families = var_families s in
-        let property_families = var_families p in
-        let diff_families = OptVarSet.diff property_families struct_families in
-        let minus_p_clocks = eliminate_by_clocks diff_families in
-        Tuple.map4
-          (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
-          parts)
+          OptVarSet.empty
+      in
+      let struct_families = var_families s in
+      let property_families = var_families p in
+      let diff_families = OptVarSet.diff property_families struct_families in
+      let minus_p_clocks = eliminate_by_clocks diff_families in
+      Tuple.map4
+        (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
+        parts
     ;;
 
     let simulate (s : S.t t) (sp : S.t t) =
@@ -860,7 +933,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       { init; pre; ind; post; edges; vertices }
     ;;
 
-    let solve s p =
+    let solve_expr s p =
       let sp_parts = Existence.bulk_existence_proof (s @ p) in
       let sp_solution = Existence.solve_from_parts sp_parts in
       let s_parts = remove_difference sp_parts s p in
@@ -871,10 +944,16 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     let report (s, sp, sim) = report s, report sp, report sim
 
-    let print_problems (a_sol, ab_sol, sim_sol) =
-      let a_problems, ab_problems, sim_problems = report (a_sol, ab_sol, sim_sol) in
-      let _ = print_problems a_sol a_problems in
-      let _ = print_problems ab_sol ab_problems in
+    let print_problems
+      ((a_sol, a_problems), (ab_sol, ab_problems), (sim_sol, sim_problems))
+      =
+      let _ =
+        Printf.printf "A EXISTENCE PROBLEMS:\n";
+        Existence.print_problems a_sol a_problems;
+        Printf.printf "AB EXISTENCE PROBLEMS:\n";
+        Existence.print_problems ab_sol ab_problems;
+        Printf.printf "SIMULATION PROBLEMS:\n"
+      in
       let print = function
         | NoSolutions -> Printf.printf "No valid simulation at all\n"
         | InitIsLast i ->
@@ -891,23 +970,104 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       List.iter print sim_problems
     ;;
 
-    let is_sat results = results |> report |> Tuple.map3 List.is_empty |> Tuple.all3
+    type solution =
+      | Trivial
+      | Proof of
+          (S.t Graph.t * problem list)
+          * (S.t Graph.t * problem list)
+          * ((S.t * S.t) Graph.t * problem list)
+
+    let solve trivial a b =
+      let solve_expr a_formulae b_formulae =
+        if trivial a_formulae b_formulae
+        then Trivial
+        else (
+          let a, ab, sim = solve_expr a_formulae b_formulae in
+          let a_p, ab_p, sim_p = report (a, ab, sim) in
+          Proof ((a, a_p), (ab, ab_p), (sim, sim_p)))
+      in
+      let* a = safe_under_rel_priority_exact_spec a in
+      let* s = safe_under_rel_priority_exact_spec b in
+      Some (solve_expr a s)
+    ;;
+
+    let solution_exists = function
+      | Trivial -> true
+      | Proof ((_, a_p), (_, ab_p), (_, sim_p)) ->
+        List.is_empty a_p && List.is_empty ab_p && List.is_empty sim_p
+    ;;
+
+    let print = function
+      | Trivial -> Printf.printf "Simulation is trivially correct.\n"
+      | Proof (a, b, sim) -> print_problems (a, b, sim)
+    ;;
+  end
+
+  module Assumption = struct
+    (** Solution is [Trivial] when assumption is empty. *)
+    let solve = Simulation.solve (fun a _s -> List.is_empty a)
+  end
+
+  module Property = struct
+    (** Solution is [Trivial] when property is empty. *)
+    let solve = Simulation.solve (fun _s p -> List.is_empty p)
   end
 
   module Module = struct
+    type report =
+      { assumption : Existence.report
+      ; structure : Existence.report
+      ; property : Existence.report
+      ; assumption_in_structure : Simulation.solution option
+      ; structure_in_property : Simulation.solution option
+      }
+
     let solve (a, s, p) =
-      let assumption_test = Property.solve a s in
-      let property_test = Property.solve (a @ s) p in
-      assumption_test, property_test
+      { assumption = Existence.solve a
+      ; structure = Existence.solve s
+      ; property = Existence.solve p
+      ; assumption_in_structure = Assumption.solve a s
+      ; structure_in_property = Property.solve (a @ s) p
+      }
     ;;
 
-    let is_sat (as_sol, sp_sol) = Property.is_sat as_sol && Property.is_sat sp_sol
+    let is_correct
+      { assumption; structure; property; assumption_in_structure; structure_in_property }
+      =
+      Existence.solution_exists assumption
+      && Existence.solution_exists structure
+      && Existence.solution_exists property
+      && Option.fold ~some:Simulation.solution_exists ~none:false assumption_in_structure
+      && Option.fold ~some:Simulation.solution_exists ~none:false structure_in_property
+    ;;
 
-    let print_problems (as_sol, sp_sol) =
-      Printf.printf "ASSUMPTION PROBLEMS:\n";
-      Property.print_problems as_sol;
-      Printf.printf "PROPERTY PROBLEMS:\n";
-      Property.print_problems sp_sol
+    let print r =
+      let { assumption
+          ; structure
+          ; property
+          ; assumption_in_structure
+          ; structure_in_property
+          }
+        =
+        r
+      in
+      if is_correct r
+      then Printf.printf "The module is proven correct in infinite subset."
+      else (
+        Printf.printf "A:\n";
+        Existence.print assumption;
+        Printf.printf "A+S:\n";
+        Existence.print structure;
+        Printf.printf "P:\n";
+        Existence.print property;
+        Printf.printf "A in (A and S):\n";
+        (match assumption_in_structure with
+         | None -> Printf.printf "Under-approximation doesn't exist."
+         | Some a -> Simulation.print a);
+        Printf.printf "(A and S) in (A and S and P):\n";
+        match structure_in_property with
+        | None -> Printf.printf "Under-approximation doesn't exist."
+        | Some p -> Simulation.print p)
     ;;
   end
 end

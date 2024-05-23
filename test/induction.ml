@@ -31,10 +31,11 @@ let example3 d1 d2 t =
     ] )
 ;;
 
-let example4 d1 n t =
+let example4 d1 d2 n t =
   ( [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 1 } ]
-  , [ RTdelay { out = "b"; arg = "e"; delay = d1, d1 }
+  , [ RTdelay { out = "b"; arg = "a"; delay = d1 }
     ; Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" }
+    ; RTdelay { out = "e"; arg = "d"; delay = d2 }
     ]
   , [ FirstSampled { out = "fb"; arg = "b"; base = "base" }
     ; Precedence { cause = "fa"; effect = "fb" }
@@ -42,6 +43,21 @@ let example4 d1 n t =
     ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
     ; Precedence { cause = "e"; effect = "fad" }
     ] )
+;;
+
+let test_example d1 d2 n t =
+  ( []
+  , [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 1 }
+    ; RTdelay { out = "b"; arg = "a"; delay = d1 }
+    ; Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" }
+    ; RTdelay { out = "e"; arg = "d"; delay = d2 }
+    ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
+    ; Precedence { cause = "fa"; effect = "fb" }
+    ; Subclocking { sub = "fa"; super = "a" }
+    ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
+    ; Precedence { cause = "e"; effect = "fad" }
+    ]
+  , [] )
 ;;
 
 let example5 =
@@ -77,26 +93,11 @@ module S =
 
 module I = Induction.Make (String) (Number.Integer) (S)
 
-type target =
-  | Over
-  | Exact
-  | Under
-
-let to_alcotest (name, t, (a, s, p), expected) =
+let to_alcotest (name, module_triple, expected) =
   let test () =
-    let to_formulae =
-      let f =
-        match t with
-        | Over -> I.over_rel_priority_exact
-        | Under -> I.under_rel_priority_exact
-        | Exact -> I.exact_rel
-      in
-      List.map f
-    in
-    let ccsl_module = Tuple.map3 to_formulae (a, s, p) in
-    let solution = I.Module.solve ccsl_module in
-    let result = I.Module.is_sat solution in
-    if not result then I.Module.print_problems solution;
+    let solution = I.Module.solve module_triple in
+    let result = I.Module.is_correct solution in
+    if not result then I.Module.print solution;
     Alcotest.(check bool) "same result" expected result
   in
   Alcotest.(test_case name `Quick) test
@@ -108,15 +109,17 @@ let tests = []
 let _ =
   Alcotest.run
     "Inductive proofs"
-    [ "example1", cases [ "+d1=1,d2=2", Exact, example1 (1, 1) (2, 2), true ]
-    ; "example2", cases [ "+v", Under, example2, true; "+^", Over, example2, true ]
+    [ "trivial", cases [ "", trivial, true ]
+    ; "test", cases [ "", test_example (2, 2) (3, 3) 2 300, true ]
+    ; "example1", cases [ "+d1=1,d2=2", example1 (1, 1) (2, 2), true ]
+    ; "example2", cases [ "+v", example2, true; "+^", example2, true ]
     ; ( "example3"
       , cases
-          [ "+d1=[1,2],d2=[2,3],t=[3,3]", Exact, example3 (1, 2) (2, 3) (3, 3), true
-          ; "-d1=[1,2],d2=[2,3],t=[2,2]", Exact, example3 (1, 2) (2, 3) (2, 2), false
+          [ "+d1=[1,2],d2=[2,3],t=[3,3]", example3 (1, 2) (2, 3) (3, 3), true
+          ; "-d1=[1,2],d2=[2,3],t=[2,2]", example3 (1, 2) (2, 3) (2, 2), false
           ] )
-    ; "example4", cases [ "", Under, example4 2 2 152, true ]
-    ; "example5", cases [ "", Exact, example5, true ]
-    ; "example6", cases [ "", Under, example6 2, true ]
+    ; "example4", cases [ "", example4 (2, 2) (3, 3) 2 300, true ]
+    ; "example5", cases [ "", example5, true ]
+    ; "example6", cases [ "", example6 2, true ]
     ]
 ;;
