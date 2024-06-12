@@ -1,6 +1,8 @@
 (** Function composition, [f << g] if the same as f(g(x)).*)
 let ( << ) f g x = f (g x)
 
+let ( >> ) g f x = f (g x)
+let ( >== ) = Option.bind
 let ( let* ) = Option.bind
 
 let ( and* ) x y =
@@ -117,6 +119,43 @@ module List = struct
   let any = List.exists Fun.id
   let all = List.for_all Fun.id
   let flat l = filter_map Fun.id l
+
+  let minmax compare l =
+    let rec aux (gmin, gmax) = function
+      | [] -> gmin, gmax
+      | x :: tail ->
+        let gmin = if compare x gmin < 0 then x else gmin
+        and gmax = if compare x gmax > 0 then x else gmax in
+        aux (gmin, gmax) tail
+    in
+    match l with
+    | [] -> invalid_arg "List.min: list is empty"
+    | x :: tail -> aux (x, x) tail
+  ;;
+
+  let find_opt_partition p l =
+    let rec aux unsats = function
+      | [] -> None, unsats
+      | x :: tail ->
+        if p x then Some x, List.rev_append unsats tail else aux (x :: unsats) tail
+    in
+    aux [] l
+  ;;
+
+  let print pp l =
+    iter pp l;
+    print_newline ()
+  ;;
+
+  let argmax_opt compare = function
+    | [] -> None
+    | x :: tail ->
+      let rec argmax j i x = function
+        | [] -> i
+        | y :: tail -> if compare y x > 0 then argmax (j + 1) j y tail else argmax (j+1) i x tail
+      in
+      Some (argmax 1 0 x tail)
+  ;;
 end
 
 module String = struct
@@ -235,9 +274,10 @@ module Seq = struct
 
   let int_seq n = take n (ints 0)
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
-  let int_seq_inclusive (starts, ends) = take (ends - starts + 1) (ints starts)
+  let int_seq_inclusive (starts, ends) = assert (ends >= starts); take (ends - starts + 1) (ints starts)
   let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
   let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
+  let return2 x y = cons x (return y)
 end
 
 module Tuple = struct
@@ -255,6 +295,7 @@ module Tuple = struct
   let list2 (x, y) = [ x; y ]
   let list3 (x, y, z) = [ x; y; z ]
   let list4 (x, y, z, w) = [ x; y; z; w ]
+  let to_string2 f (x, y) = Printf.sprintf "(%s, %s)" (f x) (f y)
 end
 
 module Hashtbl = struct

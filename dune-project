@@ -33,6 +33,7 @@
   uutf
   ppx_assert
   ppx_inline_test
+  ppx_compare
   mlgmpidl
   vpl-core
   (odoc :with-doc)

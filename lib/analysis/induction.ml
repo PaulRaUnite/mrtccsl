@@ -33,6 +33,7 @@ module Solver = struct
     val sat : t -> bool
     val ( && ) : t -> t -> t
     val ( <= ) : t -> t -> bool
+    val set_debug : bool -> unit
 
     include Interface.Stringable with type t := t
   end
@@ -138,10 +139,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         |> List.of_seq
       in
       And pairwise_exclusions
-    | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
-      (*FIXME: a test is not passing because of first sampled*)
-      let _ = arg in
-      base.@[i - 1] < out.@[i] && out.@[i] <= base.@[i]
     | _ -> raise (OverApproximationUnavailable c)
   ;;
 
@@ -150,8 +147,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     try over_rel c with
     | OverApproximationUnavailable _ ->
       let clocks = Rtccsl.clocks c in
-      And (List.map (fun c -> Syntax.(Const N.zero < c.@[0])) clocks)
+      And (List.map (fun c -> Syntax.(c.@[-1] < c.@[0])) clocks)
   ;;
+
+  let over_rel_priority_exact_spec = List.map (BoolExpr.norm << over_rel_priority_exact)
 
   let over_rel_priority_over c =
     try over_rel c with
@@ -190,12 +189,13 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | Sample { out; arg; base } ->
       base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
     | Delay { out; arg; delay = d1, d2; base = Some base } when d1 = d2 ->
-      out.@[i] == base.@[i] && base.@[i - 1 - d1] < arg.@[i] && arg.@[i] <= base.@[i - d1]
+      out.@[i - d1] == base.@[i]
+      && base.@[i - 1 - d1] < arg.@[i - d1]
+      && arg.@[i - d1] <= base.@[i - d1]
     | AbsPeriodic { out; period; error; offset }
     | CumulPeriodic { out; period; error; offset } ->
       exact_rel (AbsPeriodic { out; period; error; offset })
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
-      let _ = arg in
       base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
     | Forbid { from; until; args } ->
       And
@@ -222,12 +222,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   ;;
 
   let safe_exact_rel_spec spec =
-    try Some (List.map exact_rel spec) with
+    try Some (List.map (BoolExpr.norm << exact_rel) spec) with
     | ExactRelationUnavailable _ -> None
   ;;
 
   let safe_under_rel_priority_exact_spec spec =
-    try Some (List.map under_rel_priority_exact spec) with
+    try Some (List.map (BoolExpr.norm << under_rel_priority_exact) spec) with
     | ExactRelationUnavailable _ | OverApproximationUnavailable _ -> None
   ;;
 
@@ -242,43 +242,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       ;;
     end)
 
-  (**Intersects all [formulae] with logical clocks related to their past.*)
-  let inductive_step formulae =
-    let unique_num_vars =
-      formulae
-      |> List.to_seq
-      |> Seq.flat_map (fun f -> f |> BoolExpr.vars_except_i |> List.to_seq)
-      |> SetCI.of_seq
-      |> SetCI.elements
-    in
-    let connections_to_past = List.map (Tuple.fn2 lc_connection) unique_num_vars in
-    And (And (List.map BoolExpr.use_more_cond formulae) :: connections_to_past)
+  let rec connect_indices c = function
+    | [] | _ :: [] -> []
+    | x :: y :: tail ->
+      Denotational.Syntax.(c.@[x] < c.@[y]) :: connect_indices c (y :: tail)
   ;;
 
-  module MapOCMM = Map.Make (struct
-      type t = C.t option
-
-      let compare = Option.compare C.compare
-    end)
-
-  let clock_index_ranges formula =
-    let rule c i acc =
-      let l, r = MapOCMM.find_opt c acc |> Option.value ~default:(i, i) in
-      MapOCMM.add c Int.(min i l, max i r) acc
-    in
-    BoolExpr.fold rule MapOCMM.empty formula
+  let connect_clocks (c, indices) =
+    let min, max = List.minmax Int.compare indices in
+    let indices = Seq.int_seq_inclusive (min, max) |> List.of_seq in
+    List.to_seq (connect_indices c indices)
   ;;
-
-  let ranges_union r =
-    let reduce _ (lmin, lmax) = function
-      | Some (gmin, gmax) -> Some (Int.min lmin gmin, Int.max lmax gmax)
-      | None -> Some (lmin, lmax)
-    in
-    MapOCMM.fold reduce r None |> Option.get
-  ;;
-
-  (** Construsts inductive precondition from postcondition [post].*)
-  let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
 
   module SetOCI = Set.Make (struct
       type t = C.t option * int
@@ -289,73 +263,342 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       ;;
     end)
 
+  let logical_clocks_from_vars present_vars =
+    SetCI.fold
+      (fun (c, i) tbl ->
+        Hashtbl.entry tbl (fun list -> i :: list) c [];
+        tbl)
+      present_vars
+      (Hashtbl.create 32)
+  ;;
+
+  (**Intersects all [formulae] with logical clocks related to their past.*)
+  let inductive_step formula =
+    let formulae = [formula] in
+    let add_shift_by_one (c, i) = Seq.return2 (c, i - 1) (c, i) in
+    let unique_num_vars =
+      formulae
+      |> List.to_seq
+      |> Seq.flat_map (fun f -> f |> BoolExpr.vars_except_i |> List.to_seq)
+      |> Seq.flat_map add_shift_by_one
+      |> SetCI.of_seq
+    in
+    (*FIXME: instead of skipping logical clock idices, fill all*)
+    let connections_to_past =
+      unique_num_vars
+      |> logical_clocks_from_vars
+      |> Hashtbl.to_seq
+      |> Seq.flat_map connect_clocks
+      |> List.of_seq
+    in
+    And (And (List.map BoolExpr.use_more_cond formulae) :: connections_to_past)
+  ;;
+
+  module MapOC = Map.Make (struct
+      type t = C.t option
+
+      let compare = Option.compare C.compare
+    end)
+
+  let clock_index_ranges formula =
+    let rule c i acc =
+      let l, r = MapOC.find_opt c acc |> Option.value ~default:(i, i) in
+      MapOC.add c Int.(min i l, max i r) acc
+    in
+    BoolExpr.fold_vars rule MapOC.empty formula
+  ;;
+
+  let ranges_union r =
+    let reduce _ (lmin, lmax) = function
+      | Some (gmin, gmax) -> Some (Int.min lmin gmin, Int.max lmax gmax)
+      | None -> Some (lmin, lmax)
+    in
+    MapOC.fold reduce r None |> Option.get
+  ;;
+
+  (** Construsts inductive precondition from postcondition [post].*)
+  let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
+
+  module MapOCI = Map.Make (struct
+      type t = C.t option * int
+
+      let compare = Tuple.compare2 (Option.compare C.compare) Int.compare
+    end)
+
   (** Multiplies two formulae using fixpoint saturation.*)
   let mul l r =
+    (* Printf.printf "mul: l\n";
+       print_bool_exprs [ l ]; *)
     let livars = BoolExpr.indexed_vars l in
     let rivars = BoolExpr.indexed_vars r in
     let make_shift_table ivars =
       List.fold_left
         (fun tbl (c, i) ->
-          Hashtbl.entry tbl (fun prev -> Int.min prev i) c i;
+          Hashtbl.entry tbl (fun (gmin, gmax) -> Int.min gmin i, Int.max gmax i) c (i, i);
           tbl)
         (Hashtbl.create 16)
         ivars
     in
-    let shift_lvars = make_shift_table livars in
     let shift_rvars = make_shift_table rivars in
-    let saturate_one f shift_vars to_visit =
-      let formulae, visited =
+    (*Return saturation?*)
+    (*FIXME: problem seems to be in not replicating self-referencing stateful constraints, also maybe do saturation on all constraints at once?*)
+    let shifting f shift_vars to_visit =
+      (* Printf.printf "shifting:\n";
+         print_bool_exprs [ f ]; *)
+      let formulae =
         to_visit
-        |> SetOCI.to_seq
-        |> Seq.filter_map (fun (c, i) ->
-          let* offset_in_f = Hashtbl.find_opt shift_vars c in
-          let offset = i - offset_in_f in
-          if offset <= 0
-          then (
-            let shifted = BoolExpr.shift_by f offset in
-            Some (shifted, (c, i)))
-          else None)
+        |> MapOCI.to_seq
+        |> Seq.filter_map (fun ((c, i), _) ->
+          (* Printf.printf "adds rs (%b, %b):\n" left right; *)
+          let* _, max_offset = Hashtbl.find_opt shift_vars c in
+          let offset = i - max_offset in
+          (* let _ =
+             Printf.printf
+             "c: %s; i: %i; in f: %i; offset: %i\n"
+             (Option.fold ~none:"i" ~some:C.to_string c)
+             i
+             max_offset
+             offset
+             in *)
+          let shifted = BoolExpr.shift_by f offset in
+          Some shifted)
         |> List.of_seq
-        |> List.split
       in
-      formulae, SetOCI.of_list visited
+      formulae
     in
-    let saturation_step (prev, visited_by_l, visited_by_r) =
-      let new_ls, new_lvisits =
-        saturate_one l shift_lvars (SetOCI.diff visited_by_r visited_by_l)
+    let plan_to_visit to_cover visited =
+      let minmax_rule acc (c, i) =
+        let l, r = MapOC.find_opt c acc |> Option.value ~default:(i, i) in
+        MapOC.add c Int.(min i l, max i r) acc
       in
-      let new_rs, new_rvisits =
-        saturate_one r shift_rvars (SetOCI.diff visited_by_l visited_by_r)
+      let to_visit =
+        to_cover
+        |> SetOCI.to_seq
+        |> Seq.fold_left minmax_rule MapOC.empty
+        |> MapOC.to_seq
+        |> Seq.flat_map (fun (c, (min, max)) ->
+          Seq.int_seq_inclusive (min, max)
+          |> Seq.map (fun i -> (c, i), (i = min, i = max)))
+        |> Seq.filter (fun ((c, i), _) -> not (SetOCI.mem (c, i) visited))
+        |> MapOCI.of_seq
       in
-      ( And (And (prev :: new_ls) :: new_rs)
-      , SetOCI.union visited_by_l new_lvisits
-      , SetOCI.union visited_by_r new_rvisits )
+      (* let _ = Printf.printf "to_cover: " in
+         let _ =
+         List.print
+         (fun (c, i) ->
+         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
+         (SetOCI.elements to_cover)
+         in
+         let _ = Printf.printf "visited: " in
+         let _ =
+         List.print
+         (fun (c, i) ->
+         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
+         (SetOCI.elements visited)
+         in
+         let _ = Printf.printf "to_visit: " in
+         let _ =
+         List.print
+         (fun (c, i) ->
+         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
+         (SetOCI.elements to_visit)
+         in *)
+      to_visit
     in
-    let f, _, _ =
-      fixpoint
-        (fun () -> And [ l; r ], SetOCI.of_list livars, SetOCI.of_list rivars)
-        (fun (_, a, b) (_, c, d) -> SetOCI.equal a c && SetOCI.equal b d)
-        saturation_step
-        ()
+    let visited_by_l = SetOCI.of_list livars in
+    let new_rs = shifting r shift_rvars (plan_to_visit visited_by_l SetOCI.empty) in
+    And (l :: new_rs)
+  ;;
+
+  module OptVarSet = Set.Make (struct
+      type t = C.t option
+
+      let compare = Option.compare C.compare
+    end)
+
+  let components_by_vars formulae =
+    let formulae_with_vars =
+      List.map (fun f -> [ f ], OptVarSet.of_list (BoolExpr.vars f)) formulae
     in
-    f
+    let rec add_to_components components (fs, vars) =
+      match components with
+      | [] -> [ fs, vars ]
+      | (fs', vars') :: tail ->
+        if OptVarSet.disjoint vars vars'
+        then (fs', vars') :: add_to_components tail (fs, vars)
+        else add_to_components tail (fs @ fs', OptVarSet.union vars vars')
+    in
+    let components = List.fold_left add_to_components [] formulae_with_vars in
+    List.map (fun (l, _) -> l) components
+  ;;
+
+  (*TODO: write new multiplication that
+    - selects the biggest formula first
+    - iterates through all formulae at once
+    - try using cover ranges, i.e. when new variable appear, the formula is shifted to cover the new variable, not replicates at the place of the variable*)
+
+  type cover =
+    | Initial of (int * int)
+    | Update of
+        { left : (int * int) option
+        ; right : (int * int) option
+        }
+
+  let range_saturate formulae =
+    match List.length formulae with
+    | 0 -> invalid_arg "range_saturate: cannot saturate zero formulae"
+    | 1 -> formulae
+    | _ ->
+      let setup formulae =
+        let first =
+          formulae
+          |> List.map (fun f ->
+            let min, max = ranges_union (clock_index_ranges f) in
+            max - min)
+          |> List.argmax_opt Int.compare
+          |> Option.get
+        in
+        ( [ List.nth formulae first ]
+        , formulae
+          |> Array.of_list
+          |> Array.mapi (fun i f ->
+            let coverage = clock_index_ranges f in
+            if i = first then f, coverage, coverage else f, coverage, MapOC.empty) )
+      in
+      (* let compare_formulae = List.compare (compare_bool_expr C.compare N.compare) in *)
+      let equal (before, _) (after, _) = List.length before = List.length after in
+      let step (product, ranges) =
+        let _ = Printf.printf "product:\n" in
+        let _ = print_bool_exprs product in
+        let product_covered = clock_index_ranges (And product) in
+        let cover_with (f, coverage, covered) =
+          let to_consider =
+            MapOC.merge
+              (fun _key g l ->
+                let update (a, b) (c, d) =
+                  let left = if a < c then Some (a, c - 1) else None in
+                  let right = if d > b then Some (b + 1, d) else None in
+                  if Option.is_none left && Option.is_none right
+                  then None
+                  else Some (Update { left; right })
+                in
+                match g, l with
+                | Some g, Some l -> update g l
+                | Some g, None -> Some (Initial g)
+                | None, Some _ ->
+                  failwith
+                    "range saturate, map merge: shouldn't be possible to cover locally \
+                     but not globally"
+                | None, None -> None)
+              product_covered
+              covered
+          in
+          let _ =
+            Printf.printf "considering: ";
+            print_bool_exprs [ f ]
+          in
+          let new_formulae =
+            to_consider
+            |> MapOC.to_seq
+            |> Seq.filter_map (fun (v, cover) ->
+              let* min, max = MapOC.find_opt v coverage in
+              let tuple_str =
+                Option.fold ~none:"" ~some:(Tuple.to_string2 Int.to_string)
+              in
+              let var_str = Option.fold ~none:"i" ~some:C.to_string in
+              let diam = max - min in
+              let to_cover =
+                match cover with
+                | Initial ((a, b) as range) ->
+                  let _ =
+                    Printf.printf
+                      "adding: %s initial=%s\n"
+                      (var_str v)
+                      (Tuple.to_string2 Int.to_string range)
+                  in
+                  Seq.int_seq_inclusive (a + diam, b)
+                | Update { left; right } ->
+                  let _ =
+                    Printf.printf
+                      "adding: %s l=%s r=%s\n"
+                      (var_str v)
+                      (tuple_str left)
+                      (tuple_str right)
+                  in
+                  let from_left =
+                    match left with
+                    | Some (a, b) -> Seq.int_seq_inclusive (a + diam, b + diam)
+                    | None -> Seq.empty
+                  in
+                  let from_right =
+                    match right with
+                    | Some (c, d) -> Seq.int_seq_inclusive (c, d)
+                    | None -> Seq.empty
+                  in
+                  Seq.append from_left from_right
+              in
+              Some (Seq.map (fun i -> BoolExpr.shift_by f i) to_cover))
+            |> Seq.concat
+            |> List.of_seq
+          in
+          let update_ranges = clock_index_ranges (And new_formulae) in
+          let new_ranges =
+            MapOC.union
+              (fun _ (a, b) (c, d) -> Some (Int.min a c, Int.max b d))
+              covered
+              update_ranges
+          in
+          new_formulae, new_ranges
+        in
+        let new_formulae, new_ranges = ranges |> Array.map cover_with |> Array.split in
+        ( Seq.append
+            (List.to_seq product)
+            (new_formulae |> Array.to_seq |> Seq.map List.to_seq |> Seq.concat)
+          |> List.of_seq
+        , Array.combine ranges new_ranges
+          |> Array.map (fun ((f, cov, _), range) -> f, cov, range) )
+      in
+      let product, _ = fixpoint setup equal step formulae in
+      product
+  ;;
+
+  let product formulae =
+    let components = components_by_vars formulae in
+    And (List.concat_map range_saturate components)
   ;;
 
   (** Forms a formula hull from stateful (past-referencing) formulae, returns the hull and all statelss formulae.*)
   let stateful_hull formulae =
-    let stateful, stateless = List.partition BoolExpr.is_stateful formulae in
-    let product =
-      match stateful with
-      | [] -> And []
-      | x :: [] -> x
-      | f :: tail -> List.fold_left mul f tail
+    let stateful, stateless = formulae, [] in
+    let vars_of f = f |> BoolExpr.vars |> OptVarSet.of_list in
+    let rec topological_mul variants (next, next_vars) =
+      let variant, others =
+        List.find_opt_partition
+          (fun (_, vars) -> not (OptVarSet.disjoint vars next_vars))
+          variants
+      in
+      let variants =
+        match variant with
+        | Some (f, vars) ->
+          let product = mul f next in
+          topological_mul others (product, OptVarSet.union vars next_vars)
+        | None -> (next, next_vars) :: others
+      in
+      variants
     in
-    product, stateless
+    let stateful = List.map (fun f -> f, vars_of f) stateful in
+    let parallel_products =
+      match stateful with
+      | [] -> []
+      | x :: [] -> [ x ]
+      | x :: tail -> List.fold_left topological_mul [ x ] tail
+    in
+    And (parallel_products |> List.map (fun (f, _) -> f)), stateless
   ;;
 
   (** Returns minimal precondition to inductive step from the given [formulae].*)
-  let postcondition formulae =
-    let hull, stateless = stateful_hull formulae in
+  let postcondition hull =
+    let stateless = [] in
     let hull_vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
     let stateless_vars =
       stateless
@@ -386,35 +629,30 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       |> Seq.filter_map shift_if_present
       |> List.of_seq
     in
-    let logical_clocks =
-      SetOCI.fold
-        (fun (c, i) tbl ->
-          match c with
-          | Some c ->
-            Hashtbl.entry tbl (fun list -> i :: list) c [];
-            tbl
-          | None -> tbl)
-        present_vars
-        (Hashtbl.create 32)
-    in
-    let rec connect_indices c = function
-      | [] | _ :: [] -> []
-      | x :: y :: tail ->
-        Denotational.Syntax.(c.@[x] < c.@[y]) :: connect_indices c (y :: tail)
-    in
-    let connect_clocks (c, indices) =
-      let indices = List.fast_sort Int.compare indices in
-      List.to_seq (connect_indices c indices)
+    let setoci2setci set =
+      set
+      |> SetOCI.to_seq
+      |> Seq.filter_map (fun (c, i) ->
+        let* c = c in
+        Some (c, i))
+      |> SetCI.of_seq
     in
     (*adds c[i]<c[j] relation for clocks; i < j*)
     let logical_filling =
-      logical_clocks |> Hashtbl.to_seq |> Seq.flat_map connect_clocks |> List.of_seq
+      present_vars
+      |> setoci2setci
+      |> logical_clocks_from_vars
+      |> Hashtbl.to_seq
+      |> Seq.flat_map connect_clocks
+      |> List.of_seq
     in
     BoolExpr.use_more_cond (And (And (hull :: constraint_filling) :: logical_filling))
   ;;
 
   (** Returns basic condition for a logical clock: [0 < c[1]]*)
   let lc_init c = Denotational.Syntax.(Const N.zero < c.@[1])
+
+  (*TODO: use precondition in the building of the initial condition, hopefully will fix example4*)
 
   (** Returns initial condition for the [formulae] of the given [width].*)
   let init_cond width formulae =
@@ -448,28 +686,71 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
     in
     let clock_starts = List.map lc_init vars in
+    let clock_ranges = clock_index_ranges (And shifted_formulae) in
     let clock_connections =
-      Seq.product (List.to_seq vars) (Seq.int_seq_inclusive (2, width))
-      (*skip zero and first because they are handled before*)
+      clock_ranges
+      |> MapOC.to_seq
+      |> Seq.flat_map (fun (v, (min, max)) ->
+        let diam = max - min in
+        if diam < 2
+        then Seq.empty
+        else (
+          match v with
+          | Some c -> Seq.int_seq_inclusive (2, diam) |> Seq.map (fun i -> c, i)
+          | None -> Seq.empty))
+      (*skip zero and first because they are handled by clock_starts.*)
       |> Seq.map (fun (c, i) -> lc_connection c i)
       |> List.of_seq
     in
     And (And (And shifted_formulae :: clock_connections) :: clock_starts)
   ;;
 
+  let product_init product =
+    let norm_reduce_nonzero index f =
+      let f = NumExpr.norm_rule f in
+      let* f = NumExpr.reduce_zerocond_rule index f in
+      Some (NumExpr.norm_rule f)
+    in
+    let index_to_reduce = 0 in
+    let elimination_of_texp_only rule =
+      BoolExpr.eliminate (NumExpr.eliminate rule) Option.some
+    in
+    let use_init_and_simplify =
+      elimination_of_texp_only (norm_reduce_nonzero index_to_reduce)
+    in
+    let remove_sub_zero_refs =
+      elimination_of_texp_only (NumExpr.reduce_negative_rule index_to_reduce)
+    in
+    let min, max = ranges_union (clock_index_ranges product) in
+    let diameter = max - min in
+    let shifted_formulae =
+      Seq.int_seq_inclusive (1, diameter + 1)
+      (*skip zero because clocks start at 1*)
+      |> Seq.filter_map (fun i ->
+        let f = BoolExpr.shift_by product i in
+        (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
+        let* f = use_init_and_simplify f in
+        (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
+        remove_sub_zero_refs f)
+      |> List.of_seq
+    in
+    let vars = product |> BoolExpr.vars |> List.flat |> List.sort_uniq C.compare in
+    let clock_starts = List.map lc_init vars in
+    And (And shifted_formulae :: clock_starts)
+  ;;
+
   let existence_proof formulae =
-    let post = postcondition formulae in
-    let cond = inductive_step formulae in
+    let product = product formulae in
+    let post = postcondition product in
+    let cond = inductive_step post in
     let pre = precondition post in
-    let min_index, _ = ranges_union (clock_index_ranges post) in
-    let width = -min_index + 1 in
-    let init = init_cond width formulae in
+    let init = product_init product in
     let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
-    let _ = Printf.printf "existence proof:\n" in
-    let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
-    let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
-    let _ = Printf.printf "step: %s\n" (string_of_bool_expr cond) in
-    let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
+    (* let _ = Printf.printf "existence proof:\n" in
+       let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
+       let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
+       let _ = Printf.printf "step: %s\n" (string_of_bool_expr cond) in
+       let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in *)
     init, pre, cond, post
   ;;
 
@@ -520,17 +801,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       | StepIsLast of int * int
 
     let report { init; vertices; edges; _ } =
-      let _ =
-        Hashtbl.iter
-          (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
-          vertices
-      in
-      let _ =
-        Hashtbl.iter
-          (fun (f, t) sat ->
-            Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
-          edges
-      in
+      (* let _ =
+         Hashtbl.iter
+         (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
+         vertices
+         in
+         let _ =
+         Hashtbl.iter
+         (fun (f, t) sat ->
+         Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
+         edges
+         in *)
       let len = Array.length init in
       let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
       let mark_cyclic v = Hashtbl.replace in_cycle v true in
@@ -598,7 +879,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     open Graph
 
     let bulk_existence_proof formulae =
-      List.map BoolExpr.fact_disj formulae
+      formulae
+      |> List.map BoolExpr.fact_disj
+      |> List.map (List.map BoolExpr.norm)
       |> List.general_cartesian
       |> List.map existence_proof
       |> List.split4
@@ -714,6 +997,31 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           ; under : solution option
           }
 
+    let print_solution_graph = function
+      | Trivial -> ()
+      | Proof (g, _) ->
+        let print =
+          Array.iteri (fun i d -> Printf.printf "%i:\n%s\n" i (S.to_string d))
+        in
+        Printf.printf "Inits:\n";
+        print g.init;
+        Printf.printf "Pres:\n";
+        print g.pre;
+        Printf.printf "Inds:\n";
+        print g.ind;
+        Printf.printf "Posts:\n";
+        print g.post
+    ;;
+
+    let print_report_graph = function
+      | Exact sol -> print_solution_graph sol
+      | Approximation { over; under } ->
+        Printf.printf "OVERAPPROXIMATION:\n";
+        print_solution_graph over;
+        Printf.printf "UNDERAPPROXIMATION:\n";
+        Option.iter print_solution_graph under
+    ;;
+
     let solution_is_correct = function
       | Trivial -> true
       | Proof (_, problems) -> List.is_empty problems
@@ -735,7 +1043,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       match exact_formulae with
       | Some formulae -> Exact (solve_expr formulae)
       | None ->
-        let over_formulae = List.map over_rel_priority_exact spec in
+        let over_formulae = over_rel_priority_exact_spec spec in
         let over = solve_expr over_formulae in
         let under_formulae = safe_under_rel_priority_exact_spec spec in
         let under = Option.map solve_expr under_formulae in
@@ -749,8 +1057,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let str_pre i = S.to_string (pre i) in
       let str_ind i = S.to_string (ind i) in
       let str_post i = S.to_string (post i) in
+      S.set_debug true;
       let print = function
-        | NoSolutions -> Printf.printf "No solutions, all inits are empty\n"
+        | NoSolutions -> Printf.printf "No infinite cycles.\n"
         | InitIsLast i -> Printf.printf "Precondition is empty: %s\n" (str_pre i)
         | PreIsLast i ->
           Array.iteri
@@ -758,30 +1067,30 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               if S.sat dom
               then
                 Printf.printf
-                  "Non-empty unreachable step:\n\
+                  "Non-empty unreachable step %i:\n\
                    Infinite in index: %b\n\
+                   Strictily expands precondition: %b\n\
                    Pre %i:\n\
                    %s\n\
                    Ind %i:\n\
                    %s\n\
                    Both:\n\
-                   %s\n\
-                   Diff:\n\
                    %s\n"
+                  j
                   (S.infinite_in S.index_name dom)
+                  S.(more_precise (pre i) (pre i && ind j))
                   i
                   (str_pre i)
                   j
                   (str_ind j)
                   S.(to_string (pre i && ind j))
-                  ""
               else Printf.printf "Empty step: %i %i\n" i j)
             g.ind
         | StepIsLast (i, j) ->
           Array.iteri
             (fun k dom ->
               if S.sat dom
-              then
+              then (
                 Printf.printf
                   "Non-empty unreachable post: %i %i % i\n\
                    pre:\n\
@@ -790,20 +1099,25 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                    %s\n\
                    post:\n\
                    %s\n\
-                   %b"
+                   <= is %b\n\
+                   diff:\n"
                   i
                   j
                   k
                   (str_pre i)
                   (str_ind j)
                   (str_post k)
-                  S.((pre i && ind j) <= post k)
+                  S.((pre i && ind j) <= post k);
+                List.iter
+                  (print_endline << S.to_string)
+                  S.(diff (pre i && ind j) (post k)))
               else Printf.printf "Empty post: %i\n" k)
             g.post
       in
       if List.is_empty problems
       then Printf.printf "No problems\n"
-      else List.iter print problems
+      else List.iter print problems;
+      S.set_debug false
     ;;
 
     let print_solution = function
@@ -814,24 +1128,22 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let print = function
       | Exact solution -> print_solution solution
       | Approximation { over; under } ->
+        Printf.printf "OVERAPPROXIMATION:\n";
         print_solution over;
-        Option.iter print_solution under
+        Printf.printf "UNDERAPPROXIMATION:\n";
+        (match under with
+         | Some under -> print_solution under
+         | None -> Printf.printf "Doesn't exist.")
     ;;
   end
 
   module Simulation = struct
     open Graph
 
-    module OptVarSet = Set.Make (struct
-        type t = C.t option
-
-        let compare = Option.compare C.compare
-      end)
-
     module ExprSet = Set.Make (struct
         type t = (C.t, N.t) bool_expr
 
-        let compare = compare
+        let compare = Denotational.compare_bool_expr C.compare N.compare
       end)
 
     let remove_by_var_rule vars = function
@@ -843,11 +1155,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let eliminate_by_clocks vars formula =
       BoolExpr.eliminate (remove_by_var_rule vars) Option.some formula
       |> Option.value ~default:(And [])
-    ;;
-
-    let rec flatten_formula = function
-      | Or list | And list -> List.flat_map flatten_formula list
-      | Linear _ as e -> [ e ]
     ;;
 
     let remove_by_match_rule constraints f =
@@ -869,33 +1176,150 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       BoolExpr.use_more_cond f :: Option.to_list (BoolExpr.eliminate_zerocond 0 f)
     ;;
 
+    let remove_sticking_connectors f =
+      let* core =
+        BoolExpr.eliminate
+          Option.some
+          (function
+            | Linear (TagVar (c1, i), Less, TagVar (c2, j))
+              when C.compare c1 c2 = 0 && i = j - 1 -> None
+            | e -> Some e)
+          f
+      in
+      let ranges = clock_index_ranges core in
+      BoolExpr.eliminate
+        (function
+          | TagVar (c, i) as e ->
+            let min, max = MapOC.find (Some c) ranges in
+            if min <= i && i <= max then Some e else None
+          | e -> Some e)
+        Option.some
+        f
+    ;;
+
+    module SubstituteMap = Map.Make (C)
+
+    let rec equalities acc = function
+      | Linear (TagVar (l, i), Eq, TagVar (r, j)) -> ((l, i), (r, j)) :: acc
+      | Linear _ -> acc
+      | And list | Or list -> List.fold_left equalities acc list
+    ;;
+
+    module VarSet = Set.Make (C)
+
+    let equalities_to_substitution eqs except =
+      List.fold_left
+        (fun map ((l, i), (r, j)) ->
+          let maybe_add (l, i) (r, j) map =
+            if not (VarSet.mem l except) then SubstituteMap.add l (r, j - i) map else map
+          in
+          let map = maybe_add (l, i) (r, j) map in
+          maybe_add (r, j) (l, i) map)
+        SubstituteMap.empty
+        eqs
+    ;;
+
+    let substitute map f =
+      BoolExpr.rewrite
+        (function
+          | TagVar (c, i) as e ->
+            SubstituteMap.find_opt c map
+            |> Option.map (fun (sub, j) -> TagVar (sub, i + j))
+            |> Option.value ~default:e
+          | e -> e)
+        Fun.id
+        f
+    ;;
+
+    (*FIXME: need to be equality agnostic, constraints are removed even though they shouldn't be. *)
+
     (** [remove_difference] returns proof obligations without constraints that are in [p] but not in [s]*)
     let remove_difference parts s p =
+      let init, pre, _, _ = parts in
+      let _ =
+        Printf.printf "original property:\n";
+        print_bool_exprs p;
+        Printf.printf "original init:\n";
+        print_bool_exprs [ init.(0) ];
+        Printf.printf "original precondition:\n";
+        print_bool_exprs [ pre.(0) ]
+      in
+      (* When property introduces equalities, we may remove more than we should. For this we need to renormalize with these new equalities. *)
+      let property_equalities = List.fold_left equalities [] p in
+      let struct_vars =
+        List.fold_left
+          (BoolExpr.fold_vars (fun c _ set ->
+             match c with
+             | Some c -> VarSet.add c set
+             | None -> set))
+          VarSet.empty
+          s
+      in
+      let substition = equalities_to_substitution property_equalities struct_vars in
+      let parts = Tuple.map4 (Array.map (substitute substition)) parts in
+      let p = List.map (substitute substition) p in
+      let _ =
+        let init, pre, _, _ = parts in
+        Printf.printf "equalized property:\n";
+        print_bool_exprs p;
+        Printf.printf "equalized init:\n";
+        print_bool_exprs [ init.(0) ];
+        Printf.printf "equalized precondition:\n";
+        print_bool_exprs [ pre.(0) ]
+      in
       let constraint_set formulae =
         formulae
         |> List.to_seq
         |> Seq.flat_map (List.to_seq << BoolExpr.fact_disj)
         |> Seq.flat_map (List.to_seq << enum_specialized)
-        |> Seq.flat_map (List.to_seq << flatten_formula << BoolExpr.norm)
+        |> Seq.flat_map (List.to_seq << BoolExpr.flatten << BoolExpr.norm)
+        |> Seq.map (fun f ->
+          match BoolExpr.max_opt f with
+          | Some max -> BoolExpr.shift_by f (-max)
+          | None -> f)
         |> ExprSet.of_seq
       in
-      let struct_set = constraint_set s in
-      let property_set = constraint_set p in
-      let diff_constraints = ExprSet.diff property_set struct_set in
-      let minus_p_constraints = remove_matching diff_constraints in
+      let struct_exprs = constraint_set s in
+      let property_exprs = constraint_set p in
+      let diff_constraints = ExprSet.diff property_exprs struct_exprs in
+      let _ = Printf.printf "diff_constraints: " in
+      let _ = print_bool_exprs (ExprSet.elements diff_constraints) in
+      let _ = Printf.printf "struct_exprs: " in
+      let _ = print_bool_exprs (ExprSet.elements struct_exprs) in
+      let remove_diff_exprs = remove_matching diff_constraints in
       let var_families formulae =
         List.fold_right
           (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
           formulae
           OptVarSet.empty
       in
-      let struct_families = var_families s in
-      let property_families = var_families p in
-      let diff_families = OptVarSet.diff property_families struct_families in
-      let minus_p_clocks = eliminate_by_clocks diff_families in
-      Tuple.map4
-        (Array.map (minus_p_clocks << minus_p_constraints << BoolExpr.norm))
-        parts
+      let struct_vars = var_families s in
+      let property_vars = var_families p in
+      let diff_vars = OptVarSet.diff property_vars struct_vars in
+      let remove_diff_vars = eliminate_by_clocks diff_vars in
+      let general_remove = remove_diff_vars << remove_diff_exprs << BoolExpr.norm in
+      let init, pre, ind, post =
+        Tuple.map4
+          (Array.map (Option.get << remove_sticking_connectors << general_remove))
+          parts
+      in
+      let index_to_reduce = 0 in
+      let elimination_of_texp_only rule =
+        BoolExpr.eliminate (NumExpr.eliminate rule) Option.some
+      in
+      let remove_sub_zero_refs =
+        elimination_of_texp_only (NumExpr.reduce_negative_rule index_to_reduce)
+      in
+      let init = Array.map (fun f -> remove_sub_zero_refs f |> Option.get) init in
+      let pre = Array.map (Option.get << remove_sticking_connectors) pre in
+      let _ =
+        Printf.printf "removed init:\n";
+        print_bool_exprs [ init.(0) ];
+        Printf.printf "removed precondition:\n";
+        print_bool_exprs [ pre.(0) ]
+      in
+      let ind = Array.map (fun f -> inductive_step f) ind in
+      init, pre, ind, post
     ;;
 
     let simulate (s : S.t t) (sp : S.t t) =
@@ -934,8 +1358,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     ;;
 
     let solve_expr s p =
+      (*S /\ P*)
       let sp_parts = Existence.bulk_existence_proof (s @ p) in
       let sp_solution = Existence.solve_from_parts sp_parts in
+      (*(S /\ P) \ P*)
       let s_parts = remove_difference sp_parts s p in
       let s_solution = Existence.solve_from_parts s_parts in
       let simulation_relation = simulate s_solution sp_solution in
@@ -954,8 +1380,31 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         Existence.print_problems ab_sol ab_problems;
         Printf.printf "SIMULATION PROBLEMS:\n"
       in
+      let _ =
+        Hashtbl.iter
+          (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
+          sim_sol.vertices
+      in
+      let _ =
+        Hashtbl.iter
+          (fun (f, t) sat ->
+            Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
+          sim_sol.edges
+      in
       let print = function
-        | NoSolutions -> Printf.printf "No valid simulation at all\n"
+        | NoSolutions ->
+          Printf.printf "No valid simulation at all\n";
+          Array.iter
+            (fun (x, y) ->
+              let sat = S.more_precise x y in
+              if not sat
+              then
+                Printf.printf
+                  "Failed init:\nmore precise: %b\n%s\n%s\n"
+                  sat
+                  (S.to_string x)
+                  (S.to_string y))
+            sim_sol.init
         | InitIsLast i ->
           let f, t = Array.get sim_sol.init i in
           Printf.printf
@@ -963,11 +1412,31 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
             (S.to_string f)
             (S.to_string t)
         | PreIsLast i ->
-          Printf.printf "Precondition %i doesn't have valid simulated steps" i
+          Printf.printf
+            "Precondition %i is %s and doesn't have valid simulated steps\n"
+            i
+            (Tuple.to_string2 (Bool.to_string << S.sat) sim_sol.pre.(i));
+          Array.iteri
+            (fun j (l, r) ->
+              Printf.printf
+                "Unreachable step %i:\n\
+                 Strictily expands precondition: %b\n\
+                 L:\n\
+                 %s\n\
+                 R:\n\
+                 %s\n"
+                j
+                S.(more_precise l r)
+                (S.to_string l)
+                (S.to_string r))
+            sim_sol.ind
         | StepIsLast (i, j) ->
-          Printf.printf "Step %i %i doesn't lead to valid simulated postconditions" i j
+          Printf.printf "Step %i %i doesn't lead to valid simulated postconditions\n" i j
       in
-      List.iter print sim_problems
+      if List.is_empty sim_problems
+      then Printf.printf "No problems\n"
+      else List.iter print sim_problems;
+      S.set_debug false
     ;;
 
     type solution =
@@ -987,8 +1456,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           Proof ((a, a_p), (ab, ab_p), (sim, sim_p)))
       in
       let* a = safe_under_rel_priority_exact_spec a in
-      let* s = safe_under_rel_priority_exact_spec b in
-      Some (solve_expr a s)
+      let* b = safe_under_rel_priority_exact_spec b in
+      Some (solve_expr a b)
     ;;
 
     let solution_exists = function
@@ -1024,7 +1493,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     let solve (a, s, p) =
       { assumption = Existence.solve a
-      ; structure = Existence.solve s
+      ; structure = Existence.solve (a @ s)
       ; property = Existence.solve p
       ; assumption_in_structure = Assumption.solve a s
       ; structure_in_property = Property.solve (a @ s) p
@@ -1058,6 +1527,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         Existence.print assumption;
         Printf.printf "A+S:\n";
         Existence.print structure;
+        (let print = function
+           | Existence.Trivial -> ()
+           | Existence.Proof (g, _) -> Printf.printf "%s\n" (S.to_string g.post.(0))
+         in
+         match structure with
+         | Existence.Exact sol -> print sol
+         | Existence.Approximation { over; under } ->
+           print over;
+           Option.iter print under);
         Printf.printf "P:\n";
         Existence.print property;
         Printf.printf "A in (A and S):\n";

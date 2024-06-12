@@ -2,13 +2,14 @@ open Prelude
 open Sexplib0.Sexp_conv
 
 (*Cannot refactor further, because the implementations and definitions depend on each other which requires mutually recursive modules which are simply annoying.*)
+open Ppx_compare_lib.Builtin
 
 type num_op =
   | Add
   | Sub
   | Mul
   | Div
-[@@deriving sexp]
+[@@deriving sexp, compare]
 
 type ('c, 'n) num_expr =
   | TagVar of 'c * int
@@ -19,7 +20,7 @@ type ('c, 'n) num_expr =
   (** [ZeroCond] variant is needed because otherwise will collide with max in factoring out min/max*)
   | Min of ('c, 'n) num_expr * ('c, 'n) num_expr
   | Max of ('c, 'n) num_expr * ('c, 'n) num_expr
-[@@deriving sexp]
+[@@deriving sexp, compare]
 
 type num_rel =
   | Neq
@@ -28,13 +29,13 @@ type num_rel =
   | Less
   | MoreEq
   | LessEq
-[@@deriving sexp]
+[@@deriving sexp, compare]
 
 type ('c, 'n) bool_expr =
   | Or of ('c, 'n) bool_expr list
   | And of ('c, 'n) bool_expr list
   | Linear of ('c, 'n) num_expr * num_rel * ('c, 'n) num_expr
-[@@deriving sexp]
+[@@deriving sexp, compare]
 
 module Syntax = struct
   let ( .@[] ) c i = TagVar (c, i)
@@ -68,6 +69,7 @@ module NumExpr = struct
     | ZeroCond (more, _) -> fold f acc more
   ;;
 
+  (*TODO: add reduction in min/max to equal argument if one dissapears instead of removing everything? *)
   let rec eliminate f e =
     let elim = eliminate f in
     let* e =
@@ -186,8 +188,8 @@ end
 module BoolExpr = struct
   type ('c, 'n) t = ('c, 'n) bool_expr
 
-  let rec fold f acc = function
-    | Or list | And list -> List.fold_left (fold f) acc list
+  let rec fold_vars f acc = function
+    | Or list | And list -> List.fold_left (fold_vars f) acc list
     | Linear (left, _, right) ->
       let acc = NumExpr.fold f acc left in
       NumExpr.fold f acc right
@@ -292,8 +294,8 @@ module BoolExpr = struct
         And ((Linear (l, op, r) :: lcond) @ rcond))
   ;;
 
-  let vars f = fold (fun c _ acc -> c :: acc) [] f
-  let indexed_vars f = fold (fun c i acc -> (c, i) :: acc) [] f
+  let vars f = fold_vars (fun c _ acc -> c :: acc) [] f
+  let indexed_vars f = fold_vars (fun c i acc -> (c, i) :: acc) [] f
 
   let vars_except_i f =
     List.filter_map
@@ -308,7 +310,30 @@ module BoolExpr = struct
   ;;
 
   let shift_by f i = map_idx (fun _ j -> i + j) f
-  let is_stateful f = fold (fun _ i acc -> if i <> 0 then true else acc) false f
+  let is_stateful f = fold_vars (fun _ i acc -> if i <> 0 then true else acc) false f
+
+  let max_opt f =
+    fold_vars
+      (fun _ i -> function
+        | Some acc -> Some (Int.max acc i)
+        | None -> Some i)
+      None
+      f
+  ;;
+
+  let min_opt f =
+    fold_vars
+      (fun _ i -> function
+        | Some acc -> Some (Int.min acc i)
+        | None -> Some i)
+      None
+      f
+  ;;
+
+  let rec flatten = function
+  | Or list | And list -> List.flat_map flatten list
+  | Linear _ as e -> [ e ]
+;;
 end
 
 module MakeExpr (N : Num) = struct
@@ -318,7 +343,7 @@ module MakeExpr (N : Num) = struct
     include BoolExpr
 
     (** Normalizes boolear expressions to be as small as we can, including numerical part.*)
-    let norm f = rewrite NumExpr.norm_rule norm_rule f
+    let norm f = rewrite NumExpr.norm norm_rule f
   end
 end
 

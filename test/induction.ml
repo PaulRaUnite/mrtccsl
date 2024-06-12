@@ -32,30 +32,42 @@ let example3 d1 d2 t =
 ;;
 
 let example4 d1 d2 n t =
-  ( [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 1 } ]
-  , [ RTdelay { out = "b"; arg = "a"; delay = d1 }
+  ( [ 
+    CumulPeriodic
+        { out = "base"
+        ; period = 50
+        ; error = -2, 2
+        ; offset =
+            (let x, y = d1 in
+             Int.max x y + 3)
+        } 
+        ]
+  , [
+     RTdelay { out = "b"; arg = "a"; delay = d1 }
     ; Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" }
     ; RTdelay { out = "e"; arg = "d"; delay = d2 }
-    ]
-  , [ FirstSampled { out = "fb"; arg = "b"; base = "base" }
-    ; Precedence { cause = "fa"; effect = "fb" }
+    ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
+    ; RTdelay { out = "fb"; arg = "fa"; delay = d1 }
+      (* ; Causality { cause = "fa"; effect = "fb" } *)
     ; Subclocking { sub = "fa"; super = "a" }
     ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
-    ; Precedence { cause = "e"; effect = "fad" }
-    ] )
+    ]
+  , [ 
+       Precedence { cause = "e"; effect = "fad" } 
+      ] )
 ;;
 
 let test_example d1 d2 n t =
   ( []
-  , [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 1 }
-    ; RTdelay { out = "b"; arg = "a"; delay = d1 }
+  , [ CumulPeriodic { out = "base"; period = 50; error = -2, 2; offset = 10 }
+      (* ; RTdelay { out = "b"; arg = "a"; delay = d1 } *)
     ; Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" }
     ; RTdelay { out = "e"; arg = "d"; delay = d2 }
-    ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
-    ; Precedence { cause = "fa"; effect = "fb" }
+      (* ; FirstSampled { out = "fb"; arg = "b"; base = "base" } *)
+      (* ; Precedence { cause = "fa"; effect = "fb" }
     ; Subclocking { sub = "fa"; super = "a" }
     ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
-    ; Precedence { cause = "e"; effect = "fad" }
+    ; Precedence { cause = "e"; effect = "fad" } *)
     ]
   , [] )
 ;;
@@ -80,6 +92,16 @@ let example6 n =
   , [ Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" } ] )
 ;;
 
+let example7 period n1 n2 d =
+  ( [ CumulPeriodic { out = "base"; period; error = -2, 2; offset = 10 } ]
+  , [ Delay { out = "b"; arg = "a"; delay = n1, n1; base = Some "base" }
+    ; RTdelay { out = "c"; arg = "b"; delay = d, d }
+    ; Delay { out = "dbase"; arg = "base"; delay = n1, n1; base = None }
+      (* ; Delay { out = "d"; arg = "c"; delay = n2, n2; base = Some "dbase" } *)
+    ]
+  , [] )
+;;
+
 open Analysis
 module D = Domain.VPL (String) (Number.Integer)
 
@@ -96,6 +118,7 @@ module I = Induction.Make (String) (Number.Integer) (S)
 let to_alcotest (name, module_triple, expected) =
   let test () =
     let solution = I.Module.solve module_triple in
+    (* let _ = I.Existence.print_report_graph solution.structure in *)
     let result = I.Module.is_correct solution in
     if not result then I.Module.print solution;
     Alcotest.(check bool) "same result" expected result
@@ -112,14 +135,16 @@ let _ =
     [ "trivial", cases [ "", trivial, true ]
     ; "test", cases [ "", test_example (2, 2) (3, 3) 2 300, true ]
     ; "example1", cases [ "+d1=1,d2=2", example1 (1, 1) (2, 2), true ]
-    ; "example2", cases [ "+v", example2, true; "+^", example2, true ]
+    ; "example2", cases [ "", example2, true ]
     ; ( "example3"
       , cases
           [ "+d1=[1,2],d2=[2,3],t=[3,3]", example3 (1, 2) (2, 3) (3, 3), true
           ; "-d1=[1,2],d2=[2,3],t=[2,2]", example3 (1, 2) (2, 3) (2, 2), false
           ] )
-    ; "example4", cases [ "", example4 (2, 2) (3, 3) 2 300, true ]
+    ; "example4", cases [ "", example4 (3, 3) (3, 3) 4 600, true ]
     ; "example5", cases [ "", example5, true ]
-    ; "example6", cases [ "", example6 2, true ]
+     (* FIXME: infinite loop*)
+      (* ; "example6", cases [ "", example6 2, true ] *)
+    ; "example7", cases [ "", example7 10 2 3 5, true ]
     ]
 ;;

@@ -7,7 +7,7 @@ module type Var = sig
 end
 
 module type Num = sig
-  type t
+  include Interface.Debug
 
   val to_rational : t -> Number.Rational.t
 end
@@ -26,6 +26,7 @@ module type S = sig
   val diff : t -> t -> t list
   val more_precise : t -> t -> bool
   val infinite_in : v -> t -> bool
+  val set_debug : bool -> unit
 
   include Interface.Stringable with type t := t
 end
@@ -109,10 +110,12 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
   let diff _ _ = failwith "not implemented"
   let more_precise _ _ = failwith "not implemented"
   let infinite_in _ _ = failwith "not implemented"
+  let set_debug _ = ()
 end
 
 module VPL (V : Var) (N : Num) = struct
   open Denotational
+  open MakeDebug (V) (N)
   module Ident = Vpl.UserInterface.Lift_Ident (String)
 
   module Term = struct
@@ -127,15 +130,24 @@ module VPL (V : Var) (N : Num) = struct
 
   type aux =
     { b_expr : D.b_expr list
+    ; expr : (V.t, N.t) bool_expr list
     ; vars : VarSet.t
     }
 
-  let aux_union x y = { b_expr = x.b_expr @ y.b_expr; vars = VarSet.union x.vars y.vars }
-  let aux_empty = { b_expr = []; vars = VarSet.empty }
+  let aux_union x y =
+    { b_expr = x.b_expr @ y.b_expr
+    ; vars = VarSet.union x.vars y.vars
+    ; expr = x.expr @ y.expr
+    }
+  ;;
+
+  let aux_empty = { b_expr = []; vars = VarSet.empty; expr = [] }
 
   type t = aux * D.t
   type v = V.t
   type n = N.t
+
+  let is_debug = ref false
 
   let to_q x =
     let x = N.to_rational x in
@@ -180,22 +192,30 @@ module VPL (V : Var) (N : Num) = struct
     | LessEq -> Vpl.Cstr_type.LE
   ;;
 
-  let rec add_constraint index (aux, domain) = function
+  let rec add_constraint index (aux, domain) formula =
+    match formula with
     | And [] -> aux, domain
     | And list -> List.fold_left (add_constraint index) (aux, domain) list
     | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) as e ->
+    | Linear (l, op, r) ->
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
       let bexp = D.of_cond lincond in
       let vars =
-        e
+        formula
         |> BoolExpr.indexed_vars
         |> List.map (function
           | Some v, i -> var_str (v, i)
           | None, _ -> V.to_string index)
         |> VarSet.of_list
       in
-      aux_union aux { b_expr = [ bexp ]; vars }, D.assume bexp domain
+      let new_domain = D.assume bexp domain in
+      let _ =
+        if (not (D.is_bottom domain)) && D.is_bottom new_domain
+        then (
+          Printf.printf "makes bottom: %s\n" (string_of_bool_expr formula);
+          print_bool_exprs aux.expr)
+      in
+      aux_union aux { b_expr = [ bexp ]; vars; expr = [ formula ] }, new_domain
   ;;
 
   let diff (_, x) (_, y) = List.map (fun x -> aux_empty, x) (D.diff x y)
@@ -205,6 +225,14 @@ module VPL (V : Var) (N : Num) = struct
     (* let _ = List.iter (fun v -> Printf.printf "%s " v) (VarSet.elements aa.vars) in *)
     let diffvars = VarSet.elements @@ VarSet.diff ab.vars aa.vars in
     let p = D.project diffvars b in
+    let _ =
+      if !is_debug
+      then
+        Printf.printf
+          "To diff:\nPre: %s\n Proj: %s\n"
+          (D.to_string V.to_string a)
+          (D.to_string V.to_string p)
+    in
     D.leq a p && D.leq p a
   ;;
 
@@ -216,4 +244,6 @@ module VPL (V : Var) (N : Num) = struct
       | _ -> false)
     |> Option.value ~default:false
   ;;
+
+  let set_debug cond = is_debug := cond
 end

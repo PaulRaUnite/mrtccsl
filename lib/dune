@@ -6,7 +6,7 @@
  (inline_tests)
  (libraries gmp uuseg.string apron apron.polkaMPQ vpl-core)
  (preprocess
-  (pps ppx_inline_test ppx_assert ppx_sexp_conv)))
+  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
 
 
 (env
