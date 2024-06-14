@@ -4,7 +4,7 @@
  (name mrtccsl)
  (public_name mrtccsl)
  (inline_tests)
- (libraries gmp uuseg.string apron apron.polkaMPQ vpl-core)
+ (libraries gmp uuseg.string apron apron.polkaMPQ vpl-core ocamlgraph)
  (preprocess
   (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
 
@@ -12,4 +12,4 @@
 (env
  (dev
   (flags
-   (:standard -warn-error -32))))
+   (:standard -warn-error -A))))
