@@ -152,7 +152,8 @@ module List = struct
     | x :: tail ->
       let rec argmax j i x = function
         | [] -> i
-        | y :: tail -> if compare y x > 0 then argmax (j + 1) j y tail else argmax (j+1) i x tail
+        | y :: tail ->
+          if compare y x > 0 then argmax (j + 1) j y tail else argmax (j + 1) i x tail
       in
       Some (argmax 1 0 x tail)
   ;;
@@ -274,7 +275,12 @@ module Seq = struct
 
   let int_seq n = take n (ints 0)
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
-  let int_seq_inclusive (starts, ends) = assert (ends >= starts); take (ends - starts + 1) (ints starts)
+
+  let int_seq_inclusive (starts, ends) =
+    assert (ends >= starts);
+    take (ends - starts + 1) (ints starts)
+  ;;
+
   let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
   let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
   let return2 x y = cons x (return y)
@@ -286,6 +292,11 @@ module Tuple = struct
   let map4 f (x, y, z, w) = f x, f y, f z, f w
   let fn2 f (x, y) = f x y
   let compare2 c1 c2 (x1, y1) (x2, y2) = if c1 x1 x2 = 0 then c2 y1 y2 else c1 x1 x2
+
+  let compare3 c1 c2 c3 (x1, y1, z1) (x2, y2, z2) =
+    compare2 c1 (compare2 c2 c3) (x1, (y1, z1)) (x2, (y2, z2))
+  ;;
+
   let extend2 (x, y) z = x, y, z
   let extend3 (x, y, z) w = x, y, z, w
   let all2 (x, y) = x && y
@@ -317,6 +328,23 @@ module Hashtbl = struct
           tbl)
         tbl
         seq
+    ;;
+  end
+end
+
+module Map = struct
+  include Map
+
+  module Make (K : OrderedType) = struct
+    include Make (K)
+
+    let entry f default m k =
+      update
+        k
+        (fun x ->
+          let acc = Option.value x ~default in
+          Some (f acc))
+        m
     ;;
   end
 end
