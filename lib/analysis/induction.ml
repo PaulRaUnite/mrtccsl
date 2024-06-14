@@ -76,7 +76,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     include Interface.ExpOrder.Make (N)
   end
 
-  include MakeExpr (N)
+  include MakeExpr (C) (N)
 
   exception ExactRelationUnavailable of (C.t, N.t) Rtccsl.constr
   exception OverApproximationUnavailable of (C.t, N.t) Rtccsl.constr
@@ -107,7 +107,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
     | RTdelay { out; arg; delay = e1, e2 } -> out.@[i] &- arg.@[i] &|> (Const e1, Const e2)
     | Delay { out; arg; delay = d1, d2; base = None } when d1 = d2 ->
-      arg.@[i - d1] == out.@[i]
+      out.@[i - d1] == arg.@[i]
     | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
     | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
     | CumulPeriodic { out; period; error = le, re; offset } ->
@@ -274,7 +274,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   (**Intersects all [formulae] with logical clocks related to their past.*)
   let inductive_step formula =
-    let formulae = [formula] in
+    let formulae = [ formula ] in
     let add_shift_by_one (c, i) = Seq.return2 (c, i - 1) (c, i) in
     let unique_num_vars =
       formulae
@@ -432,10 +432,19 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     List.map (fun (l, _) -> l) components
   ;;
 
-  (*TODO: write new multiplication that
-    - selects the biggest formula first
-    - iterates through all formulae at once
-    - try using cover ranges, i.e. when new variable appear, the formula is shifted to cover the new variable, not replicates at the place of the variable*)
+  (*TODO: write loop detection:
+    - vertice is placable variable at index from a variable
+    - edge is spawn *)
+
+  module VarFormulaGraph = Graph.Imperative.Digraph.Concrete (struct
+      type t = int * C.t option * int
+
+      let compare = Tuple.compare3 Int.compare (Option.compare C.compare) Int.compare
+      let equal x y = compare x y = 0
+      let hash = Hashtbl.hash
+    end)
+
+  module ProductGraph = Graph.Traverse.Dfs (VarFormulaGraph)
 
   type cover =
     | Initial of (int * int)
@@ -444,13 +453,67 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         ; right : (int * int) option
         }
 
+  module ExprSet = Set.Make (struct
+      type t = (C.t, N.t) bool_expr
+
+      let compare = BoolExpr.compare
+    end)
+
+  exception ProductLoop
+
   let range_saturate formulae =
     match List.length formulae with
     | 0 -> invalid_arg "range_saturate: cannot saturate zero formulae"
     | 1 -> formulae
     | _ ->
+      let spawned_variables = ref MapOC.empty in
+      let g = VarFormulaGraph.create () in
+      let var_str = Option.fold ~none:"i" ~some:C.to_string in
+      let update_graph v destination =
+        (* MapOCI.iter (fun (v,i) _ -> Printf.printf "%s[%i] " (var_str v) i) !spawned_variables; *)
+        match MapOC.find_opt v !spawned_variables with
+        | Some idx_formulae ->
+          (* Printf.printf "update_graph formulae:\n";
+             List.print (fun t -> print_string (Tuple.to_string2 string_of_int t)) (idx_formulae); *)
+          idx_formulae
+          |> List.to_seq
+          |> Seq.iter (fun (i, f) ->
+            (* let fd, vd, id = destination in
+               let _ =
+               Printf.printf
+               "(%i,%s,%i) -> (%i,%s,%i)\n"
+               (f)
+               (var_str v)
+               i
+               (fd)
+               (var_str vd)
+               id
+               in *)
+            VarFormulaGraph.add_edge
+              g
+              (VarFormulaGraph.V.create (f, v, i))
+              (VarFormulaGraph.V.create destination))
+        | None -> ()
+      in
+      (* let check_cycle () =
+         Printf.printf "look at the graph: size=%i\n"( VarFormulaGraph.nb_edges g);
+         VarFormulaGraph.iter_edges
+         (fun s d ->
+         let fs, vs, is = VarFormulaGraph.V.label s in
+         let fd, vd, id = VarFormulaGraph.V.label d in
+         Printf.printf
+         "(%i,%s,%i) -> (%i,%s,%i)\n"
+         ( fs)
+         (var_str vs)
+         is
+         ( fd)
+         (var_str vd)
+         id)
+         g;
+         (ProductGraph.has_cycle g)
+         in *)
       let setup formulae =
-        let first =
+        let root_idx =
           formulae
           |> List.map (fun f ->
             let min, max = ranges_union (clock_index_ranges f) in
@@ -458,20 +521,43 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           |> List.argmax_opt Int.compare
           |> Option.get
         in
-        ( [ List.nth formulae first ]
-        , formulae
+        let root_formula = List.nth formulae root_idx in
+        let coverage_covered =
+          formulae
           |> Array.of_list
           |> Array.mapi (fun i f ->
             let coverage = clock_index_ranges f in
-            if i = first then f, coverage, coverage else f, coverage, MapOC.empty) )
+            if i = root_idx then f, coverage, coverage else f, coverage, MapOC.empty)
+        in
+        let _ =
+          spawned_variables
+          := root_formula
+             |> BoolExpr.indexed_vars
+             |> List.to_seq
+             |> Seq.map (fun (v, i) -> v, [ i, root_idx ])
+             |> MapOC.of_seq
+        in
+        (* print_endline "first spawned:";
+           MapOC.iter
+           (fun v ifs -> List.iter (fun (i,f) -> Printf.printf "%i %s[%i] "f (var_str v) i) ifs)
+           !spawned_variables;
+           print_endline ""; *)
+        [ root_formula ], coverage_covered
       in
       (* let compare_formulae = List.compare (compare_bool_expr C.compare N.compare) in *)
-      let equal (before, _) (after, _) = List.length before = List.length after in
+      let equal (before, _) (after, _) =
+        if ProductGraph.has_cycle g
+        then raise ProductLoop
+        else
+          (*TODO: maybe return early when cycle?*)
+          List.length before = List.length after
+      in
       let step (product, ranges) =
-        let _ = Printf.printf "product:\n" in
-        let _ = print_bool_exprs product in
+        (* let _ = Printf.printf "product:\n" in
+           let _ = print_bool_exprs product in *)
         let product_covered = clock_index_ranges (And product) in
-        let cover_with (f, coverage, covered) =
+        let new_spawned_variables = ref MapOC.empty in
+        let cover_with fi (f, coverage, covered) =
           let to_consider =
             MapOC.merge
               (fun _key g l ->
@@ -493,10 +579,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               product_covered
               covered
           in
-          let _ =
-            Printf.printf "considering: ";
-            print_bool_exprs [ f ]
-          in
+          (* let _ =
+             Printf.printf "considering: ";
+             print_bool_exprs [ f ]
+             in *)
           let new_formulae =
             to_consider
             |> MapOC.to_seq
@@ -510,21 +596,22 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               let to_cover =
                 match cover with
                 | Initial ((a, b) as range) ->
-                  let _ =
-                    Printf.printf
-                      "adding: %s initial=%s\n"
-                      (var_str v)
-                      (Tuple.to_string2 Int.to_string range)
-                  in
+                  (* let _ =
+                     Printf.printf
+                     "adding: %s initial=%s actual=%s\n"
+                     (var_str v)
+                     (Tuple.to_string2 Int.to_string range)
+                     (Tuple.to_string2 Int.to_string (a + diam, b))
+                     in *)
                   Seq.int_seq_inclusive (a + diam, b)
                 | Update { left; right } ->
-                  let _ =
-                    Printf.printf
-                      "adding: %s l=%s r=%s\n"
-                      (var_str v)
-                      (tuple_str left)
-                      (tuple_str right)
-                  in
+                  (* let _ =
+                     Printf.printf
+                     "adding: %s l=%s r=%s\n"
+                     (var_str v)
+                     (tuple_str left)
+                     (tuple_str right)
+                     in *)
                   let from_left =
                     match left with
                     | Some (a, b) -> Seq.int_seq_inclusive (a + diam, b + diam)
@@ -537,7 +624,35 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                   in
                   Seq.append from_left from_right
               in
-              Some (Seq.map (fun i -> BoolExpr.shift_by f i) to_cover))
+              Some
+                (Seq.map
+                   (fun i ->
+                     let offset = i - max in
+                     let shifted = BoolExpr.shift_by f offset in
+                     let new_unshifted_vars =
+                       shifted
+                       |> BoolExpr.indexed_vars
+                       |> List.to_seq
+                       |> Seq.filter (fun (v, i) ->
+                         not
+                           (MapOC.find_opt v product_covered
+                            |> Option.fold ~none:false ~some:(fun (l, r) ->
+                              l <= i && i <= r)))
+                       |> Seq.map (fun (v, i) -> v, i - offset)
+                     in
+                     let _ =
+                       new_unshifted_vars
+                       |> Seq.iter (fun (vf, j) ->
+                         update_graph v (fi, vf, j);
+                         new_spawned_variables
+                         := MapOC.entry
+                              (fun acc -> (j, fi) :: acc)
+                              []
+                              !new_spawned_variables
+                              vf)
+                     in
+                     shifted)
+                   to_cover))
             |> Seq.concat
             |> List.of_seq
           in
@@ -550,7 +665,13 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           in
           new_formulae, new_ranges
         in
-        let new_formulae, new_ranges = ranges |> Array.map cover_with |> Array.split in
+        let new_formulae, new_ranges = ranges |> Array.mapi cover_with |> Array.split in
+        let _ = spawned_variables := !new_spawned_variables in
+        (* print_endline "new spawned:";
+           MapOC.iter
+           (fun v ifs -> List.iter (fun (i,f) -> Printf.printf "%i %s[%i] "f (var_str v) i) ifs)
+           !spawned_variables;
+           print_endline ""; *)
         ( Seq.append
             (List.to_seq product)
             (new_formulae |> Array.to_seq |> Seq.map List.to_seq |> Seq.concat)
@@ -1140,12 +1261,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   module Simulation = struct
     open Graph
 
-    module ExprSet = Set.Make (struct
-        type t = (C.t, N.t) bool_expr
-
-        let compare = Denotational.compare_bool_expr C.compare N.compare
-      end)
-
     let remove_by_var_rule vars = function
       | TagVar (c, _) when OptVarSet.mem (Some c) vars -> None
       | Index _ when OptVarSet.mem None vars -> None
@@ -1235,15 +1350,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     (** [remove_difference] returns proof obligations without constraints that are in [p] but not in [s]*)
     let remove_difference parts s p =
-      let init, pre, _, _ = parts in
-      let _ =
-        Printf.printf "original property:\n";
-        print_bool_exprs p;
-        Printf.printf "original init:\n";
-        print_bool_exprs [ init.(0) ];
-        Printf.printf "original precondition:\n";
-        print_bool_exprs [ pre.(0) ]
-      in
+      (* let init, pre, _, _ = parts in
+         let _ =
+         Printf.printf "original property:\n";
+         print_bool_exprs p;
+         Printf.printf "original init:\n";
+         print_bool_exprs [ init.(0) ];
+         Printf.printf "original precondition:\n";
+         print_bool_exprs [ pre.(0) ]
+         in *)
       (* When property introduces equalities, we may remove more than we should. For this we need to renormalize with these new equalities. *)
       let property_equalities = List.fold_left equalities [] p in
       let struct_vars =
@@ -1258,15 +1373,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let substition = equalities_to_substitution property_equalities struct_vars in
       let parts = Tuple.map4 (Array.map (substitute substition)) parts in
       let p = List.map (substitute substition) p in
-      let _ =
-        let init, pre, _, _ = parts in
-        Printf.printf "equalized property:\n";
-        print_bool_exprs p;
-        Printf.printf "equalized init:\n";
-        print_bool_exprs [ init.(0) ];
-        Printf.printf "equalized precondition:\n";
-        print_bool_exprs [ pre.(0) ]
-      in
+      (* let _ =
+         let init, pre, _, _ = parts in
+         Printf.printf "equalized property:\n";
+         print_bool_exprs p;
+         Printf.printf "equalized init:\n";
+         print_bool_exprs [ init.(0) ];
+         Printf.printf "equalized precondition:\n";
+         print_bool_exprs [ pre.(0) ]
+         in *)
       let constraint_set formulae =
         formulae
         |> List.to_seq
@@ -1282,10 +1397,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let struct_exprs = constraint_set s in
       let property_exprs = constraint_set p in
       let diff_constraints = ExprSet.diff property_exprs struct_exprs in
-      let _ = Printf.printf "diff_constraints: " in
-      let _ = print_bool_exprs (ExprSet.elements diff_constraints) in
-      let _ = Printf.printf "struct_exprs: " in
-      let _ = print_bool_exprs (ExprSet.elements struct_exprs) in
+      (* let _ = Printf.printf "diff_constraints: " in
+         let _ = print_bool_exprs (ExprSet.elements diff_constraints) in
+         let _ = Printf.printf "struct_exprs: " in
+         let _ = print_bool_exprs (ExprSet.elements struct_exprs) in *)
       let remove_diff_exprs = remove_matching diff_constraints in
       let var_families formulae =
         List.fold_right
@@ -1312,12 +1427,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       let init = Array.map (fun f -> remove_sub_zero_refs f |> Option.get) init in
       let pre = Array.map (Option.get << remove_sticking_connectors) pre in
-      let _ =
-        Printf.printf "removed init:\n";
-        print_bool_exprs [ init.(0) ];
-        Printf.printf "removed precondition:\n";
-        print_bool_exprs [ pre.(0) ]
-      in
+      (* let _ =
+         Printf.printf "removed init:\n";
+         print_bool_exprs [ init.(0) ];
+         Printf.printf "removed precondition:\n";
+         print_bool_exprs [ pre.(0) ]
+         in *)
       let ind = Array.map (fun f -> inductive_step f) ind in
       init, pre, ind, post
     ;;

@@ -36,6 +36,7 @@
   ppx_compare
   mlgmpidl
   vpl-core
+  ocamlgraph
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test))
