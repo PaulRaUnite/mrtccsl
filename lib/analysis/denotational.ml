@@ -331,19 +331,23 @@ module BoolExpr = struct
   ;;
 
   let rec flatten = function
-  | Or list | And list -> List.flat_map flatten list
-  | Linear _ as e -> [ e ]
-;;
+    | Or list | And list -> List.flat_map flatten list
+    | Linear _ as e -> [ e ]
+  ;;
 end
 
-module MakeExpr (N : Num) = struct
+module MakeExpr (V : Interface.OrderedType) (N : Num) = struct
   module NumExpr = MakeExtNumExpr (N)
 
   module BoolExpr = struct
     include BoolExpr
 
-    (** Normalizes boolear expressions to be as small as we can, including numerical part.*)
+    type t = (V.t, N.t) BoolExpr.t
+
+    (** Normalizes boolear expressions to be as small as we can, including rewriting numerical part.*)
     let norm f = rewrite NumExpr.norm norm_rule f
+
+    let compare = compare_bool_expr V.compare N.compare
   end
 end
 
