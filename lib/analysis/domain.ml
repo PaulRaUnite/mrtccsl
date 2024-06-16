@@ -66,16 +66,19 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
       | Div -> Texpr1.Div
     in
     let rec te2te = function
-      | TagVar (v, i) ->
-        let var = Var.of_string (pp_var (v, i)) in
-        Texpr1.var env var
-      | Index i ->
-        Texpr1.binop
-          Texpr1.Add
-          (Texpr1.var env index_var)
-          (Texpr1.cst env (Coeff.s_of_int i))
-          Texpr1.Int
-          Texpr1.Near
+      | Var v ->
+        (match v with
+         | FreeVar v -> Texpr1.var env (Var.of_string (V.to_string v))
+         | ClockVar (v, i) ->
+           let var = Var.of_string (pp_var (v, i)) in
+           Texpr1.var env var
+         | Index i ->
+           Texpr1.binop
+             Texpr1.Add
+             (Texpr1.var env index_var)
+             (Texpr1.cst env (Coeff.s_of_int i))
+             Texpr1.Int
+             Texpr1.Near)
       | Const c -> Texpr1.cst env (Coeff.s_of_mpqf @@ N.to_rational c)
       | Op (l, op, r) -> Texpr1.binop (op2op op) (te2te l) (te2te r) Texpr1.Real Near
       | ZeroCond _ | Min _ | Max _ -> raise NonConvex
@@ -169,9 +172,12 @@ module VPL (V : Var) (N : Num) = struct
   let to_string (_, x) = D.to_string V.to_string x
 
   let rec te2ae index = function
-    | TagVar (v, i) -> D.Term.Var (var (v, i))
+    | Var v ->
+      (match v with
+       | FreeVar v -> D.Term.Var (Ident.toVar (V.to_string v))
+       | ClockVar (v, i) -> D.Term.Var (var (v, i))
+       | Index i -> D.Term.Add (D.Term.Var (index_var index), D.Term.Cte (Q.of_int i)))
     | Const n -> D.Term.Cte (to_q n)
-    | Index i -> D.Term.Add (D.Term.Var (index_var index), D.Term.Cte (Q.of_int i))
     | Op (l, op, r) ->
       let l = te2ae index l in
       let r = te2ae index r in

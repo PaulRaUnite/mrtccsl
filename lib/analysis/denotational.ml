@@ -11,16 +11,35 @@ type num_op =
   | Div
 [@@deriving sexp, compare]
 
-type ('c, 'n) num_expr =
-  | TagVar of 'c * int
-  | Const of 'n
+type 'v var =
+  | FreeVar of 'v
+  | ClockVar of 'v * int
   | Index of int
+[@@deriving sexp, compare]
+
+type ('c, 'n) num_expr =
+  | Var of 'c var
+  | Const of 'n
   | Op of ('c, 'n) num_expr * num_op * ('c, 'n) num_expr
-  | ZeroCond of ('c, 'n) num_expr * 'n
+  | ZeroCond of ('c, 'n) num_expr * ('c, 'n) num_expr
   (** [ZeroCond] variant is needed because otherwise will collide with max in factoring out min/max*)
   | Min of ('c, 'n) num_expr * ('c, 'n) num_expr
   | Max of ('c, 'n) num_expr * ('c, 'n) num_expr
 [@@deriving sexp, compare]
+
+let rec num_expr_of_expr = function
+  | Rtccsl.Var v -> Var (FreeVar v)
+  | Rtccsl.Const c -> Const c
+  | Rtccsl.BinAdd (l, r) -> Op (num_expr_of_expr l, Add, num_expr_of_expr r)
+  | Rtccsl.BinSub (l, r) -> Op (num_expr_of_expr l, Sub, num_expr_of_expr r)
+  | Rtccsl.BinMul (l, r) -> Op (num_expr_of_expr l, Mul, num_expr_of_expr r)
+  | Rtccsl.BinDiv (l, r) -> Op (num_expr_of_expr l, Div, num_expr_of_expr r)
+;;
+
+let time_param = function
+  | Rtccsl.TimeConst c -> Const c
+  | Rtccsl.TimeVar v -> Var (FreeVar v)
+;;
 
 type num_rel =
   | Neq
@@ -38,7 +57,7 @@ type ('c, 'n) bool_expr =
 [@@deriving sexp, compare]
 
 module Syntax = struct
-  let ( .@[] ) c i = TagVar (c, i)
+  let ( .@[] ) c i = Var (ClockVar (c, i))
   let ( < ) x y = Linear (x, Less, y)
   let ( <= ) x y = Linear (x, LessEq, y)
   let ( > ) x y = Linear (x, More, y)
@@ -60,11 +79,10 @@ module NumExpr = struct
   type ('c, 'n) t = ('c, 'n) num_expr
 
   let rec fold f acc = function
-    | TagVar (v, i) -> f (Some v) i acc
+    | Var v -> f v acc
     | Op (left, _, right) | Min (left, right) | Max (left, right) ->
       let acc = fold f acc left in
       fold f acc right
-    | Index i -> f None i acc
     | Const _ -> acc
     | ZeroCond (more, _) -> fold f acc more
   ;;
@@ -74,7 +92,7 @@ module NumExpr = struct
     let elim = eliminate f in
     let* e =
       match e with
-      | TagVar _ | Const _ | Index _ -> Some e
+      | Var _ | Const _ -> Some e
       | Op (l, op, r) ->
         let* l = elim l in
         let* r = elim r in
@@ -98,7 +116,7 @@ module NumExpr = struct
     let reduce = rewrite rule in
     let r =
       match e with
-      | TagVar _ | Const _ | Index _ -> e
+      | Var _ | Const _ -> e
       | Op (l, op, r) ->
         let l = reduce l in
         let r = reduce r in
@@ -118,7 +136,7 @@ module NumExpr = struct
 
   let rec fact_disj exp =
     match exp with
-    | TagVar _ | Index _ | Const _ | ZeroCond _ -> [ [], exp ]
+    | Var _ | Const _ | ZeroCond _ -> [ [], exp ]
     | Op (l, op, r) ->
       let lvariants = fact_disj l in
       let rvariants = fact_disj r in
@@ -138,17 +156,17 @@ module NumExpr = struct
       i = index -> use initial condition
       i < index -> remove*)
   let reduce_zerocond_rule index = function
-    | ZeroCond (Index i, _) when i > index -> Some (Index i)
-    | ZeroCond (Index i, init) when i = index -> Some (Const init)
-    | ZeroCond ((TagVar (_, i) as v), _) when i > index -> Some v
-    | ZeroCond (TagVar (_, i), init) when i = index -> Some (Const init)
+    | ZeroCond (Var (Index i), _) when i > index -> Some (Var (Index i))
+    | ZeroCond (Var (Index i), init) when i = index -> Some init
+    | ZeroCond ((Var (ClockVar (_, i)) as v), _) when i > index -> Some v
+    | ZeroCond (Var (ClockVar (_, i)), init) when i = index -> Some init
     | ZeroCond _ -> None
     | _ as e -> Some e
   ;;
 
   (** The rule to remove all expressions that reference non-existent past in initial condition: i < index.*)
   let reduce_negative_rule index = function
-    | (Index i | TagVar (_, i)) when i <= index -> None
+    | Var (Index i | ClockVar (_, i)) when i <= index -> None
     | _ as e -> Some e
   ;;
 end
@@ -178,7 +196,7 @@ module MakeExtNumExpr (N : Num) = struct
     | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
     | Min (Const l, Const r) -> Const (N.min l r)
     | Max (Const l, Const r) -> Const (N.max l r)
-    | ZeroCond (Const n, init) -> Const (N.max n init)
+    (* | ZeroCond (Const n, init) -> Const (N.max n init) *)
     | _ -> expr
   ;;
 
@@ -226,8 +244,12 @@ module BoolExpr = struct
 
   let map_idx f e =
     let rule = function
-      | TagVar (v, i) -> TagVar (v, f (Some v) i)
-      | Index i -> Index (f None i)
+      | Var v ->
+        Var
+          (match v with
+           | ClockVar (v, i) -> ClockVar (v, f (Some v) i)
+           | Index i -> Index (f None i)
+           | _ -> v)
       | e -> e
     in
     rewrite (NumExpr.rewrite rule) Fun.id e
@@ -294,8 +316,30 @@ module BoolExpr = struct
         And ((Linear (l, op, r) :: lcond) @ rcond))
   ;;
 
-  let vars f = fold_vars (fun c _ acc -> c :: acc) [] f
-  let indexed_vars f = fold_vars (fun c i acc -> (c, i) :: acc) [] f
+  let vars f = fold_vars (fun v acc -> v :: acc) [] f
+
+  let clocks f =
+    fold_vars
+      (fun v acc ->
+        match v with
+        | ClockVar (c, _) -> c :: acc
+        | _ -> acc)
+      []
+      f
+  ;;
+
+  let indexed_vars f =
+    fold_vars
+      (fun v acc ->
+        match v with
+        | ClockVar (c, i) -> (Some c, i) :: acc
+        | Index i -> (None, i) :: acc
+        | FreeVar _ -> acc)
+      []
+      f
+  ;;
+
+  let indexed_vars_except_index f = List.map (fun (v, _) -> v) (indexed_vars f)
 
   let vars_except_i f =
     List.filter_map
@@ -310,24 +354,25 @@ module BoolExpr = struct
   ;;
 
   let shift_by f i = map_idx (fun _ j -> i + j) f
-  let is_stateful f = fold_vars (fun _ i acc -> if i <> 0 then true else acc) false f
 
-  let max_opt f =
-    fold_vars
-      (fun _ i -> function
+  let max_index_opt f =
+    List.fold_left
+      (fun acc (_, i) ->
+        match acc with
         | Some acc -> Some (Int.max acc i)
         | None -> Some i)
       None
-      f
+      (indexed_vars f)
   ;;
 
-  let min_opt f =
-    fold_vars
-      (fun _ i -> function
+  let min_index_opt f =
+    List.fold_left
+      (fun acc (_, i) ->
+        match acc with
         | Some acc -> Some (Int.min acc i)
         | None -> Some i)
       None
-      f
+      (indexed_vars f)
   ;;
 
   let rec flatten = function
@@ -362,20 +407,13 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
   ;;
 
   let rec string_of_tag_expr = function
-    | TagVar (var, ind) ->
-      let ind_str =
-        match ind with
-        | x when x > 0 -> Printf.sprintf "i+%i" x
-        | 0 -> "i"
-        | x -> Printf.sprintf "i%i" x
-      in
-      Printf.sprintf "%s[%s]" (V.to_string var) ind_str
+    | Var v ->
+      let ind_str i = if i > 0 then Printf.sprintf "i+%i" i else "i" in
+      (match v with
+       | FreeVar v -> V.to_string v
+       | ClockVar (c, i) -> Printf.sprintf "%s[%s]" (V.to_string c) (ind_str i)
+       | Index i -> ind_str i)
     | Const n -> N.to_string n
-    | Index i ->
-      (match i with
-       | x when x > 0 -> Printf.sprintf "i+%i" x
-       | 0 -> "i"
-       | x -> Printf.sprintf "i%i" x)
     | Op (l, op, r) ->
       Printf.sprintf
         "(%s %s %s)"
@@ -383,7 +421,10 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
         (string_of_num_op op)
         (string_of_tag_expr r)
     | ZeroCond (more, init) ->
-      Printf.sprintf "(%s when i>0 else %s)" (string_of_tag_expr more) (N.to_string init)
+      Printf.sprintf
+        "(%s when i>0 else %s)"
+        (string_of_tag_expr more)
+        (string_of_tag_expr init)
     | Min (l, r) ->
       Printf.sprintf "min(%s, %s)" (string_of_tag_expr l) (string_of_tag_expr r)
     | Max (l, r) ->

@@ -58,7 +58,7 @@ let () =
     ; "exclusion", rglwt [ Exclusion [ "a"; "b"; "c" ] ] [ "abc" ] [ "(ab)"; "(abc)" ]
     ; ( "periodic"
       , rglwt
-          [ Periodic { out = "o"; base = "b"; period = 3 } ]
+          [ Periodic { out = "o"; base = "b"; period = IntConst 3 } ]
           [ "bb(bo)bb(bo)" ]
           [ "bbbbbb" ] )
     ; ( "sample"
@@ -68,27 +68,29 @@ let () =
           [ "bbo"; "(bo)" ] )
     ; ( "delay-trivial"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = 0, 0; base = None } ]
+          [ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 0; base = None } ]
           [ "(oi)(oi)" ]
           [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = 2, 2; base = None } ]
+          [ Delay { out = "o"; arg = "i"; delay = IntConst 2, IntConst 2; base = None } ]
           [ "ii(oi)(oi)" ]
           [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = 2, 4; base = None } ]
+          [ Delay { out = "o"; arg = "i"; delay = IntConst 2, IntConst 4; base = None } ]
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
           [ "iiiii(oi)" ] )
     ; ( "delay-undet-zero"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = 0, 2; base = None } ]
+          [ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 2; base = None } ]
           [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
           [ "iiiii"; "oooo" ] )
     ; ( "delay-sample"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = 1, 2; base = Some "b" } ]
+          [ Delay
+              { out = "o"; arg = "i"; delay = IntConst 1, IntConst 2; base = Some "b" }
+          ]
           [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
           [ "ooo"; "(ib)bbb(ob)" ] )
     ; ( "minus"
@@ -154,22 +156,34 @@ let () =
           [ "(abc)"; "(iab)" ] )
     ; ( "rt-delay"
       , rtwt
-          [ RTdelay { arg = "i"; out = "o"; delay = 1, 3 } ]
+          [ RTdelay { arg = "i"; out = "o"; delay = TimeConst 1, TimeConst 3 } ]
           [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
           [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
     ; ( "cum-period"
       , rtwt
-          [ CumulPeriodic { out = "o"; period = 4; error = -1, 1; offset = 2 } ]
+          [ CumulPeriodic
+              { out = "o"
+              ; period = TimeConst 4
+              ; error = TimeConst (-1), TimeConst 1
+              ; offset = TimeConst 2
+              }
+          ]
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 4; 7 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 5; 11 ] ] )
     ; ( "abs-period"
       , rtwt
-          [ AbsPeriodic { out = "o"; period = 4; error = -1, 1; offset = 2 } ]
+          [ AbsPeriodic
+              { out = "o"
+              ; period = TimeConst 4
+              ; error = TimeConst (-1), TimeConst 1
+              ; offset = TimeConst 2
+              }
+          ]
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
-          [ Sporadic { out = "a"; at_least = 2; strict = false } ]
+          [ Sporadic { out = "a"; at_least = TimeConst 2; strict = false } ]
           [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]

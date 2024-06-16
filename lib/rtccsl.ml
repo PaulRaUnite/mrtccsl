@@ -1,6 +1,25 @@
 type 'a interval = 'a * 'a
 
-type ('c, 't) constr =
+(*TODO: good expression type should:
+  - differentiate rational, time and integer expressions types
+  - clearly indicate when conversion happens?*)
+type ('v, 'n) expr =
+  | Var of 'v
+  | Const of 'n
+  | BinAdd of ('v, 'n) expr * ('v, 'n) expr
+  | BinSub of ('v, 'n) expr * ('v, 'n) expr
+  | BinMul of ('v, 'n) expr * ('v, 'n) expr
+  | BinDiv of ('v, 'n) expr * ('v, 'n) expr
+
+type 'v int_param =
+  | IntVar of 'v
+  | IntConst of int
+
+type ('v, 't) time_param =
+  | TimeVar of 'v
+  | TimeConst of 't
+
+type ('c, 'p, 't) constr =
   | Precedence of
       { cause : 'c
       ; effect : 'c
@@ -23,7 +42,7 @@ type ('c, 't) constr =
   | Delay of
       { out : 'c
       ; arg : 'c
-      ; delay : int * int
+      ; delay : 'p int_param interval
       ; base : 'c option
       }
   | Fastest of
@@ -47,7 +66,7 @@ type ('c, 't) constr =
   | Periodic of
       { out : 'c
       ; base : 'c
-      ; period : int
+      ; period : 'p int_param
       }
   | Sample of
       { out : 'c
@@ -61,19 +80,19 @@ type ('c, 't) constr =
   | RTdelay of
       { out : 'c
       ; arg : 'c
-      ; delay : 't interval
+      ; delay : ('p, 't) time_param interval
       }
   | CumulPeriodic of
       { out : 'c
-      ; period : 't
-      ; error : 't interval
-      ; offset : 't
+      ; period : ('p, 't) time_param
+      ; error : ('p, 't) time_param interval
+      ; offset : ('p, 't) time_param
       }
   | AbsPeriodic of
       { out : 'c
-      ; period : 't
-      ; error : 't interval
-      ; offset : 't
+      ; period : ('p, 't) time_param
+      ; error : ('p, 't) time_param interval
+      ; offset : ('p, 't) time_param
       }
   | FirstSampled of
       { out : 'c
@@ -97,11 +116,14 @@ type ('c, 't) constr =
       }
   | Sporadic of
       { out : 'c
-      ; at_least : 't
+      ; at_least : ('p, 't) time_param
       ; strict : bool
       }
+  | TimeParameter of 'p * ('p, 't) expr interval
+  | LogicalParameter of 'p * ('p, int) expr interval
+  (**Encodes parameter [v] being inside of [[e1, e2]].*)
 
-type ('c, 't) specification = ('c, 't) constr list
+type ('c, 'p, 't) specification = ('c, 'p, 't) constr list
 
 let clocks = function
   | Precedence { cause; effect } | Causality { cause; effect } -> [ cause; effect ]
@@ -119,4 +141,5 @@ let clocks = function
   | FirstSampled { out; arg; base } | LastSampled { out; arg; base } -> [ out; arg; base ]
   | Forbid { from; until; args } | Allow { from; until; args } -> from :: until :: args
   | Sporadic { out; _ } -> [ out ]
+  | TimeParameter _ | LogicalParameter _ -> []
 ;;

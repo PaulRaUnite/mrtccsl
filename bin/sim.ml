@@ -48,7 +48,7 @@ let () =
       [ RTdelay
           { arg = "inspiration"
           ; out = "expiration"
-          ; delay = inspiration_duration, inspiration_duration
+          ; delay = TimeConst inspiration_duration, TimeConst inspiration_duration
           }
       ; Precedence { cause = "trigger.start"; effect = "trigger.finish" }
       ; Allow
@@ -56,11 +56,19 @@ let () =
       ; RTdelay
           { arg = "expiration"
           ; out = "trigger.start"
-          ; delay = trigger_delay, trigger_delay
+          ; delay = TimeConst trigger_delay, TimeConst trigger_delay
           }
       ; RTdelay
-          { arg = "inspiration"; out = "trigger.finish"; delay = one / rr, one / rr }
-      ; Delay { out = "next inspiration"; arg = "inspiration"; delay = 1, 1; base = None }
+          { arg = "inspiration"
+          ; out = "trigger.finish"
+          ; delay = TimeConst (one / rr), TimeConst (one / rr)
+          }
+      ; Delay
+          { out = "next inspiration"
+          ; arg = "inspiration"
+          ; delay = IntConst 1, IntConst 1
+          ; base = None
+          }
       ; Sample { out = "s"; arg = "sensor.inhale"; base = "trigger.finish" }
       ; Minus { out = "-"; arg = "trigger.finish"; except = [ "s" ] }
       ; Union { out = "cond"; args = [ "sensor.inhale"; "-" ] }
@@ -68,7 +76,7 @@ let () =
       ; RTdelay
           { arg = "first"
           ; out = "next inspiration"
-          ; delay = one / hundred, two / hundred
+          ; delay = TimeConst (one / hundred), TimeConst (two / hundred)
           }
       ]
   in

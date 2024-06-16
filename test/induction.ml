@@ -5,22 +5,30 @@ open Analysis
 
 let example1 d1 d2 =
   ( []
-  , [ RTdelay { out = "l"; arg = "in"; delay = d1 }
-    ; RTdelay { out = "r"; arg = "in"; delay = d2 }
+  , [ RTdelay { out = "l"; arg = "in"; delay = TimeConst d1, TimeConst d1 }
+    ; RTdelay { out = "r"; arg = "in"; delay = TimeConst d2, TimeConst d2 }
     ]
   , [ Precedence { cause = "l"; effect = "r" } ] )
 ;;
 
 let example2 =
   ( []
-  , [ RTdelay { out = "d"; arg = "e"; delay = 1, 1 }
-    ; CumulPeriodic { out = "b"; period = 50; error = -2, 2; offset = 1 }
+  , [ RTdelay { out = "d"; arg = "e"; delay = TimeConst 1, TimeConst 1 }
+    ; CumulPeriodic
+        { out = "b"
+        ; period = TimeConst 50
+        ; error = TimeConst (-2), TimeConst 2
+        ; offset = TimeConst 1
+        }
     ; Sample { out = "s"; arg = "d"; base = "b" }
     ]
   , [] )
 ;;
 
 let example3 d1 d2 t =
+  let d1 = Tuple.map2 (fun v -> TimeConst v) d1 in
+  let d2 = Tuple.map2 (fun v -> TimeConst v) d2 in
+  let t = Tuple.map2 (fun v -> TimeConst v) t in
   ( []
   , [ RTdelay { out = "l"; arg = "in"; delay = d1 }
     ; RTdelay { out = "r"; arg = "in"; delay = d2 }
@@ -35,29 +43,29 @@ let example3 d1 d2 t =
 let example4 d1 d2 n t =
   ( [ CumulPeriodic
         { out = "base"
-        ; period = 50
-        ; error = -2, 2
+        ; period = TimeConst 50
+        ; error = TimeConst (-2), TimeConst 2
         ; offset =
             (let x, y = d1 in
-             Int.max x y + 3)
+             TimeConst (Int.max x y + 3))
         }
     ]
-  , [ RTdelay { out = "b"; arg = "a"; delay = d1 }
-    ; Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" }
-    ; RTdelay { out = "e"; arg = "d"; delay = d2 }
+  , [ RTdelay { out = "b"; arg = "a"; delay = Tuple.map2 (fun v -> TimeConst v) d1 }
+    ; Delay { out = "d"; arg = "b"; delay = IntConst n, IntConst n; base = Some "base" }
+    ; RTdelay { out = "e"; arg = "d"; delay = Tuple.map2 (fun v -> TimeConst v) d2 }
     ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
-    ; RTdelay { out = "fb"; arg = "fa"; delay = d1 }
+    ; RTdelay { out = "fb"; arg = "fa"; delay = Tuple.map2 (fun v -> TimeConst v) d1 }
       (* ; Causality { cause = "fa"; effect = "fb" } *)
     ; Subclocking { sub = "fa"; super = "a" }
-    ; RTdelay { out = "fad"; arg = "fa"; delay = t, t }
+    ; RTdelay { out = "fad"; arg = "fa"; delay = TimeConst t, TimeConst t }
     ]
   , [ Precedence { cause = "e"; effect = "fad" } ] )
 ;;
 
 let example5 =
   ( []
-  , [ RTdelay { out = "l"; arg = "in"; delay = 1, 2 }
-    ; RTdelay { out = "r"; arg = "in"; delay = 3, 4 }
+  , [ RTdelay { out = "l"; arg = "in"; delay = TimeConst 1, TimeConst 2 }
+    ; RTdelay { out = "r"; arg = "in"; delay = TimeConst 3, TimeConst 4 }
     ]
   , [ Fastest { out = "f"; left = "l"; right = "r" }
     ; Precedence { cause = "f"; effect = "r" }
@@ -69,17 +77,30 @@ let trivial = [], [], []
 let example6 n =
   ( []
   , [ Sample { out = "c"; arg = "b"; base = "base" }
-    ; Delay { out = "d"; arg = "c"; delay = n, n; base = Some "base" }
+    ; Delay { out = "d"; arg = "c"; delay = IntConst n, IntConst n; base = Some "base" }
     ]
-  , [ Delay { out = "d"; arg = "b"; delay = n, n; base = Some "base" } ] )
+  , [ Delay { out = "d"; arg = "b"; delay = IntConst n, IntConst n; base = Some "base" } ]
+  )
 ;;
 
 let example7 period n1 n2 d =
-  ( [ CumulPeriodic { out = "base"; period; error = -2, 2; offset = 10 } ]
-  , [ Delay { out = "b"; arg = "a"; delay = n1, n1; base = Some "base" }
-    ; RTdelay { out = "c"; arg = "b"; delay = d, d }
-    ; Delay { out = "dbase"; arg = "base"; delay = n1 + 1, n1 + 1; base = None }
-    ; Delay { out = "d"; arg = "c"; delay = n2, n2; base = Some "dbase" }
+  ( [ CumulPeriodic
+        { out = "base"
+        ; period = TimeConst period
+        ; error = TimeConst (-2), TimeConst 2
+        ; offset = TimeConst 10
+        }
+    ]
+  , [ Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
+    ; RTdelay { out = "c"; arg = "b"; delay = TimeConst d, TimeConst d }
+    ; Delay
+        { out = "dbase"
+        ; arg = "base"
+        ; delay = IntConst (n1 + 1), IntConst (n1 + 1)
+        ; base = None
+        }
+    ; Delay
+        { out = "d"; arg = "c"; delay = IntConst n2, IntConst n2; base = Some "dbase" }
     ]
   , [] )
 ;;
@@ -125,14 +146,18 @@ let _ =
   Alcotest.run
     "Inductive proofs"
     [ "trivial", cases [ "", trivial, Result true ]
-    ; "example1", cases [ "+d1=1,d2=2", example1 (1, 1) (2, 2), Result true ]
+    ; "example1", cases [ "+d1=1,d2=2", example1 1 2, Result true ]
     ; "example2", cases [ "", example2, Result true ]
     ; ( "example3"
       , cases
           [ "+d1=[1,2],d2=[2,3],t=[3,3]", example3 (1, 2) (2, 3) (3, 3), Result true
           ; "-d1=[1,2],d2=[2,3],t=[2,2]", example3 (1, 2) (2, 3) (2, 2), Result false
           ] )
-    ; "example4", cases [ "", example4 (3, 3) (3, 3) 4 600, Result true ]
+    ; ( "example4"
+      , cases
+          [ "t=600", example4 (3, 3) (3, 3) 4 600, Result true
+          ; "t=200", example4 (3, 3) (3, 3) 4 200, Result false
+          ] )
     ; "example5", cases [ "", example5, Result true ]
     ; "example6", cases [ "", example6 2, Result true ]
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]

@@ -9,6 +9,7 @@ end
 
 module type S = sig
   type clock
+  type param
   type num
   type label
 
@@ -27,8 +28,8 @@ module type S = sig
   val run : strategy -> t -> int -> trace
   val bisimulate : strategy -> t -> t -> int -> (trace, trace) result
   val sync : t -> t -> t
-  val of_constr : (clock, num) Rtccsl.constr -> t
-  val of_spec : (clock, num) Rtccsl.specification -> t
+  val of_constr : (clock, param, num) Rtccsl.constr -> t
+  val of_spec : (clock, param, num) Rtccsl.specification -> t
 
   module Strategy : sig
     val first : (num_cond -> num option) -> strategy
@@ -59,6 +60,7 @@ end
 module Make (C : ID) (N : Num) = struct
   type clock = C.t
   type num = N.t
+  type param = C.t
 
   module L = Set.Make (C)
   module I = Interval.Make (N)
@@ -209,7 +211,15 @@ module Make (C : ID) (N : Num) = struct
     , clocks )
   ;;
 
-  let of_constr (cons : (clock, I.num) Rtccsl.constr) : t =
+  let const_int_param = function
+  | IntConst c -> c
+  | IntVar _ -> failwith "const_int_param: the parameter has to be constant"
+
+  let const_time_param = function
+  | TimeConst c -> c
+  | TimeVar _ -> failwith "const_time_param: the parameter has to be constant"
+
+  let of_constr ?(int_unwrap=const_int_param) ?(time_unwrap=const_time_param) (cons : (clock, param, I.num) constr) : t =
     let label_list = List.map L.of_list in
     match cons with
     | Precedence { cause; effect } -> prec cause effect true
@@ -221,6 +231,8 @@ module Make (C : ID) (N : Num) = struct
       let l = label_list [ clocks; [] ] in
       stateless l clocks
     | RTdelay { out = b; arg = a; delay = l, r } ->
+      let l = time_unwrap l in
+      let r = time_unwrap r in
       let queue = Queue.create () in
       let delay = I.(l =-= r) in
       let g now =
@@ -244,6 +256,10 @@ module Make (C : ID) (N : Num) = struct
       g, t, clocks
     | CumulPeriodic { out; period; error = e1, e2; offset }
     | AbsPeriodic { out; period; error = e1, e2; offset } ->
+      let period = time_unwrap period in
+      let e1 = time_unwrap e1 in
+      let e2 = time_unwrap e2 in
+      let offset = time_unwrap offset in
       let e = I.(e1 =-= e2) in
       let last = ref None in
       let g now =
@@ -274,13 +290,14 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Sporadic { out = c; at_least = d; strict } ->
+    | Sporadic { out = c; at_least; strict } ->
+      let at_least = time_unwrap at_least in
       let last = ref None in
       let g now =
         match !last with
         | None -> [ L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now ]
         | Some v ->
-          let next_after = N.(d + v) in
+          let next_after = N.(at_least + v) in
           [ ( L.of_list [ c ]
             , if strict then I.pinf_strict next_after else I.pinf next_after )
           ; (L.empty, I.(now <-> next_after))
@@ -292,13 +309,14 @@ module Make (C : ID) (N : Num) = struct
         true
       in
       g, t, clocks
-    | Periodic { out; base; period = p } ->
+    | Periodic { out; base; period } ->
+      let period = int_unwrap period in
       let clocks = L.of_list [ out; base ] in
       let labels_eqp = label_list [ [ base; out ]; [] ] in
       let labels_lp = label_list [ [ base ]; [] ] in
       let c = ref 0 in
       let g now =
-        let labels = if !c = p - 1 then labels_eqp else labels_lp in
+        let labels = if !c = period - 1 then labels_eqp else labels_lp in
         lo_guard labels now
       in
       let t _ (l, _) =
@@ -306,7 +324,7 @@ module Make (C : ID) (N : Num) = struct
           if L.mem base l then c := !c + 1;
           if L.mem out l then c := 0
         in
-        0 <= !c && !c < p
+        0 <= !c && !c < period
       in
       g, t, clocks
     | Sample { out; arg; base } ->
@@ -326,6 +344,8 @@ module Make (C : ID) (N : Num) = struct
       in
       g, t, clocks
     | Delay { out; arg; delay = d1, d2; base } ->
+      let d1 = int_unwrap d1 in
+      let d2 = int_unwrap d2 in
       let _ = assert (d1 <= d2) in
       let diff_base = Option.is_some base in
       let base = Option.value base ~default:arg in
@@ -531,6 +551,8 @@ module Make (C : ID) (N : Num) = struct
       let labels = List.powerset args in
       let labels = List.map (fun l -> if l = args then out :: args else l) labels in
       stateless (label_list labels) (out :: args)
+      | LogicalParameter _ -> empty (*FIXME: need evaluation of the expressions, just check if the assignment is inside the evaluated range*)
+      | TimeParameter _ -> empty
   ;;
 
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
@@ -787,7 +809,7 @@ let%test_module _ =
 
     let%test _ =
       let sampling1 =
-        A.of_constr @@ Delay { out = "o"; arg = "i"; delay = 0, 0; base = Some "b" }
+        A.of_constr @@ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 0; base = Some "b" }
       in
       let sampling2 = A.of_constr @@ Sample { out = "o"; arg = "i"; base = "b" } in
       let steps = 10 in

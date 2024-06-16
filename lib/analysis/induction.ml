@@ -67,8 +67,8 @@ module Solver = struct
 end
 
 module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t) = struct
-  open Denotational
   open Rtccsl
+  open Denotational
   include MakeDebug (C) (N)
 
   module N = struct
@@ -78,9 +78,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   include MakeExpr (C) (N)
 
-  exception ExactRelationUnavailable of (C.t, N.t) Rtccsl.constr
-  exception OverApproximationUnavailable of (C.t, N.t) Rtccsl.constr
-  exception UnderApproximationUnavailable of (C.t, N.t) Rtccsl.constr
+  exception ExactRelationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
+  exception OverApproximationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
+  exception UnderApproximationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
 
   (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
@@ -105,24 +105,27 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       And pair_chain
     | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
-    | RTdelay { out; arg; delay = e1, e2 } -> out.@[i] &- arg.@[i] &|> (Const e1, Const e2)
-    | Delay { out; arg; delay = d1, d2; base = None } when d1 = d2 ->
+    | RTdelay { out; arg; delay = e1, e2 } ->
+      out.@[i] &- arg.@[i] &|> (time_param e1, time_param e2)
+    | Delay { out; arg; delay = IntConst d1, IntConst d2; base = None } when d1 = d2 ->
       out.@[i - d1] == arg.@[i]
     | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
     | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
     | CumulPeriodic { out; period; error = le, re; offset } ->
-      let prev = ZeroCond (out.@[i - 1], N.(offset - period)) in
-      out.@[i] &- prev &- Const period &|> (Const le, Const re)
+      let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
+      let prev = ZeroCond (out.@[i - 1], offset &- period) in
+      out.@[i] &- prev &- period &|> (le, re)
     | AbsPeriodic { out; period; error = le, re; offset } ->
-      out.@[i] &- (Const period &* Index (i - 1)) &- Const offset &|> (Const le, Const re)
+      let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
+      out.@[i] &- (period &* Var (Index (i - 1))) &- offset &|> (le, re)
     | Sporadic { out; at_least; strict } ->
       let diff = out.@[i] &- out.@[i - 1] in
-      let at_least = Const at_least in
+      let at_least = time_param at_least in
       if strict then diff > at_least else diff >= at_least
     | _ -> raise (ExactRelationUnavailable c)
   ;;
 
-  let exact_spec (s : ('c, 'n) specification) : ('c, 'n) bool_expr list =
+  let exact_spec (s : ('c, 'p, 'n) specification) : ('c, 'n) bool_expr list =
     List.map exact_rel s
   ;;
 
@@ -188,7 +191,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       exact_rel (Coincidence (out :: args))
     | Sample { out; arg; base } ->
       base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
-    | Delay { out; arg; delay = d1, d2; base = Some base } when d1 = d2 ->
+    | Delay { out; arg; delay = IntConst d1, IntConst d2; base = Some base } when d1 = d2
+      ->
       out.@[i - d1] == base.@[i]
       && base.@[i - 1 - d1] < arg.@[i - d1]
       && arg.@[i - d1] <= base.@[i - d1]
@@ -301,9 +305,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     end)
 
   let clock_index_ranges formula =
-    let rule c i acc =
-      let l, r = MapOC.find_opt c acc |> Option.value ~default:(i, i) in
-      MapOC.add c Int.(min i l, max i r) acc
+    let rule v acc =
+      match v with
+      | FreeVar _ -> acc
+      | Index i -> MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) (i, i) acc None
+      | ClockVar (c, i) ->
+        MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) (i, i) acc (Some c)
     in
     BoolExpr.fold_vars rule MapOC.empty formula
   ;;
@@ -325,91 +332,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let compare = Tuple.compare2 (Option.compare C.compare) Int.compare
     end)
 
-  (** Multiplies two formulae using fixpoint saturation.*)
-  let mul l r =
-    (* Printf.printf "mul: l\n";
-       print_bool_exprs [ l ]; *)
-    let livars = BoolExpr.indexed_vars l in
-    let rivars = BoolExpr.indexed_vars r in
-    let make_shift_table ivars =
-      List.fold_left
-        (fun tbl (c, i) ->
-          Hashtbl.entry tbl (fun (gmin, gmax) -> Int.min gmin i, Int.max gmax i) c (i, i);
-          tbl)
-        (Hashtbl.create 16)
-        ivars
-    in
-    let shift_rvars = make_shift_table rivars in
-    (*Return saturation?*)
-    (*FIXME: problem seems to be in not replicating self-referencing stateful constraints, also maybe do saturation on all constraints at once?*)
-    let shifting f shift_vars to_visit =
-      (* Printf.printf "shifting:\n";
-         print_bool_exprs [ f ]; *)
-      let formulae =
-        to_visit
-        |> MapOCI.to_seq
-        |> Seq.filter_map (fun ((c, i), _) ->
-          (* Printf.printf "adds rs (%b, %b):\n" left right; *)
-          let* _, max_offset = Hashtbl.find_opt shift_vars c in
-          let offset = i - max_offset in
-          (* let _ =
-             Printf.printf
-             "c: %s; i: %i; in f: %i; offset: %i\n"
-             (Option.fold ~none:"i" ~some:C.to_string c)
-             i
-             max_offset
-             offset
-             in *)
-          let shifted = BoolExpr.shift_by f offset in
-          Some shifted)
-        |> List.of_seq
-      in
-      formulae
-    in
-    let plan_to_visit to_cover visited =
-      let minmax_rule acc (c, i) =
-        let l, r = MapOC.find_opt c acc |> Option.value ~default:(i, i) in
-        MapOC.add c Int.(min i l, max i r) acc
-      in
-      let to_visit =
-        to_cover
-        |> SetOCI.to_seq
-        |> Seq.fold_left minmax_rule MapOC.empty
-        |> MapOC.to_seq
-        |> Seq.flat_map (fun (c, (min, max)) ->
-          Seq.int_seq_inclusive (min, max)
-          |> Seq.map (fun i -> (c, i), (i = min, i = max)))
-        |> Seq.filter (fun ((c, i), _) -> not (SetOCI.mem (c, i) visited))
-        |> MapOCI.of_seq
-      in
-      (* let _ = Printf.printf "to_cover: " in
-         let _ =
-         List.print
-         (fun (c, i) ->
-         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
-         (SetOCI.elements to_cover)
-         in
-         let _ = Printf.printf "visited: " in
-         let _ =
-         List.print
-         (fun (c, i) ->
-         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
-         (SetOCI.elements visited)
-         in
-         let _ = Printf.printf "to_visit: " in
-         let _ =
-         List.print
-         (fun (c, i) ->
-         Printf.printf "%s:%i " (Option.fold ~none:"i" ~some:C.to_string c) i)
-         (SetOCI.elements to_visit)
-         in *)
-      to_visit
-    in
-    let visited_by_l = SetOCI.of_list livars in
-    let new_rs = shifting r shift_rvars (plan_to_visit visited_by_l SetOCI.empty) in
-    And (l :: new_rs)
-  ;;
-
   module OptVarSet = Set.Make (struct
       type t = C.t option
 
@@ -418,7 +340,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   let components_by_vars formulae =
     let formulae_with_vars =
-      List.map (fun f -> [ f ], OptVarSet.of_list (BoolExpr.vars f)) formulae
+      List.map
+        (fun f -> [ f ], OptVarSet.of_list (BoolExpr.indexed_vars_except_index f))
+        formulae
     in
     let rec add_to_components components (fs, vars) =
       match components with
@@ -688,35 +612,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     And (List.concat_map range_saturate components)
   ;;
 
-  (** Forms a formula hull from stateful (past-referencing) formulae, returns the hull and all statelss formulae.*)
-  let stateful_hull formulae =
-    let stateful, stateless = formulae, [] in
-    let vars_of f = f |> BoolExpr.vars |> OptVarSet.of_list in
-    let rec topological_mul variants (next, next_vars) =
-      let variant, others =
-        List.find_opt_partition
-          (fun (_, vars) -> not (OptVarSet.disjoint vars next_vars))
-          variants
-      in
-      let variants =
-        match variant with
-        | Some (f, vars) ->
-          let product = mul f next in
-          topological_mul others (product, OptVarSet.union vars next_vars)
-        | None -> (next, next_vars) :: others
-      in
-      variants
-    in
-    let stateful = List.map (fun f -> f, vars_of f) stateful in
-    let parallel_products =
-      match stateful with
-      | [] -> []
-      | x :: [] -> [ x ]
-      | x :: tail -> List.fold_left topological_mul [ x ] tail
-    in
-    And (parallel_products |> List.map (fun (f, _) -> f)), stateless
-  ;;
-
   (** Returns minimal precondition to inductive step from the given [formulae].*)
   let postcondition hull =
     let stateless = [] in
@@ -803,10 +698,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         remove_sub_zero_refs f)
       |> List.of_seq
     in
-    let vars =
-      formulae |> List.flat_map BoolExpr.vars |> List.flat |> List.sort_uniq C.compare
-    in
-    let clock_starts = List.map lc_init vars in
+    let clocks = formulae |> List.flat_map BoolExpr.clocks |> List.sort_uniq C.compare in
+    let clock_starts = List.map lc_init clocks in
     let clock_ranges = clock_index_ranges (And shifted_formulae) in
     let clock_connections =
       clock_ranges
@@ -855,8 +748,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         remove_sub_zero_refs f)
       |> List.of_seq
     in
-    let vars = product |> BoolExpr.vars |> List.flat |> List.sort_uniq C.compare in
-    let clock_starts = List.map lc_init vars in
+    let clocks = product |> BoolExpr.clocks |> List.sort_uniq C.compare in
+    let clock_starts = List.map lc_init clocks in
     And (And shifted_formulae :: clock_starts)
   ;;
 
@@ -1261,9 +1154,28 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   module Simulation = struct
     open Graph
 
+    type var_family =
+      | Free of C.t
+      | Clock of C.t
+      | Index
+    [@@deriving compare]
+
+    module VarFamilySet = Set.Make (struct
+        type t = var_family
+
+        let compare = compare_var_family
+      end)
+
     let remove_by_var_rule vars = function
-      | TagVar (c, _) when OptVarSet.mem (Some c) vars -> None
-      | Index _ when OptVarSet.mem None vars -> None
+      | Var v ->
+        let* v =
+          match v with
+          | FreeVar v when VarFamilySet.mem (Free v) vars -> None
+          | ClockVar (c, _) when VarFamilySet.mem (Clock c) vars -> None
+          | Index _ when VarFamilySet.mem Index vars -> None
+          | _ -> Some v
+        in
+        Some (Var v)
       | _ as e -> Some e
     ;;
 
@@ -1296,7 +1208,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         BoolExpr.eliminate
           Option.some
           (function
-            | Linear (TagVar (c1, i), Less, TagVar (c2, j))
+            | Linear (Var (ClockVar (c1, i)), Less, Var (ClockVar (c2, j)))
               when C.compare c1 c2 = 0 && i = j - 1 -> None
             | e -> Some e)
           f
@@ -1304,7 +1216,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let ranges = clock_index_ranges core in
       BoolExpr.eliminate
         (function
-          | TagVar (c, i) as e ->
+          | Var (ClockVar (c, i)) as e ->
             let min, max = MapOC.find (Some c) ranges in
             if min <= i && i <= max then Some e else None
           | e -> Some e)
@@ -1315,7 +1227,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     module SubstituteMap = Map.Make (C)
 
     let rec equalities acc = function
-      | Linear (TagVar (l, i), Eq, TagVar (r, j)) -> ((l, i), (r, j)) :: acc
+      | Linear (Var (ClockVar (l, i)), Eq, Var (ClockVar (r, j))) ->
+        ((l, i), (r, j)) :: acc
       | Linear _ -> acc
       | And list | Or list -> List.fold_left equalities acc list
     ;;
@@ -1337,9 +1250,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let substitute map f =
       BoolExpr.rewrite
         (function
-          | TagVar (c, i) as e ->
+          | Var (ClockVar (c, i)) as e ->
             SubstituteMap.find_opt c map
-            |> Option.map (fun (sub, j) -> TagVar (sub, i + j))
+            |> Option.map (fun (sub, j) -> Var (ClockVar (sub, i + j)))
             |> Option.value ~default:e
           | e -> e)
         Fun.id
@@ -1363,10 +1276,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let property_equalities = List.fold_left equalities [] p in
       let struct_vars =
         List.fold_left
-          (BoolExpr.fold_vars (fun c _ set ->
-             match c with
-             | Some c -> VarSet.add c set
-             | None -> set))
+          (BoolExpr.fold_vars (fun v set ->
+             match v with
+             | ClockVar (c, _) -> VarSet.add c set
+             | _ -> set))
           VarSet.empty
           s
       in
@@ -1389,7 +1302,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         |> Seq.flat_map (List.to_seq << enum_specialized)
         |> Seq.flat_map (List.to_seq << BoolExpr.flatten << BoolExpr.norm)
         |> Seq.map (fun f ->
-          match BoolExpr.max_opt f with
+          match BoolExpr.max_index_opt f with
           | Some max -> BoolExpr.shift_by f (-max)
           | None -> f)
         |> ExprSet.of_seq
@@ -1403,14 +1316,24 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
          let _ = print_bool_exprs (ExprSet.elements struct_exprs) in *)
       let remove_diff_exprs = remove_matching diff_constraints in
       let var_families formulae =
-        List.fold_right
-          (OptVarSet.add_seq << (List.to_seq << BoolExpr.vars))
+        List.fold_left
+          (fun acc f ->
+            let seq =
+              f
+              |> BoolExpr.vars
+              |> List.to_seq
+              |> Seq.map (function
+                | FreeVar v -> Free v
+                | ClockVar (c, _) -> Clock c
+                | Index _ -> Index)
+            in
+            VarFamilySet.add_seq seq acc)
+          VarFamilySet.empty
           formulae
-          OptVarSet.empty
       in
       let struct_vars = var_families s in
       let property_vars = var_families p in
-      let diff_vars = OptVarSet.diff property_vars struct_vars in
+      let diff_vars = VarFamilySet.diff property_vars struct_vars in
       let remove_diff_vars = eliminate_by_clocks diff_vars in
       let general_remove = remove_diff_vars << remove_diff_exprs << BoolExpr.norm in
       let init, pre, ind, post =
