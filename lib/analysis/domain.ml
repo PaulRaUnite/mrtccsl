@@ -159,9 +159,17 @@ module VPL (V : Var) (N : Num) = struct
     Q.make (Z.of_int num) (Z.of_int den)
   ;;
 
-  let var_str (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
-  let var (v, i) = Ident.toVar (var_str (v, i))
+  let clock_var_str (v, i) = Printf.sprintf "%s[%i]" (V.to_string v) i
+  let clock_var (v, i) = Ident.toVar (clock_var_str (v, i))
   let index_var index = Ident.toVar @@ V.to_string index
+  let free_var v = V.to_string v
+
+  let var index = function
+    | FreeVar v -> free_var v
+    | ClockVar (c, i) -> clock_var_str (c, i)
+    | Index _ -> V.to_string index
+  ;;
+
   let top _ _ = aux_empty, D.top
   let leq (_, x) (_, y) = D.leq x y
   let meet (auxx, x) (auxy, y) = aux_union auxx auxy, D.meet x y
@@ -175,7 +183,7 @@ module VPL (V : Var) (N : Num) = struct
     | Var v ->
       (match v with
        | FreeVar v -> D.Term.Var (Ident.toVar (V.to_string v))
-       | ClockVar (v, i) -> D.Term.Var (var (v, i))
+       | ClockVar (v, i) -> D.Term.Var (clock_var (v, i))
        | Index i -> D.Term.Add (D.Term.Var (index_var index), D.Term.Cte (Q.of_int i)))
     | Const n -> D.Term.Cte (to_q n)
     | Op (l, op, r) ->
@@ -206,14 +214,7 @@ module VPL (V : Var) (N : Num) = struct
     | Linear (l, op, r) ->
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
       let bexp = D.of_cond lincond in
-      let vars =
-        formula
-        |> BoolExpr.indexed_vars
-        |> List.map (function
-          | Some v, i -> var_str (v, i)
-          | None, _ -> V.to_string index)
-        |> VarSet.of_list
-      in
+      let vars = formula |> BoolExpr.vars |> List.map (var index) |> VarSet.of_list in
       let new_domain = D.assume bexp domain in
       let _ =
         if (not (D.is_bottom domain)) && D.is_bottom new_domain
@@ -229,7 +230,7 @@ module VPL (V : Var) (N : Num) = struct
   (** Checks that b is strictly more precise than a.*)
   let more_precise (aa, a) (ab, b) =
     (* let _ = List.iter (fun v -> Printf.printf "%s " v) (VarSet.elements aa.vars) in *)
-    let diffvars = VarSet.elements @@ VarSet.diff ab.vars aa.vars in
+    let diffvars = VarSet.diff ab.vars aa.vars |> VarSet.elements in
     let p = D.project diffvars b in
     let _ =
       if !is_debug

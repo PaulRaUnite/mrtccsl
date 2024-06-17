@@ -105,6 +105,37 @@ let example7 period n1 n2 d =
   , [] )
 ;;
 
+let param1 d1 d2 n t1 t2 =
+  let t = "t" in
+  ( [ CumulPeriodic
+        { out = "base"
+        ; period = TimeConst 50
+        ; error = TimeConst (-2), TimeConst 2
+        ; offset =
+            (let x, y = d1 in
+             TimeConst (Int.max x y + 3))
+        }
+    ]
+  , [ RTdelay { out = "b"; arg = "a"; delay = Tuple.map2 (fun v -> TimeConst v) d1 }
+    ; Delay { out = "d"; arg = "b"; delay = IntConst n, IntConst n; base = Some "base" }
+    ; RTdelay { out = "e"; arg = "d"; delay = Tuple.map2 (fun v -> TimeConst v) d2 }
+    ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
+    ; RTdelay { out = "fb"; arg = "fa"; delay = Tuple.map2 (fun v -> TimeConst v) d1 }
+      (* ; Causality { cause = "fa"; effect = "fb" } *)
+    ; Subclocking { sub = "fa"; super = "a" }
+    ]
+  , [ Precedence { cause = "e"; effect = "fad" }
+    ; TimeParameter (t, (Const t1, Const t2))
+    ; RTdelay { out = "fad"; arg = "fa"; delay = TimeVar t, TimeVar t }
+    ] )
+;;
+
+let inclusion (a, b) (c, d) =
+  ( []
+  , [ TimeParameter ("x", (Const a, Const b)) ]
+  , [ TimeParameter ("x", (Const c, Const d)) ] )
+;;
+
 module D = Domain.VPL (String) (Number.Integer)
 
 module S =
@@ -161,5 +192,16 @@ let _ =
     ; "example5", cases [ "", example5, Result true ]
     ; "example6", cases [ "", example6 2, Result true ]
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]
+    ; ( "param1"
+      , cases
+          [ "t=[600,1000]", param1 (3, 3) (3, 3) 4 600 1000, Result true
+          ; "t=[200,300]", param1 (3, 3) (3, 3) 4 200 300, Result false
+          ] )
+    ; ( "pure_params"
+      , cases
+          [ "[100, 200] <= [100,400]", inclusion (100, 200) (100, 400), Result true
+          ;"[100, 200] <= [100,400]", inclusion (100, 100) (100, 100), Result true
+          ; "[100, 200] !<= [200,400]", inclusion (100, 200) (200, 400), Result false
+          ] )
     ]
 ;;
