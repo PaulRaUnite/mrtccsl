@@ -27,6 +27,7 @@ module type S = sig
   val more_precise : t -> t -> bool
   val infinite_in : v -> t -> bool
   val set_debug : bool -> unit
+  val project : v list -> t -> t
 
   include Interface.Stringable with type t := t
 end
@@ -114,6 +115,7 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
   let more_precise _ _ = failwith "not implemented"
   let infinite_in _ _ = failwith "not implemented"
   let set_debug _ = ()
+  let project _ _ = failwith "not implemented"
 end
 
 module VPL (V : Var) (N : Num) = struct
@@ -233,12 +235,11 @@ module VPL (V : Var) (N : Num) = struct
     let diffvars = VarSet.diff ab.vars aa.vars |> VarSet.elements in
     let p = D.project diffvars b in
     let _ =
-      if !is_debug
-      then
-        Printf.printf
-          "To diff:\nPre: %s\n Proj: %s\n"
-          (D.to_string V.to_string a)
-          (D.to_string V.to_string p)
+      if !is_debug then
+      Printf.printf
+        "To diff:\nPre: %s\n Proj: %s\n"
+        (D.to_string V.to_string a)
+        (D.to_string V.to_string p)
     in
     D.leq a p && D.leq p a
   ;;
@@ -250,6 +251,14 @@ module VPL (V : Var) (N : Num) = struct
       | Vpl.Pol.Infty -> true
       | _ -> false)
     |> Option.value ~default:false
+  ;;
+
+  let project vars (aux, dom) =
+    let vars = List.map V.to_string vars in
+    let vars_to_project = VarSet.diff aux.vars (VarSet.of_list vars) in
+    let projected = D.project (VarSet.elements vars_to_project) dom in
+    (*FIXME: aux is not correct here*)
+    aux, projected
   ;;
 
   let set_debug cond = is_debug := cond
