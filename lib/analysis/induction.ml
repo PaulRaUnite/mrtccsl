@@ -34,6 +34,7 @@ module Solver = struct
     val ( && ) : t -> t -> t
     val ( <= ) : t -> t -> bool
     val set_debug : bool -> unit
+    val project : v list -> t -> t
 
     include Interface.Stringable with type t := t
   end
@@ -106,7 +107,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       And pair_chain
     | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
     | RTdelay { out; arg; delay = e1, e2 } ->
-      out.@[i] &- arg.@[i] &|> (time_param e1, time_param e2)
+      let e1 = time_param e1 in
+      let e2 = time_param e2 in
+      out.@[i] &- arg.@[i] &|> (e1, e2)
+      && e1 >= Const N.zero
+      && e2 >= Const N.zero
+      && e2 >= e1
     | Delay { out; arg; delay = IntConst d1, IntConst d2; base = None } when d1 = d2 ->
       out.@[i - d1] == arg.@[i]
     | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
@@ -115,9 +121,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
       let prev = ZeroCond (out.@[i - 1], offset &- period) in
       out.@[i] &- prev &- period &|> (le, re)
+      && period > Const N.zero
+      && re >= le
+      && offset > Const N.zero
     | AbsPeriodic { out; period; error = le, re; offset } ->
       let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
       out.@[i] &- (period &* Var (Index (i - 1))) &- offset &|> (le, re)
+      && period > Const N.zero
+      && re >= le
+      && offset > Const N.zero
     | Sporadic { out; at_least; strict } ->
       let diff = out.@[i] &- out.@[i - 1] in
       let at_least = time_param at_least in
@@ -278,27 +290,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       (Hashtbl.create 32)
   ;;
 
-  (**Intersects all [formulae] with logical clocks related to their past.*)
-  let inductive_step formula =
-    let formulae = [ formula ] in
-    let add_shift_by_one (c, i) = Seq.return2 (c, i - 1) (c, i) in
-    let unique_num_vars =
-      formulae
-      |> List.to_seq
-      |> Seq.flat_map (fun f -> f |> BoolExpr.vars_except_i |> List.to_seq)
-      |> Seq.flat_map add_shift_by_one
-      |> SetCI.of_seq
-    in
-    let connections_to_past =
-      unique_num_vars
-      |> logical_clocks_from_vars
-      |> Hashtbl.to_seq
-      |> Seq.flat_map connect_clocks
-      |> List.of_seq
-    in
-    And (And (List.map BoolExpr.use_more_cond formulae) :: connections_to_past)
-  ;;
-
   module MapOC = Map.Make (struct
       type t = C.t option
 
@@ -326,6 +317,20 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   (** Construsts inductive precondition from postcondition [post].*)
   let precondition post = BoolExpr.map_idx (fun _ i -> i - 1) post
+
+  (**Intersects all [formulae] with logical clocks related to their past.*)
+  let inductive_step product =
+    let ranges = clock_index_ranges product in
+    let connections_to_past =
+      ranges
+      |> MapOC.to_seq
+      |> Seq.filter_map (fun (v, (min, _)) ->
+        let* v = v in
+        Some (lc_connection v min))
+      |> List.of_seq
+    in
+    And (product :: connections_to_past)
+  ;;
 
   module MapOCI = Map.Make (struct
       type t = C.t option * int
@@ -389,50 +394,18 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | _ ->
       let spawned_variables = ref MapOC.empty in
       let g = VarFormulaGraph.create () in
-      let var_str = Option.fold ~none:"i" ~some:C.to_string in
       let update_graph v destination =
-        (* MapOCI.iter (fun (v,i) _ -> Printf.printf "%s[%i] " (var_str v) i) !spawned_variables; *)
         match MapOC.find_opt v !spawned_variables with
         | Some idx_formulae ->
-          (* Printf.printf "update_graph formulae:\n";
-             List.print (fun t -> print_string (Tuple.to_string2 string_of_int t)) (idx_formulae); *)
           idx_formulae
           |> List.to_seq
           |> Seq.iter (fun (i, f) ->
-            (* let fd, vd, id = destination in
-               let _ =
-               Printf.printf
-               "(%i,%s,%i) -> (%i,%s,%i)\n"
-               (f)
-               (var_str v)
-               i
-               (fd)
-               (var_str vd)
-               id
-               in *)
             VarFormulaGraph.add_edge
               g
               (VarFormulaGraph.V.create (f, v, i))
               (VarFormulaGraph.V.create destination))
         | None -> ()
       in
-      (* let check_cycle () =
-         Printf.printf "look at the graph: size=%i\n"( VarFormulaGraph.nb_edges g);
-         VarFormulaGraph.iter_edges
-         (fun s d ->
-         let fs, vs, is = VarFormulaGraph.V.label s in
-         let fd, vd, id = VarFormulaGraph.V.label d in
-         Printf.printf
-         "(%i,%s,%i) -> (%i,%s,%i)\n"
-         ( fs)
-         (var_str vs)
-         is
-         ( fd)
-         (var_str vd)
-         id)
-         g;
-         (ProductGraph.has_cycle g)
-         in *)
       let setup formulae =
         let root_idx =
           formulae
@@ -458,22 +431,14 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
              |> Seq.map (fun (v, i) -> v, [ i, root_idx ])
              |> MapOC.of_seq
         in
-        (* print_endline "first spawned:";
-           MapOC.iter
-           (fun v ifs -> List.iter (fun (i,f) -> Printf.printf "%i %s[%i] "f (var_str v) i) ifs)
-           !spawned_variables;
-           print_endline ""; *)
         [ root_formula ], coverage_covered
       in
-      (* let compare_formulae = List.compare (compare_bool_expr C.compare N.compare) in *)
       let equal (before, _) (after, _) =
         if ProductGraph.has_cycle g
         then raise ProductLoop
         else List.length before = List.length after
       in
       let step (product, ranges) =
-        (* let _ = Printf.printf "product:\n" in
-           let _ = print_bool_exprs product in *)
         let product_covered = clock_index_ranges (And product) in
         let new_spawned_variables = ref MapOC.empty in
         let cover_with fi (f, coverage, covered) =
@@ -498,39 +463,16 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               product_covered
               covered
           in
-          (* let _ =
-             Printf.printf "considering: ";
-             print_bool_exprs [ f ]
-             in *)
           let new_formulae =
             to_consider
             |> MapOC.to_seq
             |> Seq.filter_map (fun (v, cover) ->
               let* min, max = MapOC.find_opt v coverage in
-              let tuple_str =
-                Option.fold ~none:"" ~some:(Tuple.to_string2 Int.to_string)
-              in
-              let var_str = Option.fold ~none:"i" ~some:C.to_string in
               let diam = max - min in
               let to_cover =
                 match cover with
-                | Initial ((a, b) as range) ->
-                  (* let _ =
-                     Printf.printf
-                     "adding: %s initial=%s actual=%s\n"
-                     (var_str v)
-                     (Tuple.to_string2 Int.to_string range)
-                     (Tuple.to_string2 Int.to_string (a + diam, b))
-                     in *)
-                  Seq.int_seq_inclusive (a + diam, b)
+                | Initial (a, b) -> Seq.int_seq_inclusive (a + diam, b)
                 | Update { left; right } ->
-                  (* let _ =
-                     Printf.printf
-                     "adding: %s l=%s r=%s\n"
-                     (var_str v)
-                     (tuple_str left)
-                     (tuple_str right)
-                     in *)
                   let from_left =
                     match left with
                     | Some (a, b) -> Seq.int_seq_inclusive (a + diam, b + diam)
@@ -586,11 +528,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         in
         let new_formulae, new_ranges = ranges |> Array.mapi cover_with |> Array.split in
         let _ = spawned_variables := !new_spawned_variables in
-        (* print_endline "new spawned:";
-           MapOC.iter
-           (fun v ifs -> List.iter (fun (i,f) -> Printf.printf "%i %s[%i] "f (var_str v) i) ifs)
-           !spawned_variables;
-           print_endline ""; *)
         ( Seq.append
             (List.to_seq product)
             (new_formulae |> Array.to_seq |> Seq.map List.to_seq |> Seq.concat)
@@ -608,8 +545,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   ;;
 
   (** Returns minimal precondition to inductive step from the given [formulae].*)
-  let postcondition hull =
-    let hull_vars = SetOCI.of_list (BoolExpr.indexed_vars hull) in
+  let postcondition product =
+    let clock_vars = SetOCI.of_list (BoolExpr.indexed_vars product) in
     let setoci2setci set =
       set
       |> SetOCI.to_seq
@@ -620,68 +557,20 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     in
     (*adds c[i]<c[j] relation for clocks; i < j*)
     let logical_filling =
-      hull_vars
+      clock_vars
       |> setoci2setci
       |> logical_clocks_from_vars
       |> Hashtbl.to_seq
       |> Seq.flat_map connect_clocks
       |> List.of_seq
     in
-    BoolExpr.use_more_cond (And (hull :: logical_filling))
+    BoolExpr.use_more_cond (And (product :: logical_filling))
   ;;
 
   (** Returns basic condition for a logical clock: [0 < c[1]]*)
   let lc_init c = Denotational.Syntax.(Const N.zero < c.@[1])
 
-  (** Returns initial condition for the [formulae] of the given [width].*)
-  let init_cond width formulae =
-    let norm_reduce_nonzero index f =
-      let f = NumExpr.norm_rule f in
-      let* f = NumExpr.reduce_zerocond_rule index f in
-      Some (NumExpr.norm_rule f)
-    in
-    let index_to_reduce = 0 in
-    let elimination_of_texp_only rule =
-      BoolExpr.eliminate (NumExpr.eliminate rule) Option.some
-    in
-    let use_init_and_simplify =
-      elimination_of_texp_only (norm_reduce_nonzero index_to_reduce)
-    in
-    let remove_sub_zero_refs =
-      elimination_of_texp_only (NumExpr.reduce_negative_rule index_to_reduce)
-    in
-    let shifted_formulae =
-      Seq.product (List.to_seq formulae) (Seq.int_seq_inclusive (1, width))
-      (*skip zero because clocks start at 1*)
-      |> Seq.filter_map (fun (f, i) ->
-        let f = BoolExpr.shift_by f i in
-        (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
-        let* f = use_init_and_simplify f in
-        (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
-        remove_sub_zero_refs f)
-      |> List.of_seq
-    in
-    let clocks = formulae |> List.flat_map BoolExpr.clocks |> List.sort_uniq C.compare in
-    let clock_starts = List.map lc_init clocks in
-    let clock_ranges = clock_index_ranges (And shifted_formulae) in
-    let clock_connections =
-      clock_ranges
-      |> MapOC.to_seq
-      |> Seq.flat_map (fun (v, (min, max)) ->
-        let diam = max - min in
-        if diam < 2
-        then Seq.empty
-        else (
-          match v with
-          | Some c -> Seq.int_seq_inclusive (2, diam) |> Seq.map (fun i -> c, i)
-          | None -> Seq.empty))
-      (*skip zero and first because they are handled by clock_starts.*)
-      |> Seq.map (fun (c, i) -> lc_connection c i)
-      |> List.of_seq
-    in
-    And (And (And shifted_formulae :: clock_connections) :: clock_starts)
-  ;;
-
+  (** Returns initial condition for the [product].*)
   let product_init product =
     let norm_reduce_nonzero index f =
       let f = NumExpr.norm_rule f in
@@ -706,9 +595,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         (*skip zero because clocks start at 1*)
         |> Seq.filter_map (fun i ->
           let f = BoolExpr.shift_by product i in
-          (* let _ = Printf.printf "bf: %s\n" (string_of_bool_expr f) in *)
           let* f = use_init_and_simplify f in
-          (* let _ = Printf.printf "af: %s\n" (string_of_bool_expr f) in *)
           remove_sub_zero_refs f)
         |> List.of_seq
       in
@@ -725,11 +612,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let pre = precondition post in
     let init = product_init product in
     let init, pre, cond, post = Tuple.map4 BoolExpr.norm (init, pre, cond, post) in
-    (* let _ = Printf.printf "existence proof:\n" in
-       let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
-       let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
-       let _ = Printf.printf "step: %s\n" (string_of_bool_expr cond) in
-       let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in *)
     init, pre, cond, post
   ;;
 
@@ -744,6 +626,14 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
         ())
       (List.zip4 init pre ind post)
+  ;;
+
+  let parameter_names formulae =
+    formulae
+    |> List.filter_map (function
+      | TimeParameter (v, _) | LogicalParameter (v, _) -> Some v
+      | _ -> None)
+    |> List.sort_uniq C.compare
   ;;
 
   module Graph = struct
@@ -780,17 +670,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       | StepIsLast of int * int
 
     let report { init; vertices; edges; _ } =
-      (* let _ =
-         Hashtbl.iter
-         (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
-         vertices
-         in
-         let _ =
-         Hashtbl.iter
-         (fun (f, t) sat ->
-         Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
-         edges
-         in *)
       let len = Array.length init in
       let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
       let mark_cyclic v = Hashtbl.replace in_cycle v true in
@@ -806,16 +685,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                tbl)
              (Hashtbl.create (Hashtbl.length vertices))
       in
-      (* let print_marks m =
-         Hashtbl.iter
-         (fun k v ->
-         match k with
-         | Pre i -> Printf.printf "pre %i: %b\n" i v
-         | Step (i, j) -> Printf.printf "step %i %i: %b\n" i j v
-         | Post i -> Printf.printf "post %i: %b\n" i v)
-         m
-         in *)
-      (* let _ = print_marks marks in *)
       let rec dfs (v : int vertix) =
         if is_cyclic v
         then (
@@ -886,7 +755,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         Seq.int_seq (Array.length post)
         |> Seq.filter (fun k ->
           let r = not (Hashtbl.mem edges (Step (i, j), Post k)) in
-          (* Printf.printf "filter: %b\n" r; *)
           r)
         |> Seq.map (fun k -> StepPost (i, j, k))
       in
@@ -896,10 +764,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         |> Seq.flat_map (function
           | InitPre i ->
             let sat = S.sat (get init i) in
-            let _ =
-              (* Printf.printf "InitPre\n"; *)
-              add_vertex (Init i) sat
-            in
+            let _ = add_vertex (Init i) sat in
             if sat
             then (
               let sat = S.sat (get pre i) in
@@ -917,7 +782,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
             let sat = S.sat step && S.infinite_in S.index_name step in
             let includes = S.(more_precise pre step) in
             let _ =
-              (* Printf.printf "PreStep: %b %b\n" sat includes; *)
               add_arrow (Pre p) (Step (p, i)) includes;
               add_vertex (Step (p, i)) sat
             in
@@ -930,7 +794,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
             let sat = S.sat post in
             let includes = S.(step <= post) in
             let _ =
-              (* Printf.printf "StepPost: %b %b\n" sat includes; *)
               add_arrow (Step (i, j)) (Post k) includes;
               add_vertex (Post k) sat
             in
@@ -940,7 +803,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           | PostPre i ->
             let sat = S.sat (get pre i) in
             let _ =
-              (* Printf.printf "PostPre\n"; *)
               add_vertex (Pre i) sat;
               add_arrow (Post i) (Pre i) sat
             in
@@ -1114,6 +976,59 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
          | Some under -> print_solution under
          | None -> Printf.printf "Doesn't exist.")
     ;;
+
+    let extract_params param_vars =
+      let from_graph { init; pre; ind; post; vertices; edges } =
+        let next =
+          edges
+          |> Hashtbl.to_seq
+          |> Seq.fold_left
+               (fun tbl ((f, t), sat) ->
+                 if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
+                 tbl)
+               (Hashtbl.create (Hashtbl.length vertices))
+        in
+        let rec dfs (v : int vertix) prev_params prev_vertices =
+          if not (Hashtbl.find vertices v)
+          then []
+          else if List.mem v prev_vertices
+          then [ prev_params ]
+          else (
+            let dom =
+              match v with
+              | Init i -> init.(i)
+              | Pre i -> pre.(i)
+              | Step (i, j) -> S.(pre.(i) && ind.(j))
+              | Post i -> post.(i)
+            in
+            let params = S.(prev_params && project param_vars dom) in
+            let next_vertices = Hashtbl.value next v [] in
+            List.flat_map (fun nv -> dfs nv params (v :: prev_vertices)) next_vertices)
+        in
+        init
+        |> Array.to_seq
+        |> Seq.mapi (fun i _ ->
+          if Hashtbl.find vertices (Init i)
+          then dfs (Init i) (S.of_formula (And [])) []
+          else [])
+        |> Seq.map List.to_seq
+        |> Seq.concat
+        |> List.of_seq
+      in
+      let from_solution = function
+        | Trivial -> [ S.of_formula (And []) ]
+        | Proof (graph, _) -> from_graph graph
+      in
+      function
+      | Exact sol -> from_solution sol
+      | Approximation { over; under } ->
+        let params = from_solution over in
+        (match under with
+         | Some under ->
+           List.cartesian params (from_solution under)
+           |> List.map (fun (l, r) -> S.(l && r))
+         | None -> params)
+    ;;
   end
 
   module Simulation = struct
@@ -1152,7 +1067,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let remove_by_match_rule constraints f =
       match f with
       | Linear _ ->
-        (* Printf.printf "%s\n" (string_of_bool_expr f); *)
         let to_match =
           match ranges_union (clock_index_ranges f) with
           | Some (_, max) ->
@@ -1232,15 +1146,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     (** [remove_difference] returns proof obligations without constraints that are in [p] but not in [s]*)
     let remove_difference parts s p =
-      (* let init, pre, _, _ = parts in
-         let _ =
-         Printf.printf "original property:\n";
-         print_bool_exprs p;
-         Printf.printf "original init:\n";
-         print_bool_exprs [ init.(0) ];
-         Printf.printf "original precondition:\n";
-         print_bool_exprs [ pre.(0) ]
-         in *)
       (* When property introduces equalities, we may remove more than we should. For this we need to renormalize with these new equalities. *)
       let property_equalities = List.fold_left equalities [] p in
       let struct_vars =
@@ -1255,15 +1160,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let substition = equalities_to_substitution property_equalities struct_vars in
       let parts = Tuple.map4 (Array.map (substitute substition)) parts in
       let p = List.map (substitute substition) p in
-      (* let _ =
-         let init, pre, _, _ = parts in
-         Printf.printf "equalized property:\n";
-         print_bool_exprs p;
-         Printf.printf "equalized init:\n";
-         print_bool_exprs [ init.(0) ];
-         Printf.printf "equalized precondition:\n";
-         print_bool_exprs [ pre.(0) ]
-         in *)
       let constraint_set formulae =
         formulae
         |> List.to_seq
@@ -1279,10 +1175,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let struct_exprs = constraint_set s in
       let property_exprs = constraint_set p in
       let diff_constraints = ExprSet.diff property_exprs struct_exprs in
-      (* let _ = Printf.printf "diff_constraints: " in
-         let _ = print_bool_exprs (ExprSet.elements diff_constraints) in
-         let _ = Printf.printf "struct_exprs: " in
-         let _ = print_bool_exprs (ExprSet.elements struct_exprs) in *)
       let remove_diff_exprs = remove_matching diff_constraints in
       let var_families formulae =
         List.fold_left
@@ -1319,12 +1211,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       let init = Array.map (fun f -> remove_sub_zero_refs f |> Option.get) init in
       let pre = Array.map (Option.get << remove_sticking_connectors) pre in
-      (* let _ =
-         Printf.printf "removed init:\n";
-         print_bool_exprs [ init.(0) ];
-         Printf.printf "removed precondition:\n";
-         print_bool_exprs [ pre.(0) ]
-         in *)
       let ind = Array.map (fun f -> inductive_step f) ind in
       init, pre, ind, post
     ;;
@@ -1387,17 +1273,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         Existence.print_problems ab_sol ab_problems;
         Printf.printf "SIMULATION PROBLEMS:\n"
       in
-      (* let _ =
-         Hashtbl.iter
-         (fun v sat -> Printf.printf "%s: %b\n" (vertix_to_string v) sat)
-         sim_sol.vertices
-         in
-         let _ =
-         Hashtbl.iter
-         (fun (f, t) sat ->
-         Printf.printf "%s -> %s: %b\n" (vertix_to_string f) (vertix_to_string t) sat)
-         sim_sol.edges
-         in *)
       S.set_debug true;
       let print = function
         | NoSolutions ->
@@ -1611,8 +1486,6 @@ struct
     let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
     let formula = P.exact_rel c in
     let domain = P.to_polyhedra "i" formula in
-    (* let _ = Printf.printf "%s\n" (P.string_of_bool_expr formula) in
-       let _ = Format.printf "%s" (D.to_string domain) in *)
     assert (not @@ D.is_bottom domain)
   ;;
 end

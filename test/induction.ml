@@ -171,7 +171,6 @@ let to_alcotest (name, module_triple, expected) =
 ;;
 
 let cases = List.map to_alcotest
-let tests = []
 
 let _ =
   Alcotest.run
@@ -194,14 +193,17 @@ let _ =
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]
     ; ( "param1"
       , cases
-          [ "t=[600,1000]", param1 (3, 3) (3, 3) 4 600 1000, Result true
-          ; "t=[200,300]", param1 (3, 3) (3, 3) 4 200 300, Result false
+          [ "t=[262,1000]", param1 (3, 3) (3, 3) 4 262 1000, Result true
+          ; "t=[100,261]", param1 (3, 3) (3, 3) 4 100 261, Result false
+          (*LIMITATION: parameter is NOT common to all parts, i.e. allowed parameters can be different in different parts, breaking induction. *)
+          (* ; "t=[100,300]", param1 (3, 3) (3, 3) 4 100 300, Result true *)
           ] )
     ; ( "pure_params"
       , cases
           [ "[100, 200] <= [100,400]", inclusion (100, 200) (100, 400), Result true
-          ;"[100, 200] <= [100,400]", inclusion (100, 100) (100, 100), Result true
+          ; "[100, 200] <= [100,400]", inclusion (100, 100) (100, 100), Result true
           ; "[100, 200] !<= [200,400]", inclusion (100, 200) (200, 400), Result false
           ] )
+    ; "extract_param", []
     ]
 ;;
