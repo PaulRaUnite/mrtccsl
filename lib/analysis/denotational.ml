@@ -408,7 +408,7 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
 
   let rec string_of_tag_expr = function
     | Var v ->
-      let ind_str i = if i > 0 then Printf.sprintf "i+%i" i else "i" in
+      let ind_str i = if i > 0 then Printf.sprintf "i+%i" i else if i < 0 then Printf.sprintf "i%i" i else "i" in
       (match v with
        | FreeVar v -> V.to_string v
        | ClockVar (c, i) -> Printf.sprintf "%s[%s]" (V.to_string c) (ind_str i)
@@ -466,7 +466,6 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
     aux 0
   ;;
 
-  let print_bool_exprs list =
-    List.iter (fun f -> Printf.printf "%s\n" (string_of_bool_expr f)) list
-  ;;
+  let print_bool_expr f = Printf.printf "%s\n" (string_of_bool_expr f)
+  let print_bool_exprs list = List.iter print_bool_expr list
 end
