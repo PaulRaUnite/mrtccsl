@@ -1353,6 +1353,30 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       | Trivial -> Printf.printf "Simulation is trivially correct.\n"
       | Proof (a, b, sim) -> print_problems (a, b, sim)
     ;;
+
+    let print_solution_graph = function
+      | Trivial -> print_endline "trivial"
+      | Proof (_, _, (g, _)) ->
+        S.set_debug true;
+        let print =
+          Array.iteri (fun i (s, p) ->
+            Printf.printf
+              "%i, proj %b:\n%s\n%s\n"
+              i
+              (S.more_precise s p)
+              (S.to_string s)
+              (S.to_string p))
+        in
+        Printf.printf "Inits:\n";
+        print g.init;
+        Printf.printf "Pres:\n";
+        print g.pre;
+        Printf.printf "Inds:\n";
+        print g.ind;
+        Printf.printf "Posts:\n";
+        print g.post;
+        S.set_debug false
+    ;;
   end
 
   module Assumption = struct
