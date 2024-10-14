@@ -467,5 +467,5 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
   ;;
 
   let print_bool_expr f = Printf.printf "%s\n" (string_of_bool_expr f)
-  let print_bool_exprs list = List.iter print_bool_expr list
+  let print_bool_exprs list = List.iteri (fun i e -> Printf.printf "%i: " i; print_bool_expr e)list
 end

@@ -362,6 +362,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     List.map (fun (l, _) -> l) components
   ;;
 
+
   module VarFormulaGraph = Graph.Imperative.Digraph.Concrete (struct
       type t = int * C.t option * int
 
@@ -388,6 +389,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   exception ProductLoop
 
   let range_saturate formulae =
+    (* print_bool_exprs formulae; *)
     match List.length formulae with
     | 0 -> invalid_arg "range_saturate: cannot saturate zero formulae"
     | 1 -> formulae
@@ -400,6 +402,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           idx_formulae
           |> List.to_seq
           |> Seq.iter (fun (i, f) ->
+            let (j, _, _) = destination in
+            if j <> f then 
             VarFormulaGraph.add_edge
               g
               (VarFormulaGraph.V.create (f, v, i))
@@ -435,7 +439,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       let equal (before, _) (after, _) =
         if ProductGraph.has_cycle g
-        then raise ProductLoop
+        then (VarFormulaGraph.iter_edges (fun v1 v2 -> let pv (f, v, i) = Printf.printf "(%i,%s,%i)" f (Option.value ~default:"i" (Option.map  C.to_string v)) i in pv v1; print_string " --> "; pv v2; print_endline "") g; raise ProductLoop)
         else List.length before = List.length after
       in
       let step (product, ranges) =

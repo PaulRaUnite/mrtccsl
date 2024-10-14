@@ -34,3 +34,6 @@ The project consists of the following tools:
 - don't forget to run `eval $(opam env)`
 - run `opam install . --deps-only --with-tests --with-docs` to install *all* the dependencies
 - finally, `dune build` to build and `dune runtest` to test the library.
+
+## TODO
+- need to disallow using formulas with index variable as exact representation

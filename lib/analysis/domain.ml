@@ -221,7 +221,7 @@ module VPL (V : Var) (N : Num) = struct
       let _ =
         if (not (D.is_bottom domain)) && D.is_bottom new_domain
         then (
-          Printf.printf "makes bottom: %s\n" (string_of_bool_expr formula);
+          Printf.printf "makes bottom: %s \n\n" (string_of_bool_expr formula);
           print_bool_exprs aux.expr)
       in
       aux_union aux { b_expr = [ bexp ]; vars; expr = [ formula ] }, new_domain

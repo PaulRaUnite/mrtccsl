@@ -109,6 +109,32 @@ let example7 period n1 n2 d =
   , [] )
 ;;
 
+let example8 n1 n2=
+  ( []
+  , [
+     Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
+    ; Delay
+        { out = "c"; arg = "b"; delay = IntConst n2, IntConst n2; base = Some "base" }
+    ]
+  , [] )
+;;
+
+let example9 n1 n2 =
+  ( []
+  , [
+     Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
+    ; Delay
+        { out = "dbase"
+        ; arg = "base"
+        ; delay = IntConst (n1 + 1), IntConst (n1 + 1)
+        ; base = None
+        }
+    ; Delay
+        { out = "c"; arg = "b"; delay = IntConst n2, IntConst n2; base = Some "dbase" }
+    ]
+  , [] )
+;;
+
 let param1 d1 d2 n t1 t2 =
   let t = "t" in
   ( [ CumulPeriodic
@@ -185,9 +211,9 @@ let _ =
     ; ( "example3"
       , cases
           [ "+d1=[1,2],d2=[2,3],t=3", example3 (1, 2) (2, 3) (3, 3), Result true
-          (* FIXME: incorrect because of the disjunctions in min/max, they cause 
-           ; "-d1=[1,2],d2=[2,3],t=2", example3 (1, 2) (2, 3) (2, 2), Result false
-          ; "-d1=[2,4],d2=[2,4],t=1", example3 (2, 4) (2, 4) (1,1), Result false *)
+            (* FIXME: incorrect because of the disjunctions in min/max, they cause
+               ; "-d1=[1,2],d2=[2,3],t=2", example3 (1, 2) (2, 3) (2, 2), Result false
+               ; "-d1=[2,4],d2=[2,4],t=1", example3 (2, 4) (2, 4) (1,1), Result false *)
           ] )
     ; ( "example4"
       , cases
@@ -197,6 +223,8 @@ let _ =
     ; "example5", cases [ "", example5, Result true ]
     ; "example6", cases [ "", example6 2, Result true ]
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]
+    ; "example8", cases [ "", example8 2 3, Result true ]
+    ; "example9", cases [ "", example9 2 3, Result true ]
     ; ( "param1"
       , cases
           [ "t=[262,1000]", param1 (3, 3) (3, 3) 4 262 1000, Result true
