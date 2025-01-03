@@ -1,0 +1,77 @@
+mod brake(freq: frequency, e: interval<time>) assume {
+	ms_scale == freq/1kHz;
+	p := basic_platform(freq, e);
+} {
+	abs_correction := p.task(?);
+	braking := p.task(?);
+	speed := p.task(?);
+	
+	receive.cmd causes abs_correction.start;
+	abs_correction.end causes braking.start;
+	braking.end = actuation;
+
+	speed.ready = skip ? every 10*ms_scale p.base_clock;
+	speed.ready causes speed.start;
+	speed.finish causes send.speed.ready;
+} upper interface {
+	actuation = delay receive.cmd by [0,10ms];
+	send.speed.ready = skip ? every 10*ms_scale p.base_clock;
+}
+
+mod controller(freq: frequency, e: interval<time>) assume {
+	ms_scale == freq/1kHz;
+	p := basic_platform(freq, e);
+} {
+	torque_comp := p.task(?);
+	pedal := p.task(?);
+	
+	pedal.start = skip ? every 10*ms_scale p.base_clock;
+	// change in from pedal can appear when finish checking
+	pedal.change subclocks pedal.finish;
+	pedal.change causes torque_comp.start;
+
+	torque_comp.finish causes send.fl.cmd;
+	torque_comp.finish causes send.fr.cmd;
+	torque_comp.finish causes send.rl.cmd;
+	torque_comp.finish causes send.rr.cmd;
+}
+
+mod bbw(freq: frequency, e1: interval<time>, e2: interval<time>, e2e_latency: time) {
+	brakes := {
+		fl := brake(freq, e1);
+		fr := brake(freq, e1);
+		rl := brake(freq, e1);
+		rr := brake(freq, e1);
+	};
+	c := controller(2*freq, e2);
+
+	c.send.fl.cmd precedes brakes.fl.receive.cmd;
+	brakes.fl.send.speed precedes c.receive.speed;
+	c.send.fr.cmd precedes brakes.fr.receive.cmd;
+	brakes.fr.send.speed precedes c.receive.speed;
+	c.send.rl.cmd precedes brakes.rl.receive.cmd;
+	brakes.rl.send.speed precedes c.receive.speed;
+	c.send.rr.cmd precedes brakes.rr.receive.cmd;
+	brakes.rr.send.speed precedes c.receive.speed;
+	
+	// bus mutex
+	send = c.send xor brakes.fl.send xor brakes.fr.send xor brakes.rl.send xor brakes.rr.send;
+	receive = brakes.fl.receive xor brakes.fr.receive xor brakes.rl.receive xor brakes.rr.receive xor c.receive;
+	send alternates receive;
+	// or what is the size of the packet
+	receive = delay send by [0.75ms, 1ms];
+} assert {
+	// reaction constraints
+	reaction_deadline = delay c.pedal.change by e2e_latency;
+	brakes.fl.actuation precedes reaction_deadline;
+	brakes.fr.actuation precedes reaction_deadline;
+	brakes.rl.actuation precedes reaction_deadline;
+	brakes.rr.actuation precedes reaction_deadline;
+
+	// brake synchronization
+	s = slowest(brakes.fl.actuation, brakes.fr.actuation, brakes.rl.actuation, brakes.rr.actuation);
+	f = fastest(brakes.fl.actuation, brakes.fr.actuation, brakes.rl.actuation, brakes.rr.actuation);
+	s precedes (delay f by 5ms);
+}
+
+find f where system := bbw(f, +-1% of f, +-1% of f, 10ms) is schedulable and safe;

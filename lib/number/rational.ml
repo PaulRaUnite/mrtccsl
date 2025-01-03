@@ -80,3 +80,17 @@ let random l r =
 
 let from_int = of_int
 let to_rational = Fun.id
+
+(* TODO: is there another way to make it? Looks not performant. *)
+let from_pair nom denom = div (from_int nom) (from_int denom)
+
+let of_decimal_string s =
+  match String.split_on_char '.' s with
+  | [ whole; decimal ] ->
+    let whole = (from_int << int_of_string) whole in
+    let decimal_num = int_of_string decimal in
+    let len_after_zero = String.length decimal in
+    let decimal = from_pair decimal_num len_after_zero in
+    add whole decimal
+  | _ -> failwith "wrong decimal number"
+;;

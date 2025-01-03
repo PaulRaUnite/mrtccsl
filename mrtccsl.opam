@@ -7,13 +7,22 @@ description:
 maintainer: ["Pavlo Tokariev"]
 authors: ["Pavlo Tokariev"]
 license: "APACHE-2.0"
-tags: ["simulation" "model checking" "abstract interpretation" "induction"]
+tags: [
+  "simulation"
+  "model checking"
+  "abstract interpretation"
+  "induction"
+  "real-time"
+  "logical clock"
+  "dsl"
+]
 homepage: "https://github.com/PaulRaUnite/mrtccsl"
 doc: "https://github.com/PaulRaUnite/mrtccsl"
 bug-reports: "https://github.com/PaulRaUnite/mrtccsl/issues"
 depends: [
-  "ocaml" {>= "4.14"}
-  "dune" {>= "3.7" & with-build}
+  "ocaml" {>= "4.14.3"}
+  "dune" {>= "3.13" & with-build}
+  "menhir"
   "camllib"
   "apron"
   "bddapron"
@@ -26,6 +35,9 @@ depends: [
   "mlgmpidl"
   "vpl-core"
   "ocamlgraph"
+  "mlgmpidl"
+  "spectrum"
+  "containers"
   "odoc" {with-doc}
   "odig" {with-doc}
   "alcotest" {with-test}

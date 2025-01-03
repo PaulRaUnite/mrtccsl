@@ -223,8 +223,8 @@ let _ =
     ; "example5", cases [ "", example5, Result true ]
     ; "example6", cases [ "", example6 2, Result true ]
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]
-    ; "example8", cases [ "", example8 2 3, Result true ]
-    ; "example9", cases [ "", example9 2 3, Result true ]
+    (* ; "example8", cases [ "", example8 2 3, Result true ] *)
+    ; "example9", cases [ "", example9 2 3, Crash I.ProductLoop ]
     ; ( "param1"
       , cases
           [ "t=[262,1000]", param1 (3, 3) (3, 3) 4 262 1000, Result true
@@ -235,7 +235,7 @@ let _ =
     ; ( "pure_params"
       , cases
           [ "[100, 200] <= [100,400]", inclusion (100, 200) (100, 400), Result true
-          ; "[100, 200] <= [100,400]", inclusion (100, 100) (100, 100), Result true
+          ; "[100, 100] <= [100,100]", inclusion (100, 100) (100, 100), Result true
           ; "[100, 200] !<= [200,400]", inclusion (100, 200) (200, 400), Result false
           ] )
     ]

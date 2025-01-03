@@ -1,10 +1,10 @@
-(include_subdirs qualified)
+(include_subdirs unqualified)
 
 (library
  (name mrtccsl)
  (public_name mrtccsl)
  (inline_tests)
- (libraries gmp uuseg.string apron apron.polkaMPQ vpl-core ocamlgraph)
+ (libraries gmp apron apron.polkaMPQ vpl-core ocamlgraph uuseg menhirLib spectrum containers)
  (preprocess
   (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
 

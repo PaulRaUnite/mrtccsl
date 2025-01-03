@@ -1,0 +1,72 @@
+// cylinder timings
+mod cylinder(shaft_degree: clock, offset: integer) {
+	otdc = skip offset+0   every 720 shaft_degree;
+	fbdc = skip offset+180 every 720 shaft_degree;
+	itdc = skip offset+360 every 720 shaft_degree;
+	sbdc = skip offset+540 every 720 shaft_degree;
+
+	exhaust.start = sbdc $ -[45,60] on shaft_degree;
+	exhaust.finish = (next otdc) $ [5, 20] on shaft_degree;
+	ignition_point = (next itdc) $ [-30, 10] on shaft_degree;
+	knock_window.start = (next itdc) $ [0, 55] on shaft_degree;
+	knock_window.finish = knock_window.start $ [0, 55] on shaft_degree;
+}
+
+// timing constraints of cylinders on tasks
+mod task_cylinder_rel(t: block, c: block, sensor_sampling: clock) {
+	c.exhaust.start xor causes t.oxygen_sensing.start;
+	t.oxygen_sensing.finish causes c.exhaust.finish;
+	t.ignition_control.finish causes c.ignition_point;
+	t.knock_sensing.start causes sample c.knock_window.start on sensor_sampling;
+	t.knock_sensing.finish causes sample c.knock_window.finish on sensor_sampling;
+}
+
+mod engine_control(rpm: integer) {
+    rpm in [600, 4500];
+	// constants
+	shaft_period == 1s/(360*rpm/60);
+	frequency == 20MHz;
+	ms_scale == frequency/1kHz;
+	sensor_scale == frequency/100kHz;
+
+	// controller hardware
+	platform := basic_platform(frequency, 20ppm of frequency);
+
+	internal_ms = every ms_scale base_clock;
+	sensor_sampling = every sensor_scale base_clock;
+
+	// engine generic timing
+	shaft_degree = periodic shaft_period rel.error +-1% of shaft_period offset ?;
+	cylinder0 := cylinder(shaft_degree, 0);
+	cylinder1 := cylinder(shaft_degree, 180);
+	cylinder2 := cylinder(shaft_degree, 360);
+	cylinder3 := cylinder(shaft_degree, 540);
+
+	// processing
+	task := {
+        knock_sensing := task(?);
+        oxygen_sensing := task(?);
+        ignition_control := task(?);
+        knock_filtering := task(?);
+        knock_control := task(?);
+    };
+	// data dependencies
+	task.oxygen_sensing.finish causes task.ignition_control.start;
+	task.knock_filtering.finish causes task.ignition_control.start;
+	task.ignition_control.finish causes next task.knock_control.start;
+
+	// resource filter_buffer is only one
+	_ := mutex{
+		task.knock_sensing.start -> task.knock_sensing.finish,
+		task.knock_filtering.start -> task.knock_filtering.finish,
+	};
+	// timing requirements of cylinders on tasks
+	_ := task_cylinder_rel(task, cylinder0, sensor_sampling);
+	_ := task_cylinder_rel(task, cylinder1, sensor_sampling);
+	_ := task_cylinder_rel(task, cylinder2, sensor_sampling);
+	_ := task_cylinder_rel(task, cylinder3, sensor_sampling);
+}
+// In particular
+system := engine_control(1166) is live and safe;
+// Or in general
+find rpm where system := engine_control(rpm) is live(system.internal_ms) and safe;

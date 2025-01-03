@@ -11,6 +11,17 @@ let ( and* ) x y =
   Some (x, y)
 ;;
 
+module Fun = struct
+  include Fun
+
+  let catch_to_opt f v =
+    try Some (f v) with
+    | _ -> None
+  ;;
+
+  let catch_with_default f v default = catch_to_opt f v |> Option.value ~default
+end
+
 module List = struct
   include List
 
@@ -160,7 +171,7 @@ module List = struct
 end
 
 module String = struct
-  include String
+  include CCString
 
   let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_string
   let t_of_sexp = Sexplib0.Sexp_conv.string_of_sexp
@@ -356,3 +367,26 @@ let fixpoint init eq trans start =
   in
   aux (init start)
 ;;
+
+module CircularList = struct
+  type 'a t =
+    { mutable data : 'a list
+    ; max : int
+    }
+
+  let make size =
+    assert (size > 0);
+    { data = []; max = size }
+  ;;
+
+  let push l v =
+    if List.length l.data = l.max
+    then (
+      match l.data with
+      | _ :: tail -> l.data <- List.append tail [ v ]
+      | [] -> invalid_arg "cannot cycle though empty list")
+    else l.data <- List.append l.data [ v ]
+  ;;
+
+  let content l = l.data
+end

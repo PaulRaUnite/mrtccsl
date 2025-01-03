@@ -1,0 +1,3 @@
+mod empty() {}
+
+mod with_param(arg1: clock) {}

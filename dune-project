@@ -1,4 +1,6 @@
-(lang dune 3.7)
+(lang dune 3.13)
+
+(using menhir 3.0)
 
 (name mrtccsl)
 
@@ -23,8 +25,9 @@
  (description
   "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention.")
  (depends
-  (ocaml (>= 4.14))
+  (ocaml (>= 4.14.3))
   (dune :with-build)
+  menhir
   camllib
   apron
   bddapron
@@ -37,10 +40,13 @@
   mlgmpidl
   vpl-core
   ocamlgraph
+  mlgmpidl
+  spectrum
+  containers
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test))
  (tags
-  (simulation "model checking" "abstract interpretation" induction)))
+  (simulation "model checking" "abstract interpretation" induction "real-time" "logical clock" "dsl")))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

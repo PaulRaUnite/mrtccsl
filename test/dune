@@ -8,6 +8,11 @@
  (modules induction)
  (libraries mrtccsl alcotest))
 
+(test
+ (name parser)
+ (libraries mrtccsl)
+ (deps (glob_files code/*.mrtccsl)))
+
 (env
  (dev
   (flags

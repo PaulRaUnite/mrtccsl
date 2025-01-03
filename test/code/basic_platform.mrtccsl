@@ -1,0 +1,9 @@
+basic_platform(frequency: Hz, error: interval<time>) {
+	base_clock = periodic frequency rel.error error + ?;
+	cpu = mutex{};
+
+	task(wcet: int) {
+		finish = start $ wcet on @base_clock;
+		cpu.add(start, finish);
+	}
+}
