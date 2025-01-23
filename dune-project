@@ -29,19 +29,18 @@
   (dune :with-build)
   menhir
   camllib
-  apron
+  (apron (>= 0.9.15))
   bddapron
   ppx_sexp_conv
-  uuseg
-  uutf
+  (uuseg (>= 16.0.0))
+  (uutf (>= 1.0.3))
   ppx_assert
   ppx_inline_test
   ppx_compare
   mlgmpidl
   vpl-core
   ocamlgraph
-  mlgmpidl
-  spectrum
+  (spectrum (>= 0.6.0))
   containers
   (odoc :with-doc)
   (odig :with-doc)
