@@ -11,7 +11,7 @@ let example1 d1 d2 =
   , [ RTdelay { out = "l"; arg = "in"; delay = TimeConst d1, TimeConst d1 }
     ; RTdelay { out = "r"; arg = "in"; delay = TimeConst d2, TimeConst d2 }
     ]
-  , [ Precedence { cause = "l"; effect = "r" } ] )
+  , [ Precedence { cause = "l"; conseq = "r" } ] )
 ;;
 
 (**Sampling on relatively periodic clock*)
@@ -41,7 +41,7 @@ let example3 d1 d2 t =
     ; Slowest { out = "s"; left = "l"; right = "r" }
     ; RTdelay { out = "d"; arg = "f"; delay = t }
     ]
-  , [ Precedence { cause = "s"; effect = "d" } ] )
+  , [ Precedence { cause = "s"; conseq = "d" } ] )
 ;;
 
 let example4 d1 d2 n t =
@@ -59,11 +59,11 @@ let example4 d1 d2 n t =
     ; RTdelay { out = "e"; arg = "d"; delay = time_const_interval d2 }
     ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
     ; RTdelay { out = "fb"; arg = "fa"; delay = time_const_interval d1 }
-      (* ; Causality { cause = "fa"; effect = "fb" } *)
+      (* ; Causality { cause = "fa"; conseq = "fb" } *)
     ; Subclocking { sub = "fa"; super = "a" }
     ; RTdelay { out = "fad"; arg = "fa"; delay = TimeConst t, TimeConst t }
     ]
-  , [ Precedence { cause = "e"; effect = "fad" } ] )
+  , [ Precedence { cause = "e"; conseq = "fad" } ] )
 ;;
 
 let example5 =
@@ -72,7 +72,7 @@ let example5 =
     ; RTdelay { out = "r"; arg = "in"; delay = TimeConst 3, TimeConst 4 }
     ]
   , [ Fastest { out = "f"; left = "l"; right = "r" }
-    ; Precedence { cause = "f"; effect = "r" }
+    ; Precedence { cause = "f"; conseq = "r" }
     ] )
 ;;
 
@@ -109,20 +109,17 @@ let example7 period n1 n2 d =
   , [] )
 ;;
 
-let example8 n1 n2=
+let example8 n1 n2 =
   ( []
-  , [
-     Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
-    ; Delay
-        { out = "c"; arg = "b"; delay = IntConst n2, IntConst n2; base = Some "base" }
+  , [ Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
+    ; Delay { out = "c"; arg = "b"; delay = IntConst n2, IntConst n2; base = Some "base" }
     ]
   , [] )
 ;;
 
 let example9 n1 n2 =
   ( []
-  , [
-     Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
+  , [ Delay { out = "b"; arg = "a"; delay = IntConst n1, IntConst n1; base = Some "base" }
     ; Delay
         { out = "dbase"
         ; arg = "base"
@@ -151,10 +148,10 @@ let param1 d1 d2 n t1 t2 =
     ; RTdelay { out = "e"; arg = "d"; delay = time_const_interval d2 }
     ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
     ; RTdelay { out = "fb"; arg = "fa"; delay = time_const_interval d1 }
-      (* ; Causality { cause = "fa"; effect = "fb" } *)
+      (* ; Causality { cause = "fa"; conseq = "fb" } *)
     ; Subclocking { sub = "fa"; super = "a" }
     ]
-  , [ Precedence { cause = "e"; effect = "fad" }
+  , [ Precedence { cause = "e"; conseq = "fad" }
     ; TimeParameter (t, (Const t1, Const t2))
     ; RTdelay { out = "fad"; arg = "fa"; delay = TimeVar t, TimeVar t }
     ] )
@@ -223,7 +220,7 @@ let _ =
     ; "example5", cases [ "", example5, Result true ]
     ; "example6", cases [ "", example6 2, Result true ]
     ; "example7", cases [ "", example7 10 2 3 5, Crash I.ProductLoop ]
-    (* ; "example8", cases [ "", example8 2 3, Result true ] *)
+      (* ; "example8", cases [ "", example8 2 3, Result true ] *)
     ; "example9", cases [ "", example9 2 3, Crash I.ProductLoop ]
     ; ( "param1"
       , cases

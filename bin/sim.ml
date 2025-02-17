@@ -23,7 +23,7 @@ let fast_strat =
 let one = of_int 1
 let two = of_int 2
 let hundred = of_int 100
-let half = Ratio.(of_int 1 / of_int 2)
+let half = Rational.(of_int 1 / of_int 2)
 
 let () =
   let _ = Random.init 127649812489 in
@@ -50,7 +50,7 @@ let () =
           ; out = "expiration"
           ; delay = TimeConst inspiration_duration, TimeConst inspiration_duration
           }
-      ; Precedence { cause = "trigger.start"; effect = "trigger.finish" }
+      ; Precedence { cause = "trigger.start"; conseq = "trigger.finish" }
       ; Allow
           { from = "trigger.start"; until = "trigger.finish"; args = [ "sensor.inhale" ] }
       ; RTdelay

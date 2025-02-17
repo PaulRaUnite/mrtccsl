@@ -89,15 +89,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let i = 0 in
     (*dummy variable*)
     match c with
-    | Precedence { cause; effect } -> cause.@[i] < effect.@[i]
-    | Causality { cause; effect } -> cause.@[i] <= effect.@[i]
+    | Precedence { cause; conseq } -> cause.@[i] < conseq.@[i]
+    | Causality { cause; conseq } -> cause.@[i] <= conseq.@[i]
     | Coincidence list ->
       let maybe_pair_chain =
         List.fold_left
           (fun acc c ->
-            match acc with
-            | None -> Some (c, [])
-            | Some (p, tail) -> Some (c, (p.@[i] == c.@[i]) :: tail))
+             match acc with
+             | None -> Some (c, [])
+             | Some (p, tail) -> Some (c, (p.@[i] == c.@[i]) :: tail))
           None
           list
       in
@@ -183,10 +183,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let maybe_pair_chain =
         List.fold_left
           (fun acc c ->
-            match acc with
-            | None -> Some (c, c, [])
-            | Some (first, prev, conds) -> Some (first, c, (prev.@[i] < c.@[i]) :: conds))
-            (*order the clocks*)
+             match acc with
+             | None -> Some (c, c, [])
+             | Some (first, prev, conds) -> Some (first, c, (prev.@[i] < c.@[i]) :: conds))
+             (*order the clocks*)
           None
           list
       in
@@ -219,10 +219,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       And
         (List.map
            (fun a ->
-             (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
-             || (from.@[i - 1] <= until.@[i - 1]
-                 && until.@[i - 1] < a.@[i]
-                 && a.@[i] < from.@[i]))
+              (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
+              || (from.@[i - 1] <= until.@[i - 1]
+                  && until.@[i - 1] < a.@[i]
+                  && a.@[i] < from.@[i]))
            args)
     | Allow { from; until; args } ->
       And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
@@ -284,8 +284,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   let logical_clocks_from_vars present_vars =
     SetCI.fold
       (fun (c, i) tbl ->
-        Hashtbl.entry tbl (fun list -> i :: list) c [];
-        tbl)
+         Hashtbl.entry tbl (fun list -> i :: list) c [];
+         tbl)
       present_vars
       (Hashtbl.create 32)
   ;;
@@ -362,7 +362,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     List.map (fun (l, _) -> l) components
   ;;
 
-
   module VarFormulaGraph = Graph.Imperative.Digraph.Concrete (struct
       type t = int * C.t option * int
 
@@ -402,12 +401,13 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           idx_formulae
           |> List.to_seq
           |> Seq.iter (fun (i, f) ->
-            let (j, _, _) = destination in
-            if j <> f then 
-            VarFormulaGraph.add_edge
-              g
-              (VarFormulaGraph.V.create (f, v, i))
-              (VarFormulaGraph.V.create destination))
+            let j, _, _ = destination in
+            if j <> f
+            then
+              VarFormulaGraph.add_edge
+                g
+                (VarFormulaGraph.V.create (f, v, i))
+                (VarFormulaGraph.V.create destination))
         | None -> ()
       in
       let setup formulae =
@@ -439,7 +439,22 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       let equal (before, _) (after, _) =
         if ProductGraph.has_cycle g
-        then (VarFormulaGraph.iter_edges (fun v1 v2 -> let pv (f, v, i) = Printf.printf "(%i,%s,%i)" f (Option.value ~default:"i" (Option.map  C.to_string v)) i in pv v1; print_string " --> "; pv v2; print_endline "") g; raise ProductLoop)
+        then (
+          VarFormulaGraph.iter_edges
+            (fun v1 v2 ->
+               let pv (f, v, i) =
+                 Printf.printf
+                   "(%i,%s,%i)"
+                   f
+                   (Option.value ~default:"i" (Option.map C.to_string v))
+                   i
+               in
+               pv v1;
+               print_string " --> ";
+               pv v2;
+               print_endline "")
+            g;
+          raise ProductLoop)
         else List.length before = List.length after
       in
       let step (product, ranges) =
@@ -449,21 +464,21 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           let to_consider =
             MapOC.merge
               (fun _key g l ->
-                let update (a, b) (c, d) =
-                  let left = if a < c then Some (a, c - 1) else None in
-                  let right = if d > b then Some (b + 1, d) else None in
-                  if Option.is_none left && Option.is_none right
-                  then None
-                  else Some (Update { left; right })
-                in
-                match g, l with
-                | Some g, Some l -> update g l
-                | Some g, None -> Some (Initial g)
-                | None, Some _ ->
-                  failwith
-                    "range saturate, map merge: shouldn't be possible to cover locally \
-                     but not globally"
-                | None, None -> None)
+                 let update (a, b) (c, d) =
+                   let left = if a < c then Some (a, c - 1) else None in
+                   let right = if d > b then Some (b + 1, d) else None in
+                   if Option.is_none left && Option.is_none right
+                   then None
+                   else Some (Update { left; right })
+                 in
+                 match g, l with
+                 | Some g, Some l -> update g l
+                 | Some g, None -> Some (Initial g)
+                 | None, Some _ ->
+                   failwith
+                     "range saturate, map merge: shouldn't be possible to cover locally \
+                      but not globally"
+                 | None, None -> None)
               product_covered
               covered
           in
@@ -492,31 +507,31 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               Some
                 (Seq.map
                    (fun i ->
-                     let offset = i - max in
-                     let shifted = BoolExpr.shift_by f offset in
-                     let new_unshifted_vars =
-                       shifted
-                       |> BoolExpr.indexed_vars
-                       |> List.to_seq
-                       |> Seq.filter (fun (v, i) ->
-                         not
-                           (MapOC.find_opt v product_covered
-                            |> Option.fold ~none:false ~some:(fun (l, r) ->
-                              l <= i && i <= r)))
-                       |> Seq.map (fun (v, i) -> v, i - offset)
-                     in
-                     let _ =
-                       new_unshifted_vars
-                       |> Seq.iter (fun (vf, j) ->
-                         update_graph v (fi, vf, j);
-                         new_spawned_variables
-                         := MapOC.entry
-                              (fun acc -> (j, fi) :: acc)
-                              []
-                              !new_spawned_variables
-                              vf)
-                     in
-                     shifted)
+                      let offset = i - max in
+                      let shifted = BoolExpr.shift_by f offset in
+                      let new_unshifted_vars =
+                        shifted
+                        |> BoolExpr.indexed_vars
+                        |> List.to_seq
+                        |> Seq.filter (fun (v, i) ->
+                          not
+                            (MapOC.find_opt v product_covered
+                             |> Option.fold ~none:false ~some:(fun (l, r) ->
+                               l <= i && i <= r)))
+                        |> Seq.map (fun (v, i) -> v, i - offset)
+                      in
+                      let _ =
+                        new_unshifted_vars
+                        |> Seq.iter (fun (vf, j) ->
+                          update_graph v (fi, vf, j);
+                          new_spawned_variables
+                          := MapOC.entry
+                               (fun acc -> (j, fi) :: acc)
+                               []
+                               !new_spawned_variables
+                               vf)
+                      in
+                      shifted)
                    to_cover))
             |> Seq.concat
             |> List.of_seq
@@ -623,12 +638,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let init, pre, ind, post = Tuple.map4 Array.to_list (init, pre, ind, post) in
     List.iteri
       (fun i (init, pre, ind, post) ->
-        let _ = Printf.printf "Print variant %i:\n" i in
-        let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
-        let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
-        let _ = Printf.printf "ind: %s\n" (string_of_bool_expr ind) in
-        let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
-        ())
+         let _ = Printf.printf "Print variant %i:\n" i in
+         let _ = Printf.printf "init: %s\n" (string_of_bool_expr init) in
+         let _ = Printf.printf "pre: %s\n" (string_of_bool_expr pre) in
+         let _ = Printf.printf "ind: %s\n" (string_of_bool_expr ind) in
+         let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
+         ())
       (List.zip4 init pre ind post)
   ;;
 
@@ -685,8 +700,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         |> Hashtbl.to_seq
         |> Seq.fold_left
              (fun tbl ((f, t), sat) ->
-               if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
-               tbl)
+                if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
+                tbl)
              (Hashtbl.create (Hashtbl.length vertices))
       in
       let rec dfs (v : int vertix) =
@@ -909,54 +924,54 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         | PreIsLast i ->
           Array.iteri
             (fun j dom ->
-              if S.sat dom
-              then
-                Printf.printf
-                  "Non-empty unreachable step %i:\n\
-                   Infinite in index: %b\n\
-                   Strictily expands precondition: %b\n\
-                   Pre %i:\n\
-                   %s\n\
-                   Ind %i:\n\
-                   %s\n\
-                   Both:\n\
-                   %s\n"
-                  j
-                  (S.infinite_in S.index_name dom)
-                  S.(more_precise (pre i) (pre i && ind j))
-                  i
-                  (str_pre i)
-                  j
-                  (str_ind j)
-                  S.(to_string (pre i && ind j))
-              else Printf.printf "Empty step: %i %i\n" i j)
+               if S.sat dom
+               then
+                 Printf.printf
+                   "Non-empty unreachable step %i:\n\
+                    Infinite in index: %b\n\
+                    Strictily expands precondition: %b\n\
+                    Pre %i:\n\
+                    %s\n\
+                    Ind %i:\n\
+                    %s\n\
+                    Both:\n\
+                    %s\n"
+                   j
+                   (S.infinite_in S.index_name dom)
+                   S.(more_precise (pre i) (pre i && ind j))
+                   i
+                   (str_pre i)
+                   j
+                   (str_ind j)
+                   S.(to_string (pre i && ind j))
+               else Printf.printf "Empty step: %i %i\n" i j)
             g.ind
         | StepIsLast (i, j) ->
           Array.iteri
             (fun k dom ->
-              if S.sat dom
-              then (
-                Printf.printf
-                  "Non-empty unreachable post: %i %i % i\n\
-                   pre:\n\
-                   %s\n\
-                   ind:\n\
-                   %s\n\
-                   post:\n\
-                   %s\n\
-                   <= is %b\n\
-                   diff:\n"
-                  i
-                  j
-                  k
-                  (str_pre i)
-                  (str_ind j)
-                  (str_post k)
-                  S.((pre i && ind j) <= post k);
-                List.iter
-                  (print_endline << S.to_string)
-                  S.(diff (pre i && ind j) (post k)))
-              else Printf.printf "Empty post: %i\n" k)
+               if S.sat dom
+               then (
+                 Printf.printf
+                   "Non-empty unreachable post: %i %i % i\n\
+                    pre:\n\
+                    %s\n\
+                    ind:\n\
+                    %s\n\
+                    post:\n\
+                    %s\n\
+                    <= is %b\n\
+                    diff:\n"
+                   i
+                   j
+                   k
+                   (str_pre i)
+                   (str_ind j)
+                   (str_post k)
+                   S.((pre i && ind j) <= post k);
+                 List.iter
+                   (print_endline << S.to_string)
+                   S.(diff (pre i && ind j) (post k)))
+               else Printf.printf "Empty post: %i\n" k)
             g.post
       in
       if List.is_empty problems
@@ -988,8 +1003,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           |> Hashtbl.to_seq
           |> Seq.fold_left
                (fun tbl ((f, t), sat) ->
-                 if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
-                 tbl)
+                  if sat then Hashtbl.entry tbl (fun l -> t :: l) f [] else ();
+                  tbl)
                (Hashtbl.create (Hashtbl.length vertices))
         in
         let rec dfs (v : int vertix) prev_params prev_vertices =
@@ -1127,11 +1142,11 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let equalities_to_substitution eqs except =
       List.fold_left
         (fun map ((l, i), (r, j)) ->
-          let maybe_add (l, i) (r, j) map =
-            if not (VarSet.mem l except) then SubstituteMap.add l (r, j - i) map else map
-          in
-          let map = maybe_add (l, i) (r, j) map in
-          maybe_add (r, j) (l, i) map)
+           let maybe_add (l, i) (r, j) map =
+             if not (VarSet.mem l except) then SubstituteMap.add l (r, j - i) map else map
+           in
+           let map = maybe_add (l, i) (r, j) map in
+           maybe_add (r, j) (l, i) map)
         SubstituteMap.empty
         eqs
     ;;
@@ -1183,16 +1198,16 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let var_families formulae =
         List.fold_left
           (fun acc f ->
-            let seq =
-              f
-              |> BoolExpr.vars
-              |> List.to_seq
-              |> Seq.map (function
-                | FreeVar v -> Free v
-                | ClockVar (c, _) -> Clock c
-                | Index _ -> Index)
-            in
-            VarFamilySet.add_seq seq acc)
+             let seq =
+               f
+               |> BoolExpr.vars
+               |> List.to_seq
+               |> Seq.map (function
+                 | FreeVar v -> Free v
+                 | ClockVar (c, _) -> Clock c
+                 | Index _ -> Index)
+             in
+             VarFamilySet.add_seq seq acc)
           VarFamilySet.empty
           formulae
       in
@@ -1268,7 +1283,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let report (s, sp, sim) = report s, report sp, report sim
 
     let print_problems
-      ((a_sol, a_problems), (ab_sol, ab_problems), (sim_sol, sim_problems))
+          ((a_sol, a_problems), (ab_sol, ab_problems), (sim_sol, sim_problems))
       =
       let _ =
         Printf.printf "A EXISTENCE PROBLEMS:\n";
@@ -1283,14 +1298,14 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           Printf.printf "No valid simulation at all\n";
           Array.iter
             (fun (x, y) ->
-              let sat = S.more_precise x y in
-              if not sat
-              then
-                Printf.printf
-                  "Failed init:\nmore precise: %b\n%s\n%s\n"
-                  sat
-                  (S.to_string x)
-                  (S.to_string y))
+               let sat = S.more_precise x y in
+               if not sat
+               then
+                 Printf.printf
+                   "Failed init:\nmore precise: %b\n%s\n%s\n"
+                   sat
+                   (S.to_string x)
+                   (S.to_string y))
             sim_sol.init
         | InitIsLast i ->
           let f, t = Array.get sim_sol.init i in
@@ -1305,17 +1320,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
             (Tuple.to_string2 (Bool.to_string << S.sat) sim_sol.pre.(i));
           Array.iteri
             (fun j (l, r) ->
-              Printf.printf
-                "Unreachable step %i:\n\
-                 Strictily expands precondition: %b\n\
-                 L:\n\
-                 %s\n\
-                 R:\n\
-                 %s\n"
-                j
-                S.(more_precise l r)
-                (S.to_string l)
-                (S.to_string r))
+               Printf.printf
+                 "Unreachable step %i:\n\
+                  Strictily expands precondition: %b\n\
+                  L:\n\
+                  %s\n\
+                  R:\n\
+                  %s\n"
+                 j
+                 S.(more_precise l r)
+                 (S.to_string l)
+                 (S.to_string r))
             sim_sol.ind
         | StepIsLast (i, j) ->
           Printf.printf "Step %i %i doesn't lead to valid simulated postconditions\n" i j
@@ -1412,7 +1427,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     ;;
 
     let is_correct
-      { assumption; structure; property; assumption_in_structure; structure_in_property }
+          { assumption
+          ; structure
+          ; property
+          ; assumption_in_structure
+          ; structure_in_property
+          }
       =
       Existence.solution_exists assumption
       && Existence.solution_exists structure
@@ -1474,13 +1494,11 @@ struct
 end
 
 module Test
-    (MakeDomain : functor
-       (V : Var)
+    (MakeDomain : functor (V : Var)
        (N : sig
           include Num
           include Domain.Num with type t := t
-        end)
-       -> Domain.S with type v = V.t and type n = N.t) =
+        end) -> Domain.S with type v = V.t and type n = N.t) =
 struct
   module N = struct
     include Number.Rational
@@ -1511,7 +1529,7 @@ struct
   let%test_unit _ = assert (not @@ D.is_bottom (P.to_polyhedra "i" (And [])))
 
   let%test_unit _ =
-    let c = Rtccsl.Precedence { cause = "a"; effect = "b" } in
+    let c = Rtccsl.Precedence { cause = "a"; conseq = "b" } in
     let formula = P.exact_rel c in
     let domain = P.to_polyhedra "i" formula in
     assert (not @@ D.is_bottom domain)

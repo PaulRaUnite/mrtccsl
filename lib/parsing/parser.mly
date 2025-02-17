@@ -30,6 +30,8 @@
 
 %token EOF
 
+%type<numeric_type_name> numeric_type_name
+%type<type_name> type_name
 %type <Ast.file> file
 %start file
 
@@ -52,12 +54,18 @@ toplevel :
 
 argument_dec : arg=id ; COLON ; t=type_name { (arg,t) }
 
+%inline numeric_type_name :
+| TYPE_INT { `Int }
+| TYPE_RATIONAL { `Rational }
+| TYPE_TIME {`Duration}
+| TYPE_FREQUENCY { `Frequency }
+
 type_name :
 | TYPE_INT { `Int }
 | TYPE_RATIONAL { `Rational }
-| TYPE_TIME {`Time}
+| TYPE_TIME {`Duration}
 | TYPE_FREQUENCY { `Frequency }
-| TYPE_INTERVAL ; LESS ; inner=type_name ; MORE { `Interval inner}
+| TYPE_INTERVAL ; LESS ; inner=numeric_type_name ; MORE { `Interval inner}
 | TYPE_CLOCK { `Clock }
 | TYPE_BLOCK { `Block }
 
@@ -162,7 +170,7 @@ block_expr : block_expr0 {Loc.make $symbolstartpos $endpos $1}
 | POOL ; LPAREN ; n=INT; LBRACE; alloc_delloc=dangling_list(COMMA, separated_pair(expr, ARROWRIGHT, expr)); RBRACE; RPAREN { (Pool (n, alloc_delloc))}
 
 %inline si_unit : 
-| v=SECOND {let (nom,denom) = v in (nom,denom,`Time)}
+| v=SECOND {let (nom,denom) = v in (nom,denom,`Duration)}
 | v=HERTZ {let (nom,denom) = v in (nom,denom,`Frequency)}
 
 %inline unop :

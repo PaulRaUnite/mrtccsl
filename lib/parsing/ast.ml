@@ -12,12 +12,16 @@ let locate lex node = { node; metadata = location_of_lex lex }
 type id = string Loc.t
 type path = id list
 
-type type_name =
+type numeric_type_name =
   [ `Int
   | `Rational
-  | `Time
-  | `Interval of type_name
+  | `Duration
   | `Frequency
+  ]
+
+type type_name =
+  [ numeric_type_name
+  | `Interval of numeric_type_name
   | `Clock
   | `Block
   ]
@@ -92,7 +96,7 @@ and num_expr' =
   | SIUnit of
       { expr : num_expr
       ; scale : Rational.t
-      ; into : [ `Time | `Frequency ]
+      ; into : [ `Duration | `Frequency ]
       }
   | Hole
 

@@ -29,3 +29,5 @@ let toplevel typing = function
   | Check _ ->  
 
     let statement  *)
+
+    (* type context =  *)

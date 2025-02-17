@@ -41,10 +41,10 @@ let example d1 d2 n =
     ; RTdelay { out = "e"; arg = "d"; delay = Tuple.map2 (fun v -> TimeConst v) d2 }
     ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
     ; RTdelay { out = "fb"; arg = "fa"; delay = Tuple.map2 (fun v -> TimeConst v) d1 }
-      (* ; Causality { cause = "fa"; effect = "fb" } *)
+      (* ; Causality { cause = "fa"; conseq = "fb" } *)
     ; Subclocking { sub = "fa"; super = "a" }
-    ; Precedence { cause = "e"; effect = "fad" }
-      ; TimeParameter (t, (Const 250, Const 400))
+    ; Precedence { cause = "e"; conseq = "fad" }
+    ; TimeParameter (t, (Const 250, Const 400))
     ; RTdelay { out = "fad"; arg = "fa"; delay = TimeVar t, TimeVar t }
     ]
   , [] )

@@ -49,11 +49,11 @@ let () =
     "Simple Automata"
     [ ( "causality"
       , rglwt
-          [ Causality { cause = "a"; effect = "b" } ]
+          [ Causality { cause = "a"; conseq = "b" } ]
           [ "(ab)(ab)(ab)" ]
           [ "bbb"; "bababa" ] )
     ; ( "precedence"
-      , rglwt [ Precedence { cause = "a"; effect = "b" } ] [ "a(ab)(ab)" ] [ "(ab)(ab)" ]
+      , rglwt [ Precedence { cause = "a"; conseq = "b" } ] [ "a(ab)(ab)" ] [ "(ab)(ab)" ]
       )
     ; "exclusion", rglwt [ Exclusion [ "a"; "b"; "c" ] ] [ "abc" ] [ "(ab)"; "(abc)" ]
     ; ( "periodic"
@@ -123,8 +123,8 @@ let () =
     ; ( "allow-prec"
       , rglwt
           [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] }
-          ; Precedence { cause = "f"; effect = "a" }
-          ; Precedence { cause = "a"; effect = "t" }
+          ; Precedence { cause = "f"; conseq = "a" }
+          ; Precedence { cause = "a"; conseq = "t" }
           ]
           [ "fat"; "fabt"; "fa(ft)at" ]
           [ "aftb"; "b"; "(fa)(tb)"; "faaat" ] )
@@ -136,8 +136,8 @@ let () =
     ; ( "forbid-prec"
       , rglwt
           [ Forbid { from = "f"; until = "t"; args = [ "a" ] }
-          ; Precedence { cause = "f"; effect = "a" }
-          ; Precedence { cause = "a"; effect = "t" }
+          ; Precedence { cause = "f"; conseq = "a" }
+          ; Precedence { cause = "a"; conseq = "t" }
           ]
           [ ""; "f" ]
           [ "fat" ] )

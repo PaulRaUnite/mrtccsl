@@ -100,9 +100,9 @@ module Make (C : ID) (N : Num) = struct
   let accept_trace a n t =
     List.fold_left
       (fun n (l, n') ->
-        match n with
-        | Some n -> if step a n (l, n') then Some n' else None
-        | None -> None)
+         match n with
+         | Some n -> if step a n (l, n') then Some n' else None
+         | None -> None)
       (Some n)
       t
   ;;
@@ -116,8 +116,8 @@ module Make (C : ID) (N : Num) = struct
       let possible_shifted =
         List.map
           (fun (l, c) ->
-            let c = I.shift_by c (N.neg now) in
-            l, c)
+             let c = I.shift_by c (N.neg now) in
+             l, c)
           possible
       in
       let* l, d = strat possible_shifted in
@@ -128,8 +128,8 @@ module Make (C : ID) (N : Num) = struct
   let gen_trace s (a : t) n : solution list =
     List.unfold_until
       (fun now ->
-        let* l, now = next_step s a now in
-        Some ((l, now), now))
+         let* l, now = next_step s a now in
+         Some ((l, now), now))
       N.zero
       n
   ;;
@@ -140,8 +140,9 @@ module Make (C : ID) (N : Num) = struct
     let c = L.union c1 c2 in
     let conf_surface = L.inter c1 c2 in
     let sat_solver l l' =
-      if L.is_empty conf_surface
-         || L.equal (L.inter conf_surface l) (L.inter conf_surface l')
+      if
+        L.is_empty conf_surface
+        || L.equal (L.inter conf_surface l) (L.inter conf_surface l')
       then Some (L.union l l')
       else None
     in
@@ -194,7 +195,7 @@ module Make (C : ID) (N : Num) = struct
     let l2 =
       List.filter
         (fun x ->
-          if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
+           if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
         l1
     in
     let g now =
@@ -212,18 +213,25 @@ module Make (C : ID) (N : Num) = struct
   ;;
 
   let const_int_param = function
-  | IntConst c -> c
-  | IntVar _ -> failwith "const_int_param: the parameter has to be constant"
+    | IntConst c -> c
+    | IntVar _ -> failwith "const_int_param: the parameter has to be constant"
+  ;;
 
   let const_time_param = function
-  | TimeConst c -> c
-  | TimeVar _ -> failwith "const_time_param: the parameter has to be constant"
+    | TimeConst c -> c
+    | TimeVar _ -> failwith "const_time_param: the parameter has to be constant"
+  ;;
 
-  let of_constr ?(int_unwrap=const_int_param) ?(time_unwrap=const_time_param) (cons : (clock, param, I.num) constr) : t =
+  let of_constr
+        ?(int_unwrap = const_int_param)
+        ?(time_unwrap = const_time_param)
+        (cons : (clock, param, I.num) constr)
+    : t
+    =
     let label_list = List.map L.of_list in
     match cons with
-    | Precedence { cause; effect } -> prec cause effect true
-    | Causality { cause; effect } -> prec cause effect false
+    | Precedence { cause; conseq } -> prec cause conseq true
+    | Causality { cause; conseq } -> prec cause conseq false
     | Exclusion clocks ->
       let l = label_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
       stateless l clocks
@@ -551,8 +559,10 @@ module Make (C : ID) (N : Num) = struct
       let labels = List.powerset args in
       let labels = List.map (fun l -> if l = args then out :: args else l) labels in
       stateless (label_list labels) (out :: args)
-      | LogicalParameter _ -> empty (*FIXME: need evaluation of the expressions, just check if the assignment is inside the evaluated range*)
-      | TimeParameter _ -> empty
+    | LogicalParameter _ ->
+      empty
+      (*FIXME: need evaluation of the expressions, just check if the assignment is inside the evaluated range*)
+    | TimeParameter _ -> empty
   ;;
 
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
@@ -642,8 +652,8 @@ module Make (C : ID) (N : Num) = struct
     let result =
       List.unfold_until
         (fun now ->
-          let* l, n = next_step s a1 now in
-          if trans now (l, n) then Some ((l, n), n) else None)
+           let* l, n = next_step s a1 now in
+           if trans now (l, n) then Some ((l, n), n) else None)
         N.zero
         n
     in
@@ -664,9 +674,9 @@ module Make (C : ID) (N : Num) = struct
         Option.get
         @@ Seq.fold_left
              (fun biggest c ->
-               match biggest with
-               | None -> Some c
-               | Some b -> Some (Int.max b c))
+                match biggest with
+                | None -> Some c
+                | Some b -> Some (Int.max b c))
              None
              (Seq.map String.length (Array.to_seq clock_strs))
       in
@@ -740,8 +750,8 @@ module Make (C : ID) (N : Num) = struct
       let _ =
         Array.iter
           (fun b ->
-            Buffer.add_buffer total b;
-            Buffer.add_char total '\n')
+             Buffer.add_buffer total b;
+             Buffer.add_char total '\n')
           buffers;
         Buffer.add_buffer total footer;
         Buffer.add_string total ">\n";
@@ -809,7 +819,8 @@ let%test_module _ =
 
     let%test _ =
       let sampling1 =
-        A.of_constr @@ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 0; base = Some "b" }
+        A.of_constr
+        @@ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 0; base = Some "b" }
       in
       let sampling2 = A.of_constr @@ Sample { out = "o"; arg = "i"; base = "b" } in
       let steps = 10 in
@@ -821,7 +832,7 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let a = A.of_constr (Precedence { cause = "a"; effect = "b" }) in
+      let a = A.of_constr (Precedence { cause = "a"; conseq = "b" }) in
       let trace = A.gen_trace slow_strat a 10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
@@ -843,8 +854,8 @@ module MakeExtendedString (N : Num) = struct
     List.of_seq
     @@ Seq.map
          (fun cs ->
-           let clocks, _ = List.flatten_opt cs in
-           L.of_list clocks)
+            let clocks, _ = List.flatten_opt cs in
+            L.of_list clocks)
          clocks_trace
   ;;
 
@@ -854,8 +865,8 @@ module MakeExtendedString (N : Num) = struct
         Seq.fold_left_until
           (fun c -> c <> '(')
           (fun acc x ->
-            let label = L.singleton (String.init_char 1 x) in
-            acc @ [ label ])
+             let label = L.singleton (String.init_char 1 x) in
+             acc @ [ label ])
           []
           cs
       in
@@ -867,8 +878,8 @@ module MakeExtendedString (N : Num) = struct
         Seq.fold_left_until
           (fun c -> c <> ')')
           (fun acc x ->
-            let c = String.init_char 1 x in
-            acc @ [ c ])
+             let c = String.init_char 1 x in
+             acc @ [ c ])
           []
           cs
       in

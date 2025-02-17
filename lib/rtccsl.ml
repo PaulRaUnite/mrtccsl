@@ -22,11 +22,11 @@ type ('v, 't) time_param =
 type ('c, 'p, 't) constr =
   | Precedence of
       { cause : 'c
-      ; effect : 'c
+      ; conseq : 'c
       }
   | Causality of
       { cause : 'c
-      ; effect : 'c
+      ; conseq : 'c
       }
   | Exclusion of 'c list
   | Coincidence of 'c list
@@ -126,7 +126,7 @@ type ('c, 'p, 't) constr =
 type ('c, 'p, 't) specification = ('c, 'p, 't) constr list
 
 let clocks = function
-  | Precedence { cause; effect } | Causality { cause; effect } -> [ cause; effect ]
+  | Precedence { cause; conseq } | Causality { cause; conseq } -> [ cause; conseq ]
   | Exclusion list | Coincidence list -> list
   | Subclocking { sub; super } -> [ sub; super ]
   | Minus { out; arg; except } -> out :: arg :: except
