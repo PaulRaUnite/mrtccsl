@@ -1,3 +1,5 @@
+open Prelude
+
 type 'a interval = 'a * 'a
 
 (*TODO: good expression type should:
@@ -122,6 +124,9 @@ type ('c, 'p, 't) constr =
   | TimeParameter of 'p * ('p, 't) expr interval
   | LogicalParameter of 'p * ('p, int) expr interval
   (**Encodes parameter [v] being inside of [[e1, e2]].*)
+  (*TODO: strange name, why logical?*)
+  | Pool of int * ('c * 'c) list
+  (**Mutex is a special case of Pool where [n=1]*)
 
 type ('c, 'p, 't) specification = ('c, 'p, 't) constr list
 
@@ -142,4 +147,9 @@ let clocks = function
   | Forbid { from; until; args } | Allow { from; until; args } -> from :: until :: args
   | Sporadic { out; _ } -> [ out ]
   | TimeParameter _ | LogicalParameter _ -> []
+  | Pool (_, list) ->
+    let lock, unlock = List.split list in
+    List.append lock unlock
 ;;
+
+let spec_clocks l = List.flat_map clocks l

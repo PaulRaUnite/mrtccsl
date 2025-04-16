@@ -26,6 +26,7 @@ let t_of_sexp sexp =
   of_frac x y
 ;;
 
+(*TODO: not sure it is correct*)
 let t_to_string x =
   let nom = get_num x in
   let denom = get_den x in
@@ -51,9 +52,13 @@ let t_to_string x =
       Printf.sprintf
         "%s.%s"
         whole_str
-        (Mpzf.to_string (Mpzf.mul rem (Mpzf.divexact closest_ten gcd)))
+        (String.rdrop_while
+           (fun c -> c = '0')
+           (Mpzf.to_string (Mpzf.mul rem (Mpzf.divexact closest_ten gcd))))
     else Printf.sprintf "%s+%s/%s" whole_str (Mpzf.to_string rem) (Mpzf.to_string denom))
 ;;
+
+let to_string = t_to_string
 
 let round_up step x y =
   let v = x + step in
@@ -71,8 +76,8 @@ let round_down step x y =
 ;;
 
 let random l r =
-  let denom = Random.int 1097 in
-  let nom = Random.int (Int.add denom 1) in
+  let denom = Int.add (Random.int 1000) 1 in
+  let nom = Random.int denom in
   let nom = of_int nom
   and denom = of_int denom in
   l + ((r - l) * (nom / denom))

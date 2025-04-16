@@ -8,11 +8,7 @@ let step = of_int 1 / of_int 10
 let random_strat =
   A.Strategy.random_label
     10
-    (A.Strategy.random_leap
-       A.I.(of_int 0 =-= of_int 1)
-       (round_up step)
-       (round_down step)
-       random)
+    (A.Strategy.random_leap (of_int 1) (round_up step) (round_down step) random)
 ;;
 
 let fast_strat =
@@ -81,7 +77,7 @@ let () =
       ]
   in
   let a = A.of_spec spec in
-  let trace = A.gen_trace fast_strat a 20 in
+  let trace = A.gen_trace fast_strat 20 a in
   let trace = A.skip_empty trace in
   let g, _, clocks = a in
   (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 2.0); *)

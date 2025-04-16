@@ -40,6 +40,7 @@ depends: [
   "odoc" {with-doc}
   "odig" {with-doc}
   "alcotest" {with-test}
+  "domainslib" {>= "0.5"}
 ]
 build: [
   ["dune" "subst"] {dev}

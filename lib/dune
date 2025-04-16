@@ -4,7 +4,7 @@
  (name mrtccsl)
  (public_name mrtccsl)
  (inline_tests)
- (libraries gmp apron apron.polkaMPQ vpl-core ocamlgraph uuseg menhirLib spectrum containers cudd)
+ (libraries gmp apron apron.polkaMPQ vpl-core ocamlgraph uuseg menhirLib spectrum containers cudd domainslib)
  (preprocess
   (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
 

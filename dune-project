@@ -44,7 +44,8 @@
   containers
   (odoc :with-doc)
   (odig :with-doc)
-  (alcotest :with-test))
+  (alcotest :with-test)
+  (domainslib (>= 0.5)))
  (tags
   (simulation "model checking" "abstract interpretation" induction "real-time" "logical clock" "dsl")))
 

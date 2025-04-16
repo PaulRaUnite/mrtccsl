@@ -203,6 +203,51 @@ module Make (N : Num) = struct
   let ( =-> ) x y = normalize @@ Bound (Include x, Exclude y)
   let ( <-= ) x y = normalize @@ Bound (Exclude x, Include y)
   let ( =-= ) x y = normalize @@ Bound (Include x, Include y)
+
+  let is_left_unbound = function
+    | Bound (Inf, _) -> true
+    | _ -> false
+  ;;
+
+  let is_right_unbound = function
+    | Bound (_, Inf) -> true
+    | _ -> false
+  ;;
+
+  let left_bound_opt = function 
+  | Bound ((Exclude x | Include x), _) -> Some x
+  | _ -> None
+
+  let right_bound_opt = function 
+  | Bound (_, (Exclude x | Include x)) -> Some x
+  | _ -> None
+end
+
+module MakeDebug (N : sig
+    include Num
+
+    val to_string : t -> string
+  end) =
+struct
+  include Make (N)
+
+  let to_string = function
+    | Bound (l, r) ->
+      let l =
+        match l with
+        | Include b -> Printf.sprintf "[%s" (N.to_string b)
+        | Exclude b -> Printf.sprintf "(%s" (N.to_string b)
+        | Inf -> "(-∞"
+      in
+      let r =
+        match r with
+        | Include b -> Printf.sprintf "%s]" (N.to_string b)
+        | Exclude b -> Printf.sprintf "%s)" (N.to_string b)
+        | Inf -> "+∞)"
+      in
+      Printf.sprintf "%s,%s" l r
+    | Empty -> "∅"
+  ;;
 end
 
 let%test_module _ =

@@ -10,6 +10,13 @@
  (modules ind)
  (libraries mrtccsl))
 
+(executable
+ (public_name funchainstat)
+ (name funchainstat)
+ (modules funchainstat)
+ (libraries mrtccsl)
+ (modes byte exe))
+
 (env
  (dev
   (flags
