@@ -109,9 +109,8 @@ module Make (C : ID) (N : Num) = struct
   ;;
 
   let step a n sol =
-    let guard, transition, clocks = a in
-    let possible = guard n in
-    correctness_check clocks possible sol && transition n sol
+    let _, transition, _ = a in
+    transition n sol
   ;;
 
   let accept_trace a n t =
@@ -124,8 +123,20 @@ module Make (C : ID) (N : Num) = struct
       t
   ;;
 
+  let debug_g name g now =
+    let variants = g now in
+    let _ =
+      Format.printf
+        "%s variants %s\n"
+        name
+        (List.to_string ~sep:" | " guard_to_string variants)
+    in
+    variants
+  ;;
+
   let next_step strat (a : t) now : solution option =
     let guards, _, _ = a in
+    (* let _ = print_endline "------" in *)
     let possible = guards now in
     (* let _ =
       Printf.printf "--- Candidates ---\n";
@@ -158,14 +169,17 @@ module Make (C : ID) (N : Num) = struct
       n
   ;;
 
-  let gen_trace_until s n time (a : t) : solution list =
-    List.unfold_for_while
-      (fun now ->
-         let* l, now = next_step s a now in
-         Some ((l, now), now))
-      N.zero
-      n
-      (fun (_, n) -> N.less n time)
+  let gen_trace_until s n time (a : t) : solution list * bool =
+    let trace, was_cut =
+      List.unfold_for_while
+        (fun now ->
+           let* l, now = next_step s a now in
+           Some ((l, now), now))
+        N.zero
+        n
+        (fun (_, n) -> N.less n time)
+    in
+    trace, not was_cut
   ;;
 
   let sync (a1 : t) (a2 : t) : t =
@@ -582,9 +596,10 @@ module Make (C : ID) (N : Num) = struct
         stateless (label_list labels)
         (*FIXME: need evaluation of the expressions, just check if the assignment is inside the evaluated range*)
       | LogicalParameter _ | TimeParameter _ -> failwith "not implemented"
-      | Pool (resources, lock_unlocks) ->
+      | Pool (n, lock_unlocks) ->
         let locks, unlocks = List.split lock_unlocks in
         let lock_clocks, unlock_clocks = L.of_list locks, L.of_list unlocks in
+        let _ = assert (L.is_empty (L.inter lock_clocks unlock_clocks)) in
         let injection_map list =
           List.fold_left
             (fun acc (from, into) ->
@@ -597,38 +612,20 @@ module Make (C : ID) (N : Num) = struct
             CMap.empty
             list
         in
-        let _ = injection_map lock_unlocks in
-        let unlock_to_locks = injection_map (List.map Tuple.swap2 lock_unlocks) in
-        let _ = assert (L.is_empty (L.inter lock_clocks unlock_clocks)) in
-        let locks = Array.make resources None in
+        let locks_to_unlocks = injection_map lock_unlocks in
+        let _ = injection_map (List.map Tuple.swap2 lock_unlocks) in
+        let resources = ref [] in
         let g now =
-          let possible_clocks =
-            lock_unlocks
-            |> List.to_seq
-            |> Seq.flat_map (fun (l, f) ->
-              let can_unlock = Array.mem (Some l) locks
-              and can_lock = Array.mem None locks in
-              let clocks = if can_lock then Seq.return l else Seq.empty in
-              if can_unlock then Seq.cons f clocks else clocks)
-            |> List.of_seq
-          in
-          let used_resources =
-            Array.fold_left (fun sum r -> sum + if Option.is_some r then 1 else 0) 0 locks
-          in
-          List.powerset possible_clocks
+          let free_now = n - List.length !resources in
+          let to_free_variants = List.powerset (List.sort_uniq C.compare !resources) in
+          to_free_variants
           |> List.to_seq
-          |> Seq.filter (fun label ->
-            let frees, uses =
-              List.fold_left
-                (fun (free_sum, use_sum) c ->
-                   ( (free_sum + if L.mem c unlock_clocks then -1 else 0)
-                   , use_sum + if L.mem c lock_clocks then 1 else 0 ))
-                (0, 0)
-                label
-            in
-            let after_free = used_resources + frees in
-            let used_resources = after_free + uses in
-            after_free >= 0 && used_resources >= 0 && used_resources <= resources)
+          |> Seq.flat_map (fun to_free ->
+            let available = free_now + List.length to_free in
+            List.powerset locks
+            |> List.filter_map (fun l ->
+              if List.length l > available then None else Some (to_free @ l))
+            |> List.to_seq)
           |> Seq.map (fun l -> L.of_list l, I.pinf_strict now)
           |> List.of_seq
         in
@@ -636,26 +633,15 @@ module Make (C : ID) (N : Num) = struct
           (* let _ = Printf.printf "---Transition---\n" in *)
           let to_lock = L.inter l lock_clocks in
           let to_unlock = L.inter l unlock_clocks in
-          let _ =
-            L.iter
-              (fun unlock ->
-                 (* let _ = Printf.printf "unlocking %s\n" (C.to_string unlock) in *)
-                 let lock = CMap.find unlock unlock_to_locks in
-                 let used_index = Array.find_index (fun x -> Some lock = x) locks in
-                 let used_index = Option.get used_index in
-                 Array.set locks used_index None)
-              to_unlock
+          let new_resources =
+            List.filter (fun unlock -> not( L.mem unlock to_unlock)) !resources
           in
-          let _ =
-            L.iter
-              (fun lock ->
-                 (* let _ = Printf.printf "locking %s\n" (C.to_string lock) in *)
-                 let free_index = Array.find_index Option.is_none locks in
-                 let free_index = Option.get free_index in
-                 (* if happens, it is a bug *)
-                 Array.set locks free_index (Some lock))
-              to_lock
+          let new_resources =
+            List.append
+              new_resources
+              (List.map (fun lock -> CMap.find lock locks_to_unlocks) (L.to_list to_lock))
           in
+          let _ = resources := new_resources in
           (* let _ =
             Array.iter
               (fun x ->
@@ -774,16 +760,16 @@ module Make (C : ID) (N : Num) = struct
   let proj_trace clocks trace = List.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = List.filter (fun (l, _) -> not (L.is_empty l)) trace
 
-  let trace_to_svgbob ?(numbers = false) ?(tasks = []) clocks trace =
+  let trace_to_svgbob ?(numbers = false) ?(tasks = []) ?precision clocks trace =
     if List.is_empty clocks
     then ""
     else (
       let clocks =
         clocks
         |> List.to_seq
-        (* |> Seq.filter (fun c ->
+        |> Seq.filter (fun c ->
           not
-            (List.exists (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d) tasks)) *)
+            (List.exists (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d) tasks))
         |> Array.of_seq
       in
       let clock_strs = Array.map C.to_string clocks in
@@ -841,6 +827,16 @@ module Make (C : ID) (N : Num) = struct
       let serialize_label task_state (l, n') =
         (* let delta = N.(n' - n) in *)
         let time_label = N.to_string n' in
+        let time_label =
+          match precision with
+          | Some precision ->
+            let dot_index = String.index time_label '.' in
+            let right_bound =
+              Int.min (String.length time_label) (dot_index + precision + 1)
+            in
+            String.sub time_label 0 right_bound
+          | None -> time_label
+        in
         let step_len = String.length time_label + 1 in
         let print_task ((name, r, s, f, d), (buf, executes)) =
           let ready = L.mem r l
@@ -853,7 +849,7 @@ module Make (C : ID) (N : Num) = struct
             | true, true -> "╳"
             | true, false -> "("
             | false, true -> ")"
-            | false, false -> if executes then "#" else "-"
+            | false, false -> if start || finish || executes then "#" else "-"
           in
           Buffer.add_string buf symbol;
           if executes
@@ -908,7 +904,7 @@ module Make (C : ID) (N : Num) = struct
   ;;
 
   let trace_to_csl trace =
-    let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l)  in
+    let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
     List.to_string ~sep:",STEP," serialize trace
   ;;
 end
