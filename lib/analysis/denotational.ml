@@ -30,10 +30,15 @@ type ('c, 'n) num_expr =
 let rec num_expr_of_expr = function
   | Rtccsl.Var v -> Var (FreeVar v)
   | Rtccsl.Const c -> Const c
-  | Rtccsl.BinAdd (l, r) -> Op (num_expr_of_expr l, Add, num_expr_of_expr r)
-  | Rtccsl.BinSub (l, r) -> Op (num_expr_of_expr l, Sub, num_expr_of_expr r)
-  | Rtccsl.BinMul (l, r) -> Op (num_expr_of_expr l, Mul, num_expr_of_expr r)
-  | Rtccsl.BinDiv (l, r) -> Op (num_expr_of_expr l, Div, num_expr_of_expr r)
+  | Rtccsl.Bin (l, op, r) ->
+    let op =
+      match op with
+      | Add -> Add
+      | Sub -> Sub
+      | Mul -> Mul
+      | Div -> Div
+    in
+    Op (num_expr_of_expr l, op, num_expr_of_expr r)
 ;;
 
 let time_param = function
@@ -273,8 +278,7 @@ module BoolExpr = struct
     | Or list ->
       let to_flatten, others =
         List.partition_map
-          (fun f ->
-            match f with
+          (function
             | Or l -> Either.Left l
             | _ as other -> Either.Right other)
           list
@@ -284,8 +288,7 @@ module BoolExpr = struct
     | And list ->
       let to_flatten, others =
         List.partition_map
-          (fun f ->
-            match f with
+          (function
             | And l -> Either.Left l
             | _ as other -> Either.Right other)
           list
@@ -321,9 +324,9 @@ module BoolExpr = struct
   let clocks f =
     fold_vars
       (fun v acc ->
-        match v with
-        | ClockVar (c, _) -> c :: acc
-        | _ -> acc)
+         match v with
+         | ClockVar (c, _) -> c :: acc
+         | _ -> acc)
       []
       f
   ;;
@@ -331,10 +334,10 @@ module BoolExpr = struct
   let indexed_vars f =
     fold_vars
       (fun v acc ->
-        match v with
-        | ClockVar (c, i) -> (Some c, i) :: acc
-        | Index i -> (None, i) :: acc
-        | FreeVar _ -> acc)
+         match v with
+         | ClockVar (c, i) -> (Some c, i) :: acc
+         | Index i -> (None, i) :: acc
+         | FreeVar _ -> acc)
       []
       f
   ;;
@@ -344,8 +347,8 @@ module BoolExpr = struct
   let vars_except_i f =
     List.filter_map
       (fun (c, i) ->
-        let* c = c in
-        Some (c, i))
+         let* c = c in
+         Some (c, i))
       (indexed_vars f)
   ;;
 
@@ -358,9 +361,9 @@ module BoolExpr = struct
   let max_index_opt f =
     List.fold_left
       (fun acc (_, i) ->
-        match acc with
-        | Some acc -> Some (Int.max acc i)
-        | None -> Some i)
+         match acc with
+         | Some acc -> Some (Int.max acc i)
+         | None -> Some i)
       None
       (indexed_vars f)
   ;;
@@ -368,9 +371,9 @@ module BoolExpr = struct
   let min_index_opt f =
     List.fold_left
       (fun acc (_, i) ->
-        match acc with
-        | Some acc -> Some (Int.min acc i)
-        | None -> Some i)
+         match acc with
+         | Some acc -> Some (Int.min acc i)
+         | None -> Some i)
       None
       (indexed_vars f)
   ;;
@@ -408,7 +411,13 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
 
   let rec string_of_tag_expr = function
     | Var v ->
-      let ind_str i = if i > 0 then Printf.sprintf "i+%i" i else if i < 0 then Printf.sprintf "i%i" i else "i" in
+      let ind_str i =
+        if i > 0
+        then Printf.sprintf "i+%i" i
+        else if i < 0
+        then Printf.sprintf "i%i" i
+        else "i"
+      in
       (match v with
        | FreeVar v -> V.to_string v
        | ClockVar (c, i) -> Printf.sprintf "%s[%s]" (V.to_string c) (ind_str i)
@@ -447,7 +456,7 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
         let s =
           List.fold_left
             (fun acc el ->
-              Printf.sprintf "%s\n%s%s %s" acc padding delim (aux (level + 1) el))
+               Printf.sprintf "%s\n%s%s %s" acc padding delim (aux (level + 1) el))
             ""
             l
         in
@@ -467,5 +476,12 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
   ;;
 
   let print_bool_expr f = Printf.printf "%s\n" (string_of_bool_expr f)
-  let print_bool_exprs list = List.iteri (fun i e -> Printf.printf "%i: " i; print_bool_expr e)list
+
+  let print_bool_exprs list =
+    List.iteri
+      (fun i e ->
+         Printf.printf "%i: " i;
+         print_bool_expr e)
+      list
+  ;;
 end
