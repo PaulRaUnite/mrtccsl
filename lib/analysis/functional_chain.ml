@@ -37,6 +37,13 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     init :: rest_seq
   ;;
 
+  let chain_start_finish chain =
+    ( chain.first
+    , Option.value
+        ~default:chain.first
+        (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
+  ;;
+
   let consume_label instructions (full_chains, partial_chains, counters) (label, now) =
     let len = Array.length instructions in
     let targets_from i =
@@ -108,10 +115,10 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
         (chain : chain)
     =
     let automaton = A.of_spec system_spec in
-    let trace = A.gen_trace_until s n time automaton in
+    let trace, deadlock = A.gen_trace_until s n time automaton in
     let instructions = Array.of_list (instructions chain) in
     let len_instr = Array.length instructions in
-    let full_chains, _dangling_chains, _ =
+    let full_chains, dangling_chains, _ =
       Seq.fold_left
         (consume_label instructions)
         ([], [], Array.make len_instr 0)
@@ -123,7 +130,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    trace, full_chains |> List.to_seq
+    trace, deadlock, full_chains, dangling_chains
   ;;
 
   let reaction_times source target chains =
