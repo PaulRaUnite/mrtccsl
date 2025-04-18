@@ -26,38 +26,8 @@ let t_of_sexp sexp =
   of_frac x y
 ;;
 
-(*TODO: not sure it is correct*)
-let t_to_string x =
-  let nom = get_num x in
-  let denom = get_den x in
-  let whole, rem = Mpzf.tdiv_qr nom denom in
-  let whole_str = Mpzf.to_string whole in
-  if Mpzf.cmp (Mpzf.of_int 0) rem = 0
-  then whole_str
-  else (
-    let closest_ten =
-      Seq.ints 0
-      |> Seq.map (fun exp ->
-        let n = Mpz.init () in
-        let _ = Mpz.ui_pow_ui n 10 exp in
-        n)
-      |> Seq.find (fun x ->
-        let div = Mpzf.divexact denom x in
-        Mpzf.cmp (Mpzf.of_int 0) div = 0 || Mpzf.cmp (Mpzf.of_int 1) div = 0)
-      |> Option.get
-    in
-    let gcd = Mpzf.gcd denom closest_ten in
-    if gcd != Mpzf.of_int 1
-    then
-      Printf.sprintf
-        "%s.%s"
-        whole_str
-        (String.rdrop_while
-           (fun c -> c = '0')
-           (Mpzf.to_string (Mpzf.mul rem (Mpzf.divexact closest_ten gcd))))
-    else Printf.sprintf "%s+%s/%s" whole_str (Mpzf.to_string rem) (Mpzf.to_string denom))
-;;
-
+(*TODO: was not correct, need to redo*)
+let t_to_string x = Float.to_string (to_float x)
 let to_string = t_to_string
 
 let round_up step x y =
