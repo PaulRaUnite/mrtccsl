@@ -22,6 +22,21 @@ module Fun = struct
   let catch_with_default f v default = catch_to_opt f v |> Option.value ~default
 end
 
+module Option = struct
+  include Option
+
+  let bind_or x f =
+    match x with
+    | Some x -> Some x
+    | None -> f ()
+  ;;
+
+  let split2 = function
+    | Some (x, y) -> Some x, Some y
+    | None -> None, None
+  ;;
+end
+
 module List = struct
   include List
 
@@ -105,6 +120,23 @@ module List = struct
   (** Returns powerset without the empty list.*)
   let powerset_nz elements = filter (fun l -> l <> []) @@ powerset elements
 
+  let rec powerset_partition = function
+    | [] -> [ [], [] ]
+    | x :: xs ->
+      let ps = powerset_partition xs in
+      map (fun (part, other) -> part, x :: other) ps
+      @ map (fun (part, other) -> x :: part, other) ps
+  ;;
+
+  open Sexplib0.Sexp_conv
+  open Ppx_compare_lib.Builtin
+
+  let%test_unit _ =
+    [%test_eq: (int list * int list) list]
+      (powerset_partition [ 1; 2 ])
+      [[], [ 1; 2 ];  [ 2 ], [ 1 ] ; [ 1 ], [ 2 ]; [ 1; 2 ], []]
+  ;;
+
   let flat_map f = flatten << map f
 
   let general_cartesian ll =
@@ -116,9 +148,6 @@ module List = struct
       []
       ll
   ;;
-
-  open Sexplib0.Sexp_conv
-  open Ppx_compare_lib.Builtin
 
   let%test_unit _ =
     [%test_eq: int list list]
@@ -132,8 +161,29 @@ module List = struct
     Seq.unfold f init |> Seq.take_while p |> List.of_seq
   ;;
 
-  let unfold_for_while f init n p : 'a list =
-    Seq.unfold f init |> Seq.take_while p |> Seq.take n |> List.of_seq
+  let unfold_for_while f init n p : 'a list * bool =
+    let was_cut = ref false in
+    let list =
+      Seq.unfold f init
+      |> Seq.zip (Seq.ints 1)
+      |> Seq.take_while (fun (i, v) ->
+        if i < n && p v
+        then true
+        else (
+          was_cut := true;
+          false))
+      |> Seq.map (fun (_, v) -> v)
+      |> List.of_seq
+    in
+    ( list
+    , !was_cut
+      (*tricky part: list variable enforces order, otherwise it was always false*) )
+  ;;
+
+  let rec drop_nth l i =
+    match l with
+    | x :: tail -> if i = 0 then tail else x :: drop_nth tail (i - 1)
+    | [] -> []
   ;;
 
   let any = List.exists Fun.id
@@ -192,16 +242,14 @@ module List = struct
     Buffer.contents buf
   ;;
 
-  (** Replaces an element inplace with [Either.Left], drops when [Either.Right] and skips if [None]*)
-  let rec map_inplace_or_drop f =
-    let open Either in
-    function
+  (** Replaces an element inplace with [`Replace], drops when [`Drop] and skips if [`Skip]*)
+  let rec map_inplace_or_drop f = function
     | [] -> None, []
     | x :: tail ->
       (match f x with
-       | Some (Left replace_x) -> None, replace_x :: tail
-       | Some (Right drop_x) -> Some drop_x, tail
-       | None ->
+       | `Replace v -> None, v :: tail
+       | `Drop -> Some x, tail
+       | `Skip ->
          let drop, tail = map_inplace_or_drop f tail in
          drop, x :: tail)
   ;;
