@@ -4,7 +4,7 @@ module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
 open Number.Rational
 
-let step = of_int 1 / of_int 10
+let step = of_int 1 / of_int 1000
 
 let priority_strategy priorities general_strategy =
   let priorities = A.L.of_list priorities in
@@ -17,16 +17,16 @@ let priority_strategy priorities general_strategy =
               (A.L.cardinal (A.L.inter y priorities)))
         candidates
     in
-    let priotized, _ =
+    let priotized, rest =
       List.partition (fun (l, _) -> A.L.cardinal (A.L.inter l priorities) > 0) candidates
     in
-    if List.is_empty priotized
-    then general_strategy candidates
-    else general_strategy priotized
+    (* let _ = print_endline (List.to_string ~sep:"|" A.guard_to_string priotized) in *)
+    if List.is_empty priotized then general_strategy rest else general_strategy priotized
   in
   f
 ;;
 
+(*TODO: need to review if the priority strategy is really correct*)
 let fifo_strategy priorities general_strategy =
   let queue = ref [] in
   let priorities = A.CMap.of_list priorities in
@@ -34,7 +34,7 @@ let fifo_strategy priorities general_strategy =
     (* let _ = Format.printf "queue: %s\n" (List.to_string Fun.id !queue) in *)
     let prioritized =
       !queue
-      |> List.find_mapi (fun i c ->
+      |> List.find_mapi (fun _ c ->
         match List.filter (fun (l, _) -> A.L.mem c l) candidates with
         | [] -> None
         | list -> Some list)
@@ -43,7 +43,7 @@ let fifo_strategy priorities general_strategy =
       Option.bind_or (Option.bind prioritized general_strategy) (fun _ ->
         general_strategy candidates)
     with
-    | Some (label, now) as solution ->
+    | Some (label, _) as solution ->
       let _ =
         A.CMap.iter
           (fun r s ->
@@ -67,7 +67,42 @@ let random_strat =
   A.Strategy.random_label
     ~avoid_empty:true
     10
-    (A.Strategy.random_leap (of_int 100) (round_up step) (round_down step) random)
+    (A.Strategy.random_leap (of_int 1000) (round_up step) (round_down step) random)
+;;
+
+module LSet = Set.Make (A.L)
+
+let prioritize_single candidates =
+  let labels = LSet.of_list (List.map (fun (x, _) -> x) candidates) in
+  (* let _ =
+    Printf.printf
+      "before %s\n"
+      (List.to_string ~sep:" | " (fun (l, _) -> A.L.to_string l) candidates)
+  in *)
+  let candidates =
+    List.filter
+      (fun (l, _) ->
+         A.L.cardinal l <= 1
+         ||
+         let ps =
+           A.L.to_list l
+           |> List.powerset_nz
+           |> List.filter_map (fun l' ->
+             let l' = A.L.of_list l' in
+             if A.L.equal l l' then None else Some l')
+         in
+         not
+           (List.exists
+              (fun sub -> LSet.mem sub labels && LSet.mem (A.L.diff l sub) labels)
+              ps))
+      candidates
+  in
+  (* let _ =
+    Printf.printf
+      "after %s\n"
+      (List.to_string ~sep:" | " (fun (l, _) -> A.L.to_string l) candidates)
+  in *)
+  candidates
 ;;
 
 let fast_strat =
@@ -80,7 +115,10 @@ let two = of_int 2
 let hundred = of_int 100
 let half = Rational.(of_int 1 / of_int 2)
 
+open FnCh
+
 let parallel_reaction_times
+      ~sem
       ?(with_partial = false)
       params
       system_spec
@@ -88,11 +126,11 @@ let parallel_reaction_times
       runs
   =
   let _, _, horizon = params in
-  let start, finish = FnCh.chain_start_finish func_chain_spec in
+  let start, finish = FnCh.chain_start_finish_clocks func_chain_spec in
   let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
   let body _ =
     let _, _, full_chains, partial_chains =
-      FnCh.functional_chains params system_spec func_chain_spec
+      FnCh.functional_chains ~sem params system_spec func_chain_spec
     in
     let full_reaction_times =
       FnCh.reaction_times start finish (List.to_seq full_chains)
@@ -101,7 +139,7 @@ let parallel_reaction_times
     then
       partial_chains
       |> List.to_seq
-      |> Seq.map (fun c -> horizon - A.CMap.find start FnCh.(c.trace))
+      |> Seq.map (fun c -> c.misses, horizon - A.CMap.find start c.trace)
     else full_reaction_times
   in
   Domainslib.Task.run pool (fun _ ->
@@ -115,47 +153,44 @@ let parallel_reaction_times
       Seq.empty)
 ;;
 
-let () =
+let func_chain_spec =
+  FnCh.
+    { first = "s.s"
+    ; rest =
+        [ `Causality, "s.f"
+        ; `Causality, "c.s"
+        ; `Causality, "c.f"
+        ; `Sampling, "a.s"
+        ; `Causality, "a.f"
+        ]
+    }
+;;
+
+let process name spec =
   let _ = Random.init 82763452 in
-  let system_spec =
-    List.map (Rtccsl.map_time_const of_int) Rtccsl.Examples.SimpleControl.no_resource_constraint
-  in
-  let func_chain_spec =
-    FnCh.
-      { first = "s.t"
-      ; rest =
-          [ `Causality, "s.s"
-          ; `Causality, "s.f"
-          ; `Causality, "c.s"
-          ; `Causality, "c.f"
-          ; `Sampling, "a.s"
-          ; `Causality, "a.f"
-          ]
-      }
-  in
-  let strategy =
-    fifo_strategy
-      [ "s.r", "s.s"; "a.r", "a.s"; "c.r", "c.s" ]
-      (priority_strategy [ "s.s"; "c.s"; "a.s" ] random_strat)
-  in
+  let system_spec = List.map (Rtccsl.map_time_const of_int) spec in
+  let strategy candidates = random_strat (prioritize_single candidates) in
   let steps = 1_000 in
-  let horizon = of_int 1_000 in
-  let massive = false in
+  let horizon = of_int 20_000 in
+  let simulations = 1_000 in
+  let sem = Earliest in
+  let massive = true in
   let reactions =
     if massive
     then
       parallel_reaction_times
+        ~sem
         ~with_partial:false
         (strategy, steps, horizon)
         system_spec
         func_chain_spec
-        100
+        simulations
     else (
-      let trace, deadlock, chains, _ =
-        FnCh.functional_chains (strategy, steps, horizon) system_spec func_chain_spec
+      let trace, deadlock, chains, partial_chains =
+        FnCh.functional_chains ~sem (strategy, steps, horizon) system_spec func_chain_spec
       in
       let chains = List.to_seq chains in
-      let start, finish = FnCh.chain_start_finish func_chain_spec in
+      let start, finish = FnCh.chain_start_finish_clocks func_chain_spec in
       let reactions = FnCh.reaction_times start finish chains in
       let _ = Format.printf "deadlock: %b\n" deadlock in
       let svgbob_str =
@@ -167,25 +202,50 @@ let () =
           trace
       in
       let _ =
-        let trace_file = open_out "./trace.txt" in
+        let trace_file = open_out (Printf.sprintf "./%s_trace.txt" name) in
         output_string trace_file svgbob_str;
         close_out trace_file
       in
       let _ =
         Format.printf
-          "chains:\n%s\n"
+          "full chains:\n%s\n"
           (Seq.to_string
              ~sep:"\n"
-             (FnCh.CMap.to_string String.to_string to_string)
+             (fun (t : chain_instance) ->
+                FnCh.CMap.to_string String.to_string to_string t.trace)
              chains);
-        Format.printf "reaction times: %s\n" (Seq.to_string to_string reactions)
+        Format.printf
+          "partial chains:\n%s\n"
+          (List.to_string ~sep:"\n" partial_chain_to_string partial_chains);
+        Format.printf
+          "reaction times: %s"
+          (FnCh.reaction_times_to_string ~sep:"\n" reactions)
       in
       let trace_file = open_out "./cadp_trace.txt" in
       let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
       let _ = close_out trace_file in
       reactions)
   in
-  let data_file = open_out "./plots/data/reaction_times.txt" in
-  let _ = Printf.fprintf data_file "%s" (FnCh.reaction_times_to_string reactions) in
+  let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
+  let _ =
+    Printf.fprintf data_file "%s" (FnCh.reaction_times_to_csv [ "a.s" ] reactions)
+  in
   close_out data_file
+;;
+
+let () =
+  let use_cases =
+    [ (* "certain1", Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid_certain 15 2 5 5 2; *)
+      ( "uncertain1"
+      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid_uncertain
+          (14, 16)
+          (1, 3)
+          (2, 8)
+          (4, 6)
+          (1, 3) )
+      ; ( "uncertain2"
+      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid (14, 16) (1, 3) (2, 8) )
+    ]
+  in
+  List.iter (fun (name, spec) -> process name spec) use_cases
 ;;
