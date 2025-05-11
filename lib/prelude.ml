@@ -51,6 +51,24 @@ module List = struct
     | _ -> false
   ;;
 
+  let first = function
+    | x :: _ -> Some x
+    | [] -> None
+  ;;
+
+  let first_partition = function
+    | x :: tail -> Some x, tail
+    | [] -> None, []
+  ;;
+
+  let[@tail_mod_cons] rec last_partition = function
+    | [] -> None, []
+    | x :: [] -> Some x, []
+    | x :: tail ->
+      let last, rest = last_partition tail in
+      last, x :: rest
+  ;;
+
   let last l =
     let rec aux prev = function
       | [] -> prev
@@ -134,7 +152,7 @@ module List = struct
   let%test_unit _ =
     [%test_eq: (int list * int list) list]
       (powerset_partition [ 1; 2 ])
-      [[], [ 1; 2 ];  [ 2 ], [ 1 ] ; [ 1 ], [ 2 ]; [ 1; 2 ], []]
+      [ [], [ 1; 2 ]; [ 2 ], [ 1 ]; [ 1 ], [ 2 ]; [ 1; 2 ], [] ]
   ;;
 
   let flat_map f = flatten << map f
@@ -262,6 +280,17 @@ module List = struct
        | Some y -> y :: tail
        | None -> x :: map_inplace_once f tail)
   ;;
+
+  let[@tail_mod_cons] rec filter_mapi f i = function
+    | [] -> []
+    | x :: l ->
+      let i' = i + 1 in
+      (match f i x with
+       | Some y -> y :: filter_mapi f i' l
+       | None -> filter_mapi f i' l)
+  ;;
+
+  let filter_mapi f l = filter_mapi f 0 l
 end
 
 module String = struct

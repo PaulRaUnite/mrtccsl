@@ -7,7 +7,7 @@ let ( * ) = mul
 let ( / ) = div
 let sexp_of_t = Sexplib0.Sexp_conv.sexp_of_float
 let t_of_sexp = Sexplib0.Sexp_conv.float_of_sexp
-let t_to_string x = Printf.sprintf "%g" x
+let t_to_string x = Printf.sprintf "%f" x
 
 let round_up step x y =
   let v = x +. step in
