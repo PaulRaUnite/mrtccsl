@@ -1,5 +1,3 @@
-open! Prelude
-
 module type Stringable = sig
   type t
 
@@ -58,4 +56,10 @@ module Number = struct
     val ( - ) : t -> t -> t
     val ( / ) : t -> t -> t
   end
+end
+
+module type Foldable = sig
+  type 'a t
+
+  val fold_left : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
 end

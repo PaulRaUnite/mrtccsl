@@ -17,6 +17,13 @@
  (libraries mrtccsl)
  (modes byte exe))
 
+(executable
+ (public_name reaction)
+ (name reaction)
+ (modules reaction)
+ (libraries mrtccsl)
+ (modes exe))
+
 (env
  (dev
   (flags
