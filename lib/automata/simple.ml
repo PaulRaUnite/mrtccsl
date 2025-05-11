@@ -13,6 +13,7 @@ module type Num = sig
   include Interface.Stringable with type t := t
 
   val zero : t
+  val one : t
   val neg : t -> t
   val ( - ) : t -> t -> t
 end
@@ -91,7 +92,7 @@ module Make (C : ID) (N : Num) = struct
   let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
   let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
   let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
-  let noop_guard now = [ L.empty, I.pinf_strict now ]
+  let noop_guard now = [ L.empty, I.inter (I.pinf N.zero) (I.pinf_strict now) ]
   let noop_transition n (_, n') = N.compare n n' < 0
   let empty : t = noop_guard, noop_transition, L.empty
 
@@ -99,8 +100,8 @@ module Make (C : ID) (N : Num) = struct
     Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
   ;;
 
-  let solution_to_string (label, cond) =
-    Printf.sprintf "%s ! %s" (L.to_string label) (N.to_string cond)
+  let solution_to_string (label, now) =
+    Printf.sprintf "%s ! %s" (L.to_string label) (N.to_string now)
   ;;
 
   let correctness_check clocks labels (l, n) =
@@ -175,7 +176,7 @@ module Make (C : ID) (N : Num) = struct
         (fun now ->
            let* l, now = next_step s a now in
            Some ((l, now), now))
-        N.zero
+        (N.neg N.one)
         n
         (fun (_, n) -> N.less n time)
     in
@@ -295,7 +296,7 @@ module Make (C : ID) (N : Num) = struct
           else (
             let head = Queue.peek queue in
             let next = I.inter (I.pinf_strict now) (I.shift_by delay head) in
-            [ (L.of_list [ a ], I.(now <-> N.(head + l)))
+            [ (L.of_list [ a ], I.(now <-> N.(head + r)))
             ; (L.empty, I.(now <-> N.(head + r)))
             ; L.of_list [ a; b ], next
             ; L.of_list [ b ], next
@@ -634,7 +635,7 @@ module Make (C : ID) (N : Num) = struct
           let to_lock = L.inter l lock_clocks in
           let to_unlock = L.inter l unlock_clocks in
           let new_resources =
-            List.filter (fun unlock -> not( L.mem unlock to_unlock)) !resources
+            List.filter (fun unlock -> not (L.mem unlock to_unlock)) !resources
           in
           let new_resources =
             List.append
