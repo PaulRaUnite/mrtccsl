@@ -280,6 +280,16 @@ module Macro = struct
     name, ready, start, finish, deadline
   ;;
 
+  let rigid_task name exec_duration =
+    let _, _, start, finish, _ = task_clocks name in
+    [ RTdelay
+        { out = finish
+        ; arg = start
+        ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
+        }
+    ]
+  ;;
+
   let task name exec_duration =
     let _, ready, start, finish, _ = task_clocks name in
     [ Causality { cause = ready; conseq = start }
@@ -294,6 +304,18 @@ module Macro = struct
   let task_with_deadline name exec_duration deadline =
     let finish = Printf.sprintf "%s.f" name in
     Precedence { cause = finish; conseq = deadline } :: task name exec_duration
+  ;;
+
+  let rigid_periodic_task name exec_duration period (nerror, perror) offset =
+    let _, _, start, _, _ = task_clocks name in
+    rigid_task name exec_duration
+    @ [ CumulPeriodic
+          { out = start
+          ; period = TimeConst period
+          ; error = TimeConst nerror, TimeConst perror
+          ; offset = TimeConst offset
+          }
+      ]
   ;;
 
   let periodic_task name exec_duration period (nerror, perror) offset =
@@ -330,12 +352,46 @@ module Examples = struct
   open Macro
 
   module SimpleControl = struct
-    let no_resource_constraint =
+    let no_resource_constraint_rigid_certain p_s e_s e_c p_a e_a =
       List.flatten
-        [ periodic_task "s" (10, 15) 50 (-2, 2) 0
-        ; periodic_task "a" (5, 10) 50 (-2, 2) 0
-        ; task "c" (25, 40)
+        [ rigid_periodic_task "s" (e_s, e_s) p_s (0, 0) 0
+        ; rigid_periodic_task "a" (e_a, e_a) p_a (0, 0) 0
+        ; rigid_task "c" (e_c, e_c)
+        ; [ Coincidence [ "s.f"; "c.s" ] ]
+        ]
+    ;;
+
+    let period (l, r) = ((r - l) / 2) + l
+
+    let error (l, r) =
+      let p = period (l, r) in
+      l - p, r - p
+    ;;
+
+    let no_resource_constraint_rigid_uncertain p_s e_s e_c p_a e_a =
+      List.flatten
+        [ rigid_periodic_task "s" e_s (period p_s) (error p_s) 0
+        ; rigid_periodic_task "a" e_a (period p_a) (error p_a) 0
+        ; rigid_task "c" e_c
+        ; [ Coincidence [ "s.f"; "c.s" ] ]
+        ]
+    ;;
+
+    let no_resource_constraint p_s e_s e_c =
+      List.flatten
+        [ periodic_task "s" e_s (period p_s) (error p_s) 0
+        ; periodic_task "a" e_s (period p_s) (error p_s) 0
+        ; task "c" e_c
         ; [ Coincidence [ "s.f"; "c.r" ]; Alternate { first = "c.s"; second = "c.f" } ]
+        ]
+    ;;
+
+    let no_resource_constraint_rigid p_s e_s e_c =
+      List.flatten
+        [ rigid_periodic_task "s" e_s (period p_s) (error p_s) 0
+        ; rigid_periodic_task "a" e_s (period p_s) (error p_s) 0
+        ; rigid_task "c" e_c
+        ; [ Coincidence [ "s.f"; "c.s" ] ]
         ]
     ;;
 
@@ -345,18 +401,19 @@ module Examples = struct
           ; Alternate { first = "s.s"; second = "s.f" }
           ; Alternate { first = "c.s"; second = "c.f" }
           ]
-        ; no_resource_constraint
+        ; no_resource_constraint (48, 52) (5, 10) (25, 40)
         ]
     ;;
 
     let shared_2core =
-      Pool (2, scheduling_pairs [ "a"; "s"; "c" ]) :: no_resource_constraint
+      Pool (2, scheduling_pairs [ "a"; "s"; "c" ])
+      :: no_resource_constraint (48, 52) (5, 10) (25, 40)
     ;;
 
     let sa_group =
       Pool (1, scheduling_pairs [ "a"; "s" ])
       :: Pool (1, scheduling_pairs [ "c" ])
-      :: no_resource_constraint
+      :: no_resource_constraint (48, 52) (5, 10) (25, 40)
     ;;
   end
 end
