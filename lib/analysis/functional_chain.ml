@@ -55,6 +55,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     | All
     | Earliest
     | Lastest
+    | Randomized
 
   let consume_label
         ?(sem = All)
@@ -118,31 +119,40 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
                    if CMap.cardinal chain.trace = index then Some i else None)
                 partial_chains
             in
-            let to_modify, to_drop =
-              match sem with
-              | All -> candidates, []
-              | Earliest ->
-                let first, rest = List.first_partition candidates in
-                Option.to_list first, rest
-              | Lastest ->
-                let last, rest = List.last_partition candidates in
-                Option.to_list last, rest
-            in
-            List.filter_mapi
-              (fun i chain ->
-                 if List.mem i to_modify
-                 then
-                   Some
-                     { trace = CMap.add c now chain.trace
-                     ; targets
-                     ; misses = chain.misses
-                     }
-                 else if List.mem i to_drop
-                 then
-                   (* dropped := !dropped + 1; *)
-                   None
-                 else Some chain)
-              partial_chains)
+            if List.is_empty candidates
+            then partial_chains
+            else (
+              let to_modify, to_drop =
+                match sem with
+                | All -> candidates, []
+                | Earliest ->
+                  let first, rest = List.first_partition candidates in
+                  Option.to_list first, rest
+                | Lastest ->
+                  let last, rest = List.last_partition candidates in
+                  Option.to_list last, rest
+                | Randomized ->
+                  let index =
+                    Random.int_in_range ~min:0 ~max:(List.length candidates - 1)
+                  in
+                  let el = List.nth candidates index in
+                  [ el ], List.drop_nth candidates index
+              in
+              List.filter_mapi
+                (fun i chain ->
+                   if List.mem i to_modify
+                   then
+                     Some
+                       { trace = CMap.add c now chain.trace
+                       ; targets
+                       ; misses = chain.misses
+                       }
+                   else if List.mem i to_drop
+                   then
+                     (* dropped := !dropped + 1; *)
+                     None
+                   else Some chain)
+                partial_chains))
         else partial_chains
       in
       partial_chain, index + 1
