@@ -127,7 +127,7 @@ module Make (C : ID) (N : Num) = struct
   let debug_g name g now =
     let variants = g now in
     let _ =
-      Format.printf
+      Printf.printf
         "%s variants %s\n"
         name
         (List.to_string ~sep:" | " guard_to_string variants)

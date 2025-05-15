@@ -494,6 +494,7 @@ module Map = struct
   module Make (K : OrderedType) = struct
     include Make (K)
 
+    (**[entry update default key map]*)
     let entry f default k m =
       update
         k
@@ -508,7 +509,7 @@ module Map = struct
       =
       map
       |> to_seq
-      |> Seq.to_string ~sep (fun (k, v) -> Format.sprintf "%s -> %s" (ppk k) (ppv v))
+      |> Seq.to_string ~sep (fun (k, v) -> Printf.sprintf "%s -> %s" (ppk k) (ppv v))
     ;;
   end
 end

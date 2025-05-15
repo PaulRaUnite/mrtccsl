@@ -89,13 +89,13 @@ and num_expr = num_expr' Loc.t
 
 and num_expr' =
   | IntConstant of int
-  | RationalConstant of Rational.t
+  | RationalConstant of Number.Rational.t
   | BinOp of num_expr * binop * num_expr
   | UnOp of unop * num_expr
   | Variable of variable_expr
   | SIUnit of
       { expr : num_expr
-      ; scale : Rational.t
+      ; scale : Number.Rational.t
       ; into : [ `Duration | `Frequency ]
       }
   | Hole

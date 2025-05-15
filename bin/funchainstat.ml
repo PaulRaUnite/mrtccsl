@@ -31,7 +31,7 @@ let fifo_strategy priorities general_strategy =
   let queue = ref [] in
   let priorities = A.CMap.of_list priorities in
   let f candidates =
-    (* let _ = Format.printf "queue: %s\n" (List.to_string Fun.id !queue) in *)
+    (* let _ = Printf.printf "queue: %s\n" (List.to_string Fun.id !queue) in *)
     let prioritized =
       !queue
       |> List.find_mapi (fun _ c ->
@@ -113,7 +113,7 @@ let fast_strat =
 let one = of_int 1
 let two = of_int 2
 let hundred = of_int 100
-let half = Rational.(of_int 1 / of_int 2)
+let half = (of_int 1 / of_int 2)
 
 open FnCh
 
@@ -192,7 +192,7 @@ let process name spec =
       let chains = List.to_seq chains in
       let start, finish = FnCh.chain_start_finish_clocks func_chain_spec in
       let reactions = FnCh.reaction_times start finish chains in
-      let _ = Format.printf "deadlock: %b\n" deadlock in
+      let _ = Printf.printf "deadlock: %b\n" deadlock in
       let svgbob_str =
         A.trace_to_svgbob
           ~numbers:true
@@ -207,17 +207,17 @@ let process name spec =
         close_out trace_file
       in
       let _ =
-        Format.printf
+        Printf.printf
           "full chains:\n%s\n"
           (Seq.to_string
              ~sep:"\n"
              (fun (t : chain_instance) ->
                 FnCh.CMap.to_string String.to_string to_string t.trace)
              chains);
-        Format.printf
+        Printf.printf
           "partial chains:\n%s\n"
           (List.to_string ~sep:"\n" partial_chain_to_string partial_chains);
-        Format.printf
+        Printf.printf
           "reaction times: %s"
           (FnCh.reaction_times_to_string ~sep:"\n" reactions)
       in

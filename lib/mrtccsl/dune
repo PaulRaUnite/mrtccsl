@@ -1,0 +1,24 @@
+(include_subdirs unqualified)
+
+(library
+ (name mrtccsl)
+ (public_name mrtccsl)
+ (inline_tests)
+ (libraries
+  apron
+  apron.polkaMPQ
+  vpl-core
+  ocamlgraph
+  menhirLib
+  spectrum
+  cudd
+  domainslib
+  number
+  std)
+ (preprocess
+  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -32))))

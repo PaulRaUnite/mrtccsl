@@ -23,7 +23,7 @@
  (name mrtccsl)
  (synopsis "A collection of tools implementing MRTCCSL")
  (description
-  "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention.")
+  "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL that is used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing real-time and module extentions.")
  (depends
   (ocaml (>= 4.14.3))
   (dune :with-build)
@@ -45,7 +45,8 @@
   (odoc :with-doc)
   (odig :with-doc)
   (alcotest :with-test)
-  (domainslib (>= 0.5)))
+  (domainslib (>= 0.5))
+  (sexplib0 (>= 0.17)))
  (tags
   (simulation "model checking" "abstract interpretation" induction "real-time" "logical clock" "dsl")))
 

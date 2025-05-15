@@ -13,7 +13,7 @@ let highlight warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg : 
     let reset_ppf = Spectrum.prepare_ppf Format.std_formatter in
     if s.pos_lnum = f.pos_lnum
     then (
-      (* Printf.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
+      (* Format.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
       let prefix = Bytes.sub lexbuf s.pos_bol (s.pos_cnum - s.pos_bol) in
       let offset =
         Bytes.fold_right
@@ -26,7 +26,7 @@ let highlight warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg : 
           prefix
           0
       and width = max (f.pos_cnum - s.pos_cnum) 1
-      and linenum = Printf.sprintf "%i | " s.pos_lnum
+      and linenum = Format.sprintf "%i | " s.pos_lnum
       and linewidth =
         Fun.catch_with_default
           (Bytes.index_from lexbuf f.pos_cnum)
@@ -115,7 +115,7 @@ let string_token =
   | DOT -> "DOT"
   | DOLLAR -> "DOLLAR"
   | DELAY -> "DELAY"
-  | DECIMAL n -> Printf.sprintf "DECIMAL(%s)" (Rational.to_string n)
+  | DECIMAL n -> Printf.sprintf "DECIMAL(%s)" (Number.Rational.to_string n)
   | COMMA -> "COMMA"
   | COLON -> "COLON"
   | CEIL -> "CEIL"

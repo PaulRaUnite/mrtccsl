@@ -5,7 +5,7 @@
 
 %token <int> INT
 %token <string> ID
-%token <Rational.t> DECIMAL
+%token <Number.Rational.t> DECIMAL
 %token DOT
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET (* brackets *)
 %token COMMA COLON SEMICOLON (* delimiters *)
@@ -105,8 +105,8 @@ interval_expr0 :
 | e=num_expr; r=binop ; i=interval_expr {RightBinOp (e,r,i)}
 | num_expr {Singleton $1}
 | MINUS ; e=interval_expr %prec UMINUS { NegInterval(e) }
-| PLUSMINUS ; frac=num_const ; PERCENT ; OF; freq=num_expr { let wrap x = Loc.make $symbolstartpos $endpos x in let error = wrap (BinOp (wrap (BinOp (wrap (RationalConstant (Rational.from_pair 1 100)), Mul, (Loc.make $startpos(frac) $endpos(frac) frac))), Mul, freq)) in (Interval {left_strict=false;right_strict=false;left=wrap (UnOp (Neg, error)); right=error}) }
-| ppm=num_const ; PPM ; OF ; freq=num_expr {  let wrap x = Loc.make $symbolstartpos $endpos x in let error = wrap (BinOp (wrap (BinOp (wrap (RationalConstant (Rational.from_pair 1 1_000_000)), Mul, (Loc.make $startpos(ppm) $endpos(ppm) ppm))), Mul, freq)) in (Interval {left_strict=false;right_strict=false;left=wrap (UnOp (Neg, error)); right=error})  }
+| PLUSMINUS ; frac=num_const ; PERCENT ; OF; freq=num_expr { let wrap x = Loc.make $symbolstartpos $endpos x in let error = wrap (BinOp (wrap (BinOp (wrap (RationalConstant (Number.Rational.from_pair 1 100)), Mul, (Loc.make $startpos(frac) $endpos(frac) frac))), Mul, freq)) in (Interval {left_strict=false;right_strict=false;left=wrap (UnOp (Neg, error)); right=error}) }
+| ppm=num_const ; PPM ; OF ; freq=num_expr {  let wrap x = Loc.make $symbolstartpos $endpos x in let error = wrap (BinOp (wrap (BinOp (wrap (RationalConstant (Number.Rational.from_pair 1 1_000_000)), Mul, (Loc.make $startpos(ppm) $endpos(ppm) ppm))), Mul, freq)) in (Interval {left_strict=false;right_strict=false;left=wrap (UnOp (Neg, error)); right=error})  }
 
 %inline interval (X) : 
 | left_strict=left_bound ; left=X ; COMMA ; right=X ; right_strict=right_bound {{left_strict; left; right; right_strict}}
@@ -159,7 +159,7 @@ num_expr0 :
 | e1=num_expr ; r=binop ; e2=num_expr {BinOp(e1,r,e2)} 
 | r=unop ; LPAREN ; e=num_expr ; RPAREN {UnOp(r,e)} 
 | MINUS ; e=num_expr %prec UMINUS { UnOp(Neg, e) }
-| e=num_expr ; unit=si_unit { let (nom,denom,typ) = unit in SIUnit {expr=e; scale=Rational.from_pair nom denom; into=typ}}
+| e=num_expr ; unit=si_unit { let (nom,denom,typ) = unit in SIUnit {expr=e; scale=Number.Rational.from_pair nom denom; into=typ}}
 | QUESTION {Hole} 
 
 block_expr : block_expr0 {Loc.make $symbolstartpos $endpos $1}

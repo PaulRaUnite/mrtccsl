@@ -2,26 +2,26 @@
  (public_name sim)
  (name sim)
  (modules sim)
- (libraries mrtccsl))
+ (libraries mrtccsl number std))
 
 (executable
  (public_name ind)
  (name ind)
  (modules ind)
- (libraries mrtccsl))
+ (libraries mrtccsl number std))
 
 (executable
  (public_name funchainstat)
  (name funchainstat)
  (modules funchainstat)
- (libraries mrtccsl)
+ (libraries mrtccsl number std)
  (modes byte exe))
 
 (executable
  (public_name reaction)
  (name reaction)
  (modules reaction)
- (libraries mrtccsl)
+ (libraries mrtccsl number std)
  (modes exe))
 
 (env

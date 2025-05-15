@@ -31,7 +31,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     }
 
   let partial_chain_to_string chain =
-    Format.sprintf
+    Printf.sprintf
       "trace: %s targets: %s misses: %s"
       (CMap.to_string C.to_string N.to_string chain.trace)
       (CMap.to_string C.to_string Int.to_string chain.targets)
@@ -208,8 +208,8 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     let trace, deadlock = A.gen_trace_until s n time automaton in
     let full_chains, dangling_chains = trace_to_chain sem chain (List.to_seq trace) in
     (* let _ =
-      Format.printf "There are %i dangling chains.\n" (List.length dangling_chains);
-      Format.printf
+      Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
+      Printf.printf
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
@@ -220,6 +220,31 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     chains
     |> Seq.map (fun (t : chain_instance) ->
       t.misses, N.(CMap.find target t.trace - CMap.find source t.trace))
+  ;;
+
+  let statistics category chains =
+    let module IMap = Map.Make (Int) in
+    chains
+    |> Seq.fold_left
+         (fun acc ({ misses; _ } : chain_instance) ->
+            IMap.entry
+              (Int.add 1)
+              0
+              (Option.value ~default:0 (CMap.find_opt category misses))
+              acc)
+         IMap.empty
+    |> IMap.to_seq
+  ;;
+
+  let print_statistics category chains =
+    let stats = statistics category chains in
+    let total = Seq.fold_left (fun total (_, x) -> total + x) 0 stats |> Float.of_int in
+    Printf.printf "%s | %f\n" (C.to_string category) total;
+    print_endline
+      (Seq.to_string
+         ~sep:"\n"
+         (fun (c, x) -> Printf.sprintf "%i | %f" c (Float.of_int x /. total))
+         stats)
   ;;
 
   let reaction_times_to_string ~sep seq =

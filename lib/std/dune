@@ -1,0 +1,14 @@
+(include_subdirs unqualified)
+
+(library
+ (name std)
+ (package mrtccsl)
+ (wrapped false)
+ (libraries containers uuseg sexplib0)
+ (preprocess
+  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -32))))

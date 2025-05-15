@@ -41,6 +41,7 @@ depends: [
   "odig" {with-doc}
   "alcotest" {with-test}
   "domainslib" {>= "0.5"}
+  "sexplib0" {>= "0.17"}
 ]
 build: [
   ["dune" "subst"] {dev}
