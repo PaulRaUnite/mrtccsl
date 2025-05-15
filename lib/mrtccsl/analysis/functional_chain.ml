@@ -51,12 +51,29 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
         (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
   ;;
 
+  let points_of_interest chain =
+    let _, sampling_links =
+      List.fold_left
+        (fun (prev, points) (rel, next) ->
+           let points =
+             match rel with
+             | `Sampling -> points @ [ prev, next ]
+             | _ -> points
+           in
+           next, points)
+        (chain.first, [])
+        chain.rest
+    in
+    chain_start_finish_clocks chain :: sampling_links
+  ;;
+
   type semantics =
     | All
     | Earliest
     | Lastest
     | Randomized
 
+  (*TODO: optimize*)
   let consume_label
         ?(sem = All)
         instructions
@@ -216,10 +233,17 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     trace, deadlock, full_chains, dangling_chains
   ;;
 
-  let reaction_times source target chains =
+  let reaction_times pairs_to_compare chains =
     chains
     |> Seq.map (fun (t : chain_instance) ->
-      t.misses, N.(CMap.find target t.trace - CMap.find source t.trace))
+      ( t.misses
+      , pairs_to_compare
+        |> List.to_seq
+        |> Seq.map
+             N.(
+               fun (source, target) ->
+                 (source, target), CMap.find target t.trace - CMap.find source t.trace)
+        |> Hashtbl.of_seq ))
   ;;
 
   let statistics category chains =
@@ -251,22 +275,36 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     Seq.to_string ~sep (fun (_, t) -> N.to_string t) seq
   ;;
 
-  let reaction_times_to_csv header seq =
-    let reactions = Array.of_seq seq in
-    let _ = Array.sort (fun (_, t1) (_, t2) -> N.compare t1 t2) reactions in
+  let reaction_times_to_csv categories pairs_to_print seq =
     let buf = Buffer.create 128 in
-    let _ = List.iter (fun h -> Printf.bprintf buf "%s," (C.to_string h)) header in
-    let _ = Buffer.add_string buf "x\n" in
     let _ =
-      Array.iter
-        (fun (misses, t) ->
-           List.iter
-             (fun h ->
-                let v = Option.value ~default:0 (CMap.find_opt h misses) in
-                Printf.bprintf buf "%i," v)
-             header;
-           Printf.bprintf buf "%s\n" (N.to_string t))
-        reactions
+      Printf.bprintf
+        buf
+        "%s\n"
+        (List.to_string
+           ~sep:","
+           Fun.id
+           (List.map C.to_string categories
+            @ List.map
+                (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
+                pairs_to_print))
+    in
+    let _ =
+      Seq.iter
+        (fun (misses, times) ->
+           Printf.bprintf
+             buf
+             "%s\n"
+             (List.to_string
+                ~sep:","
+                Fun.id
+                (List.map
+                   (fun h ->
+                      let v = Option.value ~default:0 (CMap.find_opt h misses) in
+                      Int.to_string v)
+                   categories
+                 @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
+        seq
     in
     Buffer.contents buf
   ;;
