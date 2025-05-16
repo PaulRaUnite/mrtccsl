@@ -223,7 +223,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     =
     let automaton = A.of_spec system_spec in
     let trace, deadlock = A.gen_trace_until s n time automaton in
-    let full_chains, dangling_chains = trace_to_chain sem chain (List.to_seq trace) in
+    let full_chains, dangling_chains = trace_to_chain sem chain trace in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
@@ -272,7 +272,14 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
   ;;
 
   let reaction_times_to_string ~sep seq =
-    Seq.to_string ~sep (fun (_, t) -> N.to_string t) seq
+    Seq.to_string
+      ~sep
+      (fun (_, t) ->
+         t
+         |> Hashtbl.to_seq
+         |> Seq.to_string (fun ((s, f), v) ->
+           Printf.sprintf "(%s, %s) -> %s" (C.to_string s) (C.to_string f) (N.to_string v)))
+      seq
   ;;
 
   let reaction_times_to_csv categories pairs_to_print seq =

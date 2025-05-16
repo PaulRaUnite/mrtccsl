@@ -31,32 +31,31 @@ module type S = sig
   type guard = (label * num_cond) list
   type solution = label * num
   type strategy = guard -> solution option
-  type trace = solution list
+  type trace = solution Seq.t
   type t = (num -> guard) * (num -> solution -> bool) * label
 
   val empty : t
-  val step : strategy -> t -> num -> solution option
-  val run : strategy -> t -> int -> trace
+  val step : t -> num -> solution -> bool
   val bisimulate : strategy -> t -> t -> int -> (trace, trace) result
   val sync : t -> t -> t
   val of_constr : (clock, param, num) Rtccsl.constr -> t
   val of_spec : (clock, param, num) Rtccsl.specification -> t
-  val gen_trace : strategy -> int -> t -> solution list
-  val gen_trace_until : strategy -> int -> num -> t -> solution list
+  val gen_trace : strategy -> int -> t -> trace
+  val gen_trace_until : strategy -> int -> num -> t -> trace * bool ref
 
   module Strategy : sig
-    val first : (num_cond -> num option) -> strategy
-    val slow : num_cond -> (num -> num -> num) -> num_cond -> num option
-    val fast : num_cond -> (num -> num -> num) -> num_cond -> num option
-    val random_label : int -> (num_cond -> num option) -> strategy
+    val first : (num_cond -> num) -> strategy
+    val slow : num -> (num -> num -> num) -> num_cond -> num
+    val fast : num -> (num -> num -> num) -> num_cond -> num
+    val random_label : ?avoid_empty:bool -> (num_cond -> num) -> guard -> solution option
 
     val random_leap
-      :  num_cond
+      :  num
       -> (num -> num -> num)
       -> (num -> num -> num)
       -> (num -> num -> num)
       -> num_cond
-      -> num option
+      -> num
   end
 end
 
@@ -65,6 +64,7 @@ module Make (C : ID) (N : Num) = struct
   type num = N.t
   type param = C.t
 
+  (*TODO: optimize the label solving*)
   module L = struct
     include Set.Make (C)
 
@@ -83,7 +83,7 @@ module Make (C : ID) (N : Num) = struct
   type guard = (label * num_cond) list
   type solution = label * num
   type strategy = guard -> solution option
-  type trace = solution list
+  type trace = solution Seq.t
   type t = (num -> guard) * (num -> solution -> bool) * label
 
   open Sexplib0.Sexp_conv
@@ -161,26 +161,23 @@ module Make (C : ID) (N : Num) = struct
       if step a now sol then Some sol else None)
   ;;
 
-  let gen_trace s n (a : t) : solution list =
-    List.unfold_for
+  let gen_trace s n (a : t) : trace =
+    Seq.unfold
       (fun now ->
          let* l, now = next_step s a now in
          Some ((l, now), now))
       N.zero
-      n
+    |> Seq.take n
   ;;
 
-  let gen_trace_until s n time (a : t) : solution list * bool =
-    let trace, was_cut =
-      List.unfold_for_while
-        (fun now ->
-           let* l, now = next_step s a now in
-           Some ((l, now), now))
-        (N.neg N.one)
-        n
-        (fun (_, n) -> N.less n time)
-    in
-    trace, not was_cut
+  let gen_trace_until s n time (a : t) : trace * bool ref =
+    Seq.unfold_for_while
+      (fun now ->
+         let* l, now = next_step s a now in
+         Some ((l, now), now))
+      (N.neg N.one)
+      n
+      (fun (_, n) -> N.less n time)
   ;;
 
   let sync (a1 : t) (a2 : t) : t =
@@ -268,12 +265,9 @@ module Make (C : ID) (N : Num) = struct
     | TimeVar _ -> failwith "const_time_param: the parameter has to be constant"
   ;;
 
-  let of_constr
-        ?(int_unwrap = const_int_param)
-        ?(time_unwrap = const_time_param)
-        (constr : (clock, param, I.num) constr)
-    : t
-    =
+  let of_constr (constr : (clock, param, I.num) constr) : t =
+    let int_unwrap = const_int_param
+    and time_unwrap = const_time_param in
     let label_list = List.map L.of_list in
     let g, t =
       match constr with
@@ -668,15 +662,15 @@ module Make (C : ID) (N : Num) = struct
         then (
           match first num_decision tail with
           | None ->
-            let* n = num_decision c in
+            let n = num_decision c in
             Some (l, n)
           | Some x -> Some x)
-        else
-          let* n = num_decision c in
-          Some (l, n)
+        else (
+          let n = num_decision c in
+          Some (l, n))
     ;;
 
-    let random_label ?(avoid_empty = false) attempts num_decision solutions =
+    let random_label ?(avoid_empty = false) num_decision solutions =
       let solutions =
         if avoid_empty
         then List.filter (fun (l, _) -> not (L.is_empty l)) solutions
@@ -686,13 +680,10 @@ module Make (C : ID) (N : Num) = struct
       then None
       else (
         let len = List.length solutions in
-        let rand _ =
-          let choice = Random.int len in
-          let l, c = List.nth solutions choice in
-          let* n = num_decision c in
-          Some (l, n)
-        in
-        Seq.find_map (fun x -> x) (Seq.init attempts rand))
+        let choice = Random.int len in
+        let l, c = List.nth solutions choice in
+        let n = num_decision c in
+        Some (l, n))
     ;;
 
     let bounded bound lin_cond =
@@ -716,32 +707,27 @@ module Make (C : ID) (N : Num) = struct
         | I.Bound (I.Exclude x, I.Exclude y) -> up x y, down x y
         | _ -> invalid_arg "random on infinite interval is not supported"
       in
-      Some (rand x y)
+      rand x y
     ;;
 
     let slow upper_bound round_up cond =
       let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
       let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
-      let v =
-        match cond with
-        | I.Bound (I.Include x, _) -> x
-        | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
-          round_up x y
-        | _ -> invalid_arg "random on infinite interval is not supported"
-      in
-      Some v
+      match cond with
+      | I.Bound (I.Include x, _) -> x
+      | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
+        round_up x y
+      | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
 
-    let fast bound round_down lin_cond =
-      let* choice = bounded bound lin_cond in
-      let v =
-        match choice with
-        | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
-        | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
-          round_down x y
-        | _ -> invalid_arg "random on infinite interval is not supported"
-      in
-      Some v
+    let fast upper_bound round_down cond =
+      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
+      let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
+      match cond with
+      | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
+      | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
+        round_down x y
+      | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
   end
 
@@ -758,8 +744,8 @@ module Make (C : ID) (N : Num) = struct
     if List.length result = n then Ok result else Error result
   ;;
 
-  let proj_trace clocks trace = List.map (fun (l, n) -> L.inter clocks l, n) trace
-  let skip_empty trace = List.filter (fun (l, _) -> not (L.is_empty l)) trace
+  let proj_trace clocks trace = Seq.map (fun (l, n) -> L.inter clocks l, n) trace
+  let skip_empty trace = Seq.filter (fun (l, _) -> not (L.is_empty l)) trace
 
   let trace_to_svgbob ?(numbers = false) ?(tasks = []) ?precision clocks trace =
     if List.is_empty clocks
@@ -876,7 +862,7 @@ module Make (C : ID) (N : Num) = struct
         task_state
       in
       let task_state =
-        List.fold_left
+        Seq.fold_left
           serialize_label
           (List.map (fun t -> t, (Buffer.create 32, false)) tasks)
           trace
@@ -906,7 +892,7 @@ module Make (C : ID) (N : Num) = struct
 
   let trace_to_csl trace =
     let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
-    List.to_string ~sep:",STEP," serialize trace
+    Seq.to_string ~sep:",STEP," serialize trace
   ;;
 end
 
@@ -921,7 +907,6 @@ let%test_module _ =
 
     let random_strat =
       A.Strategy.random_label
-        1
         (A.Strategy.random_leap
            1.0
            (Float.round_up step)
@@ -931,18 +916,18 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (List.is_empty (A.gen_trace slow_strat 10 a))
+      not (Seq.is_empty (A.gen_trace slow_strat 10 a))
     ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (List.is_empty (A.gen_trace slow_strat 10 a))
+      not (Seq.is_empty (A.gen_trace slow_strat 10 a))
     ;;
 
     let%test _ =
       let a = A.of_constr (Coincidence [ "a"; "b" ]) in
       let trace = A.gen_trace random_strat 10 a in
-      not (List.is_empty trace)
+      not (Seq.is_empty trace)
     ;;
 
     let%test _ =
@@ -982,7 +967,7 @@ let%test_module _ =
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
-      List.length trace = 10
+      Seq.length trace = 10
     ;;
   end)
 ;;

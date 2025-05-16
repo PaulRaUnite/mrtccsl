@@ -37,6 +37,85 @@ module Option = struct
   ;;
 end
 
+module Seq = struct
+  include Seq
+
+  (** [int_seq n] returns sequence [0...n] (not included).*)
+  let int_seq n = take n (ints 0)
+
+  let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
+
+  (** [int_seq n] returns sequence [0..=n] (not included).*)
+  let int_seq_inclusive (starts, ends) =
+    assert (ends >= starts);
+    take (ends - starts + 1) (ints starts)
+  ;;
+
+  let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
+  let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
+
+  (** Returns sequence of lists from list of sequences. Ends when any sequence ends.*)
+  let rec zip_list seq_list () =
+    match seq_list with
+    | [] -> Nil
+    | list ->
+      let values_seqs = List.filter_map Seq.uncons list in
+      if List.compare_lengths seq_list values_seqs <> 0
+      then Nil
+      else (
+        let values, seqs = List.split values_seqs in
+        Cons (values, zip_list seqs))
+  ;;
+
+  let rec fold_left_until p f acc xs =
+    match xs () with
+    | Nil -> acc, None, xs
+    | Cons (x, xs) ->
+      if p x
+      then (
+        let acc = f acc x in
+        fold_left_until p f acc xs)
+      else acc, Some x, xs
+  ;;
+
+  let%test _ =
+    let left, delim, right =
+      fold_left_until (fun x -> x < 5) (fun acc x -> x :: acc) [] (int_seq 10)
+    in
+    left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
+  ;;
+
+  let return2 x y = cons x (return y)
+
+  let to_string ?(sep = ", ") ets seq =
+    let buf = Buffer.create 32 in
+    let _ =
+      Seq.fold_left
+        (fun first x ->
+           if not first then Buffer.add_string buf sep;
+           Buffer.add_string buf (ets x);
+           false)
+        true
+        seq
+    in
+    Buffer.contents buf
+  ;;
+
+  let unfold_for_while f init n p =
+    let was_cut = ref false in
+    ( Seq.unfold f init
+      |> Seq.zip (Seq.ints 1)
+      |> Seq.take_while (fun (i, v) ->
+        if i < n && p v
+        then true
+        else (
+          was_cut := true;
+          false))
+      |> Seq.map (fun (_, v) -> v)
+    , was_cut )
+  ;;
+end
+
 module List = struct
   include List
 
@@ -180,22 +259,9 @@ module List = struct
   ;;
 
   let unfold_for_while f init n p : 'a list * bool =
-    let was_cut = ref false in
-    let list =
-      Seq.unfold f init
-      |> Seq.zip (Seq.ints 1)
-      |> Seq.take_while (fun (i, v) ->
-        if i < n && p v
-        then true
-        else (
-          was_cut := true;
-          false))
-      |> Seq.map (fun (_, v) -> v)
-      |> List.of_seq
-    in
-    ( list
-    , !was_cut
-      (*tricky part: list variable enforces order, otherwise it was always false*) )
+    let seq, was_cut = Seq.unfold_for_while f init n p in
+    let list = List.of_seq seq in
+    list, !was_cut
   ;;
 
   let rec drop_nth l i =
@@ -370,70 +436,6 @@ module ExpirationQueue = struct
   ;;
 end
 
-module Seq = struct
-  include Seq
-
-  let rec zip_list seq_list () =
-    match seq_list with
-    | [] -> Nil
-    | list ->
-      let values_seqs, ended = List.flatten_opt (List.map Seq.uncons list) in
-      if ended
-      then Nil
-      else (
-        let values, seqs = List.split values_seqs in
-        Cons (values, zip_list seqs))
-  ;;
-
-  let rec fold_left_until p f acc xs =
-    match xs () with
-    | Nil -> acc, None, xs
-    | Cons (x, xs) ->
-      if p x
-      then (
-        let acc = f acc x in
-        fold_left_until p f acc xs)
-      else acc, Some x, xs
-  ;;
-
-  let%test _ =
-    let left, delim, right =
-      fold_left_until
-        (fun x -> x < 5)
-        (fun acc x -> x :: acc)
-        []
-        (List.to_seq @@ List.ints 10)
-    in
-    left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
-  ;;
-
-  let int_seq n = take n (ints 0)
-  let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
-
-  let int_seq_inclusive (starts, ends) =
-    assert (ends >= starts);
-    take (ends - starts + 1) (ints starts)
-  ;;
-
-  let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
-  let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
-  let return2 x y = cons x (return y)
-
-  let to_string ?(sep = ", ") ets seq =
-    let buf = Buffer.create 32 in
-    let _ =
-      Seq.fold_left
-        (fun first x ->
-           if not first then Buffer.add_string buf sep;
-           Buffer.add_string buf (ets x);
-           false)
-        true
-        seq
-    in
-    Buffer.contents buf
-  ;;
-end
-
 module Tuple = struct
   let map2 f (x, y) = f x, f y
   let map3 f (x, y, z) = f x, f y, f z
@@ -511,6 +513,8 @@ module Map = struct
       |> to_seq
       |> Seq.to_string ~sep (fun (k, v) -> Printf.sprintf "%s -> %s" (ppk k) (ppv v))
     ;;
+
+    let value ~default k map = Option.value ~default (find_opt k map)
   end
 end
 

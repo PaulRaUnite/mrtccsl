@@ -66,7 +66,6 @@ let fifo_strategy priorities general_strategy =
 let random_strat =
   A.Strategy.random_label
     ~avoid_empty:true
-    10
     (A.Strategy.random_leap (of_int 1000) (round_up step) (round_down step) random)
 ;;
 
@@ -105,15 +104,11 @@ let prioritize_single candidates =
   candidates
 ;;
 
-let fast_strat =
-  A.Strategy.random_label 10
-  @@ A.Strategy.fast (A.I.make_include (of_int 0) (of_int 10)) (round_down step)
-;;
-
+let fast_strat = A.Strategy.random_label @@ A.Strategy.fast (of_int 10) (round_down step)
 let one = of_int 1
 let two = of_int 2
 let hundred = of_int 100
-let half = (of_int 1 / of_int 2)
+let half = of_int 1 / of_int 2
 
 open FnCh
 
@@ -133,13 +128,20 @@ let parallel_reaction_times
       FnCh.functional_chains ~sem params system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times start finish (List.to_seq full_chains)
+      FnCh.reaction_times [ start, finish ] (List.to_seq full_chains)
     in
     if with_partial
     then
       partial_chains
       |> List.to_seq
-      |> Seq.map (fun c -> c.misses, horizon - A.CMap.find start c.trace)
+      |> Seq.map (fun (t : partial_chain) ->
+        ( t.misses
+        , [ start, finish ]
+          |> List.to_seq
+          |> Seq.map (fun (source, target) ->
+            ( (source, target)
+            , CMap.value ~default:horizon target t.trace - CMap.find source t.trace ))
+          |> Hashtbl.of_seq ))
     else full_reaction_times
   in
   Domainslib.Task.run pool (fun _ ->
@@ -175,6 +177,7 @@ let process name spec =
   let simulations = 1_000 in
   let sem = Earliest in
   let massive = true in
+  let points_of_interest = FnCh.points_of_interest func_chain_spec in
   let reactions =
     if massive
     then
@@ -190,14 +193,14 @@ let process name spec =
         FnCh.functional_chains ~sem (strategy, steps, horizon) system_spec func_chain_spec
       in
       let chains = List.to_seq chains in
-      let start, finish = FnCh.chain_start_finish_clocks func_chain_spec in
-      let reactions = FnCh.reaction_times start finish chains in
-      let _ = Printf.printf "deadlock: %b\n" deadlock in
+      let reactions = FnCh.reaction_times points_of_interest chains in
+      let _ = Printf.printf "deadlock: %b\n" !deadlock in
       let svgbob_str =
         A.trace_to_svgbob
           ~numbers:true
           ~precision:2
-          ~tasks:Rtccsl.Macro.[ task_clocks "s"; task_clocks "c"; task_clocks "a" ]
+          ~tasks:
+            Rtccsl.Examples.Macro.[ task_clocks "s"; task_clocks "c"; task_clocks "a" ]
           (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
           trace
       in
@@ -228,7 +231,10 @@ let process name spec =
   in
   let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
   let _ =
-    Printf.fprintf data_file "%s" (FnCh.reaction_times_to_csv [ "a.s" ] reactions)
+    Printf.fprintf
+      data_file
+      "%s"
+      (FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest reactions)
   in
   close_out data_file
 ;;
@@ -243,8 +249,9 @@ let () =
           (2, 8)
           (4, 6)
           (1, 3) )
-      ; ( "uncertain2"
-      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid (14, 16) (1, 3) (2, 8) )
+    ; ( "uncertain2"
+      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid (14, 16) (1, 3) (2, 8)
+      )
     ]
   in
   List.iter (fun (name, spec) -> process name spec) use_cases

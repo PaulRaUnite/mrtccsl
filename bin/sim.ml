@@ -7,19 +7,14 @@ let step = of_int 1 / of_int 10
 
 let random_strat =
   A.Strategy.random_label
-    10
     (A.Strategy.random_leap (of_int 1) (round_up step) (round_down step) random)
 ;;
 
-let fast_strat =
-  A.Strategy.random_label 10
-  @@ A.Strategy.fast (A.I.make_include (of_int 0) (of_int 2)) (round_down step)
-;;
-
+let fast_strat = A.Strategy.random_label @@ A.Strategy.fast (of_int 2) (round_down step)
 let one = of_int 1
 let two = of_int 2
 let hundred = of_int 100
-let half = (of_int 1 / of_int 2)
+let half = of_int 1 / of_int 2
 
 let () =
   let _ = Random.init 127649812489 in

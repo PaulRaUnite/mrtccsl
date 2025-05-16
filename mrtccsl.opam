@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "0.2-preview"
 synopsis: "A collection of tools implementing MRTCCSL"
 description:
-  "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL which is typically used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing this extention."
+  "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL that is used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing real-time and module extentions."
 maintainer: ["Pavlo Tokariev"]
 authors: ["Pavlo Tokariev"]
 license: "APACHE-2.0"
