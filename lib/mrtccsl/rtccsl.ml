@@ -271,87 +271,87 @@ let map
 
 let map_time_const f = map Fun.id Fun.id (time_param_map_const f) (expr_map Fun.id f)
 
-module Macro = struct
-  let task_clocks name =
-    let start = Printf.sprintf "%s.s" name in
-    let finish = Printf.sprintf "%s.f" name in
-    let ready = Printf.sprintf "%s.r" name in
-    let deadline = Printf.sprintf "%s.d" name in
-    name, ready, start, finish, deadline
-  ;;
-
-  let rigid_task name exec_duration =
-    let _, _, start, finish, _ = task_clocks name in
-    [ RTdelay
-        { out = finish
-        ; arg = start
-        ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
-        }
-    ]
-  ;;
-
-  let task name exec_duration =
-    let _, ready, start, finish, _ = task_clocks name in
-    [ Causality { cause = ready; conseq = start }
-    ; RTdelay
-        { out = finish
-        ; arg = start
-        ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
-        }
-    ]
-  ;;
-
-  let task_with_deadline name exec_duration deadline =
-    let finish = Printf.sprintf "%s.f" name in
-    Precedence { cause = finish; conseq = deadline } :: task name exec_duration
-  ;;
-
-  let rigid_periodic_task name exec_duration period (nerror, perror) offset =
-    let _, _, start, _, _ = task_clocks name in
-    rigid_task name exec_duration
-    @ [ CumulPeriodic
-          { out = start
-          ; period = TimeConst period
-          ; error = TimeConst nerror, TimeConst perror
-          ; offset = TimeConst offset
-          }
-      ]
-  ;;
-
-  let periodic_task name exec_duration period (nerror, perror) offset =
-    let ready = Printf.sprintf "%s.r" name in
-    let timer = Printf.sprintf "%s.t" name in
-    let deadline = Printf.sprintf "%s.d" name in
-    task_with_deadline name exec_duration deadline
-    @ [ CumulPeriodic
-          { out = timer
-          ; period = TimeConst period
-          ; error = TimeConst nerror, TimeConst perror
-          ; offset = TimeConst offset
-          }
-      ; Delay
-          { out = deadline
-          ; arg = timer
-          ; delay = IntConst 1, IntConst 1
-          ; base = Some timer
-          }
-      ; Coincidence [ timer; ready ]
-      ]
-  ;;
-
-  let scheduling_pairs tasks =
-    List.map
-      (fun name ->
-         let _, _, start, finish, _ = task_clocks name in
-         start, finish)
-      tasks
-  ;;
-end
-
 module Examples = struct
-  open Macro
+  module Macro = struct
+    let task_clocks name =
+      let start = Printf.sprintf "%s.s" name in
+      let finish = Printf.sprintf "%s.f" name in
+      let ready = Printf.sprintf "%s.r" name in
+      let deadline = Printf.sprintf "%s.d" name in
+      name, ready, start, finish, deadline
+    ;;
+
+    let rigid_task name exec_duration =
+      let _, _, start, finish, _ = task_clocks name in
+      [ RTdelay
+          { out = finish
+          ; arg = start
+          ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
+          }
+      ]
+    ;;
+
+    let task name exec_duration =
+      let _, ready, start, finish, _ = task_clocks name in
+      [ Causality { cause = ready; conseq = start }
+      ; RTdelay
+          { out = finish
+          ; arg = start
+          ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
+          }
+      ]
+    ;;
+
+    let task_with_deadline name exec_duration deadline =
+      let finish = Printf.sprintf "%s.f" name in
+      Precedence { cause = finish; conseq = deadline } :: task name exec_duration
+    ;;
+
+    let rigid_periodic_task name exec_duration period (nerror, perror) offset =
+      let _, _, start, _, _ = task_clocks name in
+      rigid_task name exec_duration
+      @ [ CumulPeriodic
+            { out = start
+            ; period = TimeConst period
+            ; error = TimeConst nerror, TimeConst perror
+            ; offset = TimeConst offset
+            }
+        ]
+    ;;
+
+    let periodic_task name exec_duration period (nerror, perror) offset =
+      let ready = Printf.sprintf "%s.r" name in
+      let timer = Printf.sprintf "%s.t" name in
+      let deadline = Printf.sprintf "%s.d" name in
+      task_with_deadline name exec_duration deadline
+      @ [ CumulPeriodic
+            { out = timer
+            ; period = TimeConst period
+            ; error = TimeConst nerror, TimeConst perror
+            ; offset = TimeConst offset
+            }
+        ; Delay
+            { out = deadline
+            ; arg = timer
+            ; delay = IntConst 1, IntConst 1
+            ; base = Some timer
+            }
+        ; Coincidence [ timer; ready ]
+        ]
+    ;;
+
+    let scheduling_pairs tasks =
+      List.map
+        (fun name ->
+           let _, _, start, finish, _ = task_clocks name in
+           start, finish)
+        tasks
+    ;;
+  end
 
   module SimpleControl = struct
+    open Macro
+
     let no_resource_constraint_rigid_certain p_s e_s e_c p_a e_a =
       List.flatten
         [ rigid_periodic_task "s" (e_s, e_s) p_s (0, 0) 0
