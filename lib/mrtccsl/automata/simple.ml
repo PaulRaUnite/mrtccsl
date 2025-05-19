@@ -110,9 +110,17 @@ module Make (C : ID) (N : Num) = struct
     Printf.sprintf "%s ! %s" (L.to_string label) (N.to_string now)
   ;;
 
-  let correctness_check clocks labels (l, n) =
-    let proj = L.inter clocks l in
-    List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n) labels
+  let correctness_decorator a =
+    let g, t, clocks = a in
+    let t n (l, n') =
+      let possible = g n in
+      let proj = L.inter clocks l in
+      let present =
+        List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n') possible
+      in
+      present && t n (l, n')
+    in
+    g, t, clocks
   ;;
 
   let step a n sol =
@@ -655,7 +663,8 @@ module Make (C : ID) (N : Num) = struct
         in
         g, t
     in
-    g, t, L.of_list (clocks constr)
+    let clocks = L.of_list (clocks constr) in
+    correctness_decorator (g, t, clocks)
   ;;
 
   let of_spec spec = List.fold_left sync empty (List.map of_constr spec)
