@@ -1,0 +1,15 @@
+(include_subdirs unqualified)
+
+(library
+ (name halsoa)
+ (public_name mrtccsl.halsoa)
+ (inline_tests)
+ (libraries mrtccsl std number)
+ (preprocess
+  (pps ppx_deriving.map)))
+
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -32))))
