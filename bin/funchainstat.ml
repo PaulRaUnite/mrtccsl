@@ -64,8 +64,7 @@ let fifo_strategy priorities general_strategy =
 ;;
 
 let random_strat =
-  A.Strategy.random_label
-    ~avoid_empty:true
+  A.Strategy.avoid_empty >> A.Strategy.random_label
     (A.Strategy.random_leap (of_int 1000) (round_up step) (round_down step) random)
 ;;
 
