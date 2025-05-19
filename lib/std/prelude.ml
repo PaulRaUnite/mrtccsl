@@ -55,7 +55,7 @@ module Seq = struct
   let%test _ = List.of_seq (int_seq_inclusive (-3, 0)) = [ -3; -2; -1; 0 ]
 
   (** Returns sequence of lists from list of sequences. Ends when any sequence ends.*)
-  let rec zip_list seq_list () =
+  let rec zip_list seq_list () : 'a list node =
     match seq_list with
     | [] -> Nil
     | list ->
@@ -140,7 +140,7 @@ module List = struct
     | [] -> None, []
   ;;
 
-  let[@tail_mod_cons] rec last_partition = function
+  let rec last_partition = function
     | [] -> None, []
     | x :: [] -> Some x, []
     | x :: tail ->
@@ -170,13 +170,13 @@ module List = struct
       list
   ;;
 
-  let rec zip3 l1 l2 l3 =
+  let[@tail_mod_cons] rec zip3 l1 l2 l3 =
     match l1, l2, l3 with
     | [], [], [] | [], _, _ | _, [], _ | _, _, [] -> []
     | a1 :: l1, a2 :: l2, a3 :: l3 -> (a1, a2, a3) :: zip3 l1 l2 l3
   ;;
 
-  let rec zip4 l1 l2 l3 l4 =
+  let[@tail_mod_cons] rec zip4 l1 l2 l3 l4 =
     match l1, l2, l3, l4 with
     | [], [], [], [] -> []
     | a1 :: l1, a2 :: l2, a3 :: l3, a4 :: l4 -> (a1, a2, a3, a4) :: zip4 l1 l2 l3 l4
@@ -264,7 +264,7 @@ module List = struct
     list, !was_cut
   ;;
 
-  let rec drop_nth l i =
+  let[@tail_mod_cons] rec drop_nth l i =
     match l with
     | x :: tail -> if i = 0 then tail else x :: drop_nth tail (i - 1)
     | [] -> []
@@ -339,7 +339,7 @@ module List = struct
   ;;
 
   (** Modifies first element encountered*)
-  let rec map_inplace_once f = function
+  let[@tail_mod_cons] rec map_inplace_once f = function
     | [] -> []
     | x :: tail ->
       (match f x with
@@ -357,6 +357,27 @@ module List = struct
   ;;
 
   let filter_mapi f l = filter_mapi f 0 l
+
+  (**[reduce_left] is similar to [fold_left], except it uses [acc l0] as its accumulator.*)
+  let reduce_left f acc = function
+    | [] -> invalid_arg "empty list"
+    | x :: xs -> fold_left f (acc x) xs
+  ;;
+
+  (**[reduce_right] is similar to [fold_right], except is uses [acc ltail] as its accumulator.*)
+  let rec reduce_right f acc = function
+    | [] -> invalid_arg "empty list"
+    | x :: [] -> acc x
+    | x :: xs -> f x (reduce_right f acc xs)
+  ;;
+
+  (** [zip_list] zips list of lists from list of sequences. Ends when any outer list ends.*)
+  let zip_list l = l |> map to_seq |> Seq.zip_list |> of_seq
+  let%test_unit _ =
+    [%test_eq: int list list]
+      (zip_list [ [ 1; 2 ]; [ 3; 4 ] ])
+      [ [ 1; 3 ]; [ 2; 4 ] ]
+  ;;
 end
 
 module String = struct
