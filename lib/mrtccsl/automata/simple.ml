@@ -11,6 +11,7 @@ module type Num = sig
   include Interval.Num
   include Interface.ExpOrder.S with type t := t
   include Interface.Stringable with type t := t
+  include Interface.OrderedType with type t := t
 
   val zero : t
   val one : t
@@ -24,8 +25,9 @@ module type S = sig
   type num
   type label
 
+  module N : Num with type t = num
   module I : Interval.I with type num = num
-  module L : Set.S with type elt = clock
+  module L : Set.S with type elt = clock and type t = label
 
   type num_cond = I.t
   type guard = (label * num_cond) list
@@ -36,7 +38,7 @@ module type S = sig
 
   val empty : t
   val step : t -> num -> solution -> bool
-  val bisimulate : strategy -> t -> t -> int -> (trace, trace) result
+  val bisimulate : strategy -> t -> t -> int -> trace
   val sync : t -> t -> t
   val of_constr : (clock, param, num) Rtccsl.constr -> t
   val of_spec : (clock, param, num) Rtccsl.specification -> t
@@ -47,7 +49,7 @@ module type S = sig
     val first : (num_cond -> num) -> strategy
     val slow : num -> (num -> num -> num) -> num_cond -> num
     val fast : num -> (num -> num -> num) -> num_cond -> num
-    val random_label : ?avoid_empty:bool -> (num_cond -> num) -> guard -> solution option
+    val random_label : (num_cond -> num) -> guard -> solution option
 
     val random_leap
       :  num
@@ -56,6 +58,8 @@ module type S = sig
       -> (num -> num -> num)
       -> num_cond
       -> num
+
+    val avoid_empty : guard -> guard
   end
 end
 
@@ -63,6 +67,8 @@ module Make (C : ID) (N : Num) = struct
   type clock = C.t
   type num = N.t
   type param = C.t
+
+  module N = N
 
   (*TODO: optimize the label solving*)
   module L = struct
@@ -670,12 +676,7 @@ module Make (C : ID) (N : Num) = struct
           Some (l, n))
     ;;
 
-    let random_label ?(avoid_empty = false) num_decision solutions =
-      let solutions =
-        if avoid_empty
-        then List.filter (fun (l, _) -> not (L.is_empty l)) solutions
-        else solutions
-      in
+    let random_label num_decision solutions =
       if List.is_empty solutions
       then None
       else (
@@ -729,19 +730,18 @@ module Make (C : ID) (N : Num) = struct
         round_down x y
       | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
+
+    let avoid_empty variants = List.filter (fun (l, _) -> not (L.is_empty l)) variants
   end
 
   let bisimulate s a1 a2 n =
     let _, trans, _ = a2 in
-    let result =
-      List.unfold_for
-        (fun now ->
-           let* l, n = next_step s a1 now in
-           if trans now (l, n) then Some ((l, n), n) else None)
-        N.zero
-        n
-    in
-    if List.length result = n then Ok result else Error result
+    Seq.unfold
+      (fun now ->
+         let* l, n = next_step s a1 now in
+         if trans now (l, n) then Some ((l, n), n) else None)
+      N.zero
+    |> Seq.take n
   ;;
 
   let proj_trace clocks trace = Seq.map (fun (l, n) -> L.inter clocks l, n) trace
@@ -944,7 +944,7 @@ let%test_module _ =
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Result.is_ok trace
+      Seq.length trace = steps
     ;;
 
     let%test _ =
@@ -958,7 +958,7 @@ let%test_module _ =
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Result.is_ok trace
+      Seq.length trace = steps
     ;;
 
     let%test _ =
