@@ -14,9 +14,10 @@
   cudd
   domainslib
   number
-  std)
+  std
+  owl)
  (preprocess
-  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare)))
+  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare ppx_deriving.map ppx_deriving.show)))
 
 (env
  (dev

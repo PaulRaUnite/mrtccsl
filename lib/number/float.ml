@@ -25,4 +25,7 @@ let round_down step x y =
 ;;
 
 let random x y = if equal x y then x else x +. Random.float (y -. x)
-let from_int = float_of_int
+let of_int = float_of_int
+let to_int = int_of_float
+let of_float x = x
+let to_float x = x

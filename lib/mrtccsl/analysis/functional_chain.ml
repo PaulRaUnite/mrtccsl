@@ -218,19 +218,25 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
   let functional_chains
         ?(sem = All)
         (s, n, time)
-        (system_spec : (A.clock, A.param, A.num) Rtccsl.specification)
+        (dist : _ Automata.Simple.dist list)
+        (system_spec : _ Rtccsl.specification)
         (chain : chain)
     =
-    let automaton = A.of_spec system_spec in
-    let trace, deadlock = A.gen_trace_until s n time automaton in
-    let full_chains, dangling_chains = trace_to_chain sem chain trace in
+    let env = A.of_spec system_spec in
+    let trace, deadlock =
+      A.gen_trace (A.Strategy.Var.use_dist dist) s env
+      |> Seq.take n
+      |> A.until_horizon time
+    in
+    let trace = Array.of_seq trace in
+    let full_chains, dangling_chains = trace_to_chain sem chain (Array.to_seq trace) in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    trace, deadlock, full_chains, dangling_chains
+    (Array.to_seq trace), deadlock, full_chains, dangling_chains
   ;;
 
   let reaction_times pairs_to_compare chains =

@@ -114,6 +114,8 @@ module Seq = struct
       |> Seq.map (fun (_, v) -> v)
     , was_cut )
   ;;
+
+  let append_list l = List.fold_left append empty l
 end
 
 module List = struct
@@ -373,10 +375,9 @@ module List = struct
 
   (** [zip_list] zips list of lists from list of sequences. Ends when any outer list ends.*)
   let zip_list l = l |> map to_seq |> Seq.zip_list |> of_seq
+
   let%test_unit _ =
-    [%test_eq: int list list]
-      (zip_list [ [ 1; 2 ]; [ 3; 4 ] ])
-      [ [ 1; 3 ]; [ 2; 4 ] ]
+    [%test_eq: int list list] (zip_list [ [ 1; 2 ]; [ 3; 4 ] ]) [ [ 1; 3 ]; [ 2; 4 ] ]
   ;;
 end
 
@@ -509,6 +510,8 @@ module Hashtbl = struct
         seq
     ;;
   end
+
+  let map kf vf tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> kf k, vf v) |> of_seq
 end
 
 module Map = struct

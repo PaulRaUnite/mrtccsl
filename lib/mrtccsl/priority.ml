@@ -1,12 +1,12 @@
-open Prelude
+(* open Prelude *)
 
 (**
 Priority order of specifications, from most to least. Decision taken in earlier specification canot be overwritten.
 *)
-type 'a order = 'a list list
+(* type 'a order = 'a list list
 
 module Automata (A : Simple.S) = struct
-  let sync (strategy : A.strategy) (specs : _ Rtccsl.specification order) : A.t =
+  let sync (strategy : A.Strategy.Solution.t) (specs : _ Rtccsl.specification order) : A.t =
     let memorize_decision (guard, trans, domain) =
       let decided = ref None in
       let guard now =
@@ -15,7 +15,7 @@ module Automata (A : Simple.S) = struct
           | Some sol -> sol
           | None ->
             let variants = guard now in
-            let sol = Option.get ((A.Strategy.avoid_empty >> strategy) variants) in
+            let sol = Option.get (strategy variants) in
             decided := Some sol;
             sol
         in
@@ -39,4 +39,4 @@ module Automata (A : Simple.S) = struct
     in
     List.reduce_left order_sync parallel_sync specs
   ;;
-end
+end *)

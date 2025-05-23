@@ -79,9 +79,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   include MakeExpr (C) (N)
 
-  exception ExactRelationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
-  exception OverApproximationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
-  exception UnderApproximationUnavailable of (C.t, C.t, N.t) Rtccsl.constr
+  exception ExactRelationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
+  exception OverApproximationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
+  exception UnderApproximationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
 
   (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
@@ -106,41 +106,39 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       And pair_chain
     | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
-    | RTdelay { out; arg; delay = e1, e2 } ->
-      let e1 = time_param e1 in
-      let e2 = time_param e2 in
-      out.@[i] &- arg.@[i] &|> (e1, e2)
-      && e1 >= Const N.zero
-      && e2 >= Const N.zero
-      && e2 >= e1
-    | Delay { out; arg; delay = IntConst d1, IntConst d2; base = None } when d1 = d2 ->
+    | RTdelay { out; arg; delay } ->
+      let delay = Var (FreeVar delay) in
+      out.@[i] &- arg.@[i] == delay && delay >= Const N.zero
+    | Delay { out; arg; delay = Const d1, Const d2; base = None } when d1 = d2 ->
       out.@[i - d1] == arg.@[i]
     | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
     | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
-    | CumulPeriodic { out; period; error = le, re; offset } ->
-      let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
-      let prev = ZeroCond (out.@[i - 1], offset &- period) in
-      out.@[i] &- prev &- period &|> (le, re)
+    | CumulPeriodic { out; period; offset } ->
+      let period, offset = Var (FreeVar period), num_expr_of_expr offset in
+      let prev = ZeroCond (out.@[i - 1], offset &+ period ) in
+      out.@[i] &- prev == period && period > Const N.zero && offset > Const N.zero
+    | AbsPeriodic { out; period; error; offset } ->
+      let period, error, offset =
+        num_expr_of_expr period, Var (FreeVar error), num_expr_of_expr offset
+      in
+      out.@[i] &- (period &* Var (Index (i - 1))) &- offset == error
       && period > Const N.zero
-      && re >= le
-      && offset > Const N.zero
-    | AbsPeriodic { out; period; error = le, re; offset } ->
-      let period, le, re, offset = Tuple.map4 time_param (period, le, re, offset) in
-      out.@[i] &- (period &* Var (Index (i - 1))) &- offset &|> (le, re)
-      && period > Const N.zero
-      && re >= le
       && offset > Const N.zero
     | Sporadic { out; at_least; strict } ->
       let diff = out.@[i] &- out.@[i - 1] in
-      let at_least = time_param at_least in
+      let at_least = num_expr_of_expr at_least in
       if strict then diff > at_least else diff >= at_least
-    | TimeParameter (v, (e1, e2)) ->
-      Var (FreeVar v) &|> (num_expr_of_expr e1, num_expr_of_expr e2)
     | _ -> raise (ExactRelationUnavailable c)
   ;;
 
-  let exact_spec (s : ('c, 'p, 'n) specification) : ('c, 'n) bool_expr list =
-    List.map exact_rel s
+  let var_relation = function
+    | TimeVarRelation (v, op, p) -> Linear (Var (FreeVar v), op, num_expr_of_expr p)
+  ;;
+
+  let of_spec cf { constraints; var_relations } =
+    let constraints = List.map (BoolExpr.norm << cf) constraints in
+    let relations = List.map var_relation var_relations in
+    List.append constraints relations
   ;;
 
   (** Returns overapproximation denotational relation of a RTCCSL constraint. Raises [OverApproximationUnavailable] otherwise.*)
@@ -156,22 +154,16 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         |> List.of_seq
       in
       And pairwise_exclusions
-    | _ -> raise (OverApproximationUnavailable c)
-  ;;
-
-  (** [safe_ver_rel c] returns overapproximation defined in [over_rel] or empty rel (always valid overapproximation).*)
-  let over_rel_priority_exact c =
-    try over_rel c with
-    | OverApproximationUnavailable _ ->
+    | c ->
       let clocks = Rtccsl.clocks c in
       And (List.map (fun c -> Syntax.(c.@[-1] < c.@[0])) clocks)
   ;;
 
-  let over_rel_priority_exact_spec = List.map (BoolExpr.norm << over_rel_priority_exact)
-
-  let over_rel_priority_over c =
-    try over_rel c with
-    | OverApproximationUnavailable _ -> exact_rel c
+  let with_backup ~priority ~backup c =
+    try priority c with
+    | ExactRelationUnavailable _
+    | OverApproximationUnavailable _
+    | UnderApproximationUnavailable _ -> backup c
   ;;
 
   (** [under_rel c] returns underapproximation denotational relation of [c] constraint. Raises [UnderApproximationUnavailable] if doesn't exist.*)
@@ -205,14 +197,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       exact_rel (Coincidence (out :: args))
     | Sample { out; arg; base } ->
       base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
-    | Delay { out; arg; delay = IntConst d1, IntConst d2; base = Some base } when d1 = d2
-      ->
+    | Delay { out; arg; delay = Const d1, Const d2; base = Some base } when d1 = d2 ->
       out.@[i - d1] == base.@[i]
       && base.@[i - 1 - d1] < arg.@[i - d1]
       && arg.@[i - d1] <= base.@[i - d1]
-    | AbsPeriodic { out; period; error; offset }
-    | CumulPeriodic { out; period; error; offset } ->
-      exact_rel (AbsPeriodic { out; period; error; offset })
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
       base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
     | Forbid { from; until; args } ->
@@ -227,26 +215,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | Allow { from; until; args } ->
       And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
     | _ -> raise (UnderApproximationUnavailable c)
-  ;;
-
-  let under_rel_priority_exact c =
-    try exact_rel c with
-    | ExactRelationUnavailable _ -> under_rel c
-  ;;
-
-  let under_rel_priority_under c =
-    try under_rel c with
-    | UnderApproximationUnavailable _ -> exact_rel c
-  ;;
-
-  let safe_exact_rel_spec spec =
-    try Some (List.map (BoolExpr.norm << exact_rel) spec) with
-    | ExactRelationUnavailable _ -> None
-  ;;
-
-  let safe_under_rel_priority_exact_spec spec =
-    try Some (List.map (BoolExpr.norm << under_rel_priority_exact) spec) with
-    | ExactRelationUnavailable _ | OverApproximationUnavailable _ -> None
   ;;
 
   let lc_connection c i = Denotational.Syntax.(c.@[i - 1] < c.@[i])
@@ -490,7 +458,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               let diam = max - min in
               let to_cover =
                 match cover with
-                | Initial (a, b) -> Seq.int_seq_inclusive (a + diam, b)
+                | Initial (a, b) -> Seq.int_seq_inclusive (a + diam - 1, b)
                 | Update { left; right } ->
                   let from_left =
                     match left with
@@ -528,9 +496,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                           := MapOC.entry
                                (fun acc -> (j, fi) :: acc)
                                []
-                               vf 
-                               !new_spawned_variables
-                               )
+                               vf
+                               !new_spawned_variables)
                       in
                       shifted)
                    to_cover))
@@ -646,14 +613,6 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
          let _ = Printf.printf "post: %s\n" (string_of_bool_expr post) in
          ())
       (List.zip4 init pre ind post)
-  ;;
-
-  let parameter_names formulae =
-    formulae
-    |> List.filter_map (function
-      | TimeParameter (v, _) | LogicalParameter (v, _) -> Some v
-      | _ -> None)
-    |> List.sort_uniq C.compare
   ;;
 
   module Graph = struct
@@ -900,13 +859,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     ;;
 
     let solve spec =
-      let exact_formulae = safe_exact_rel_spec spec in
-      match exact_formulae with
-      | Some formulae -> Exact (solve_expr formulae)
-      | None ->
-        let over_formulae = over_rel_priority_exact_spec spec in
+      try Exact (solve_expr (of_spec exact_rel spec)) with
+      | ExactRelationUnavailable _ ->
+        let over_formulae =
+          of_spec (with_backup ~priority:exact_rel ~backup:over_rel) spec
+        in
         let over = solve_expr over_formulae in
-        let under_formulae = safe_under_rel_priority_exact_spec spec in
+        let under_formulae =
+          Fun.catch_to_opt
+            (of_spec (with_backup ~priority:exact_rel ~backup:under_rel))
+            spec
+        in
         let under = Option.map solve_expr under_formulae in
         Approximation { over; under }
     ;;
@@ -1358,6 +1321,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           let a_p, ab_p, sim_p = report (a, ab, sim) in
           Proof ((a, a_p), (ab, ab_p), (sim, sim_p)))
       in
+      let safe_under_rel_priority_exact_spec =
+        Fun.catch_to_opt @@ of_spec (with_backup ~priority:exact_rel ~backup:under_rel)
+      in
       let* a = safe_under_rel_priority_exact_spec a in
       let* b = safe_under_rel_priority_exact_spec b in
       Some (solve_expr a b)
@@ -1420,10 +1386,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     let solve (a, s, p) =
       { assumption = Existence.solve a
-      ; structure = Existence.solve (a @ s)
+      ; structure = Existence.solve (merge a s)
       ; property = Existence.solve p
       ; assumption_in_structure = Assumption.solve a s
-      ; structure_in_property = Property.solve (a @ s) p
+      ; structure_in_property = Property.solve (merge a s) p
       }
     ;;
 

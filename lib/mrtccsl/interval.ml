@@ -22,6 +22,7 @@ module type I = sig
   val empty : t
   val inf : t
   val destr : t -> (bound * bound) option
+  val constant_bounds : t -> (num * num) option
   val inter : t -> t -> t
 
   (**x is subset of y**)
@@ -39,6 +40,15 @@ module type I = sig
   val ( <-= ) : num -> num -> t
   val ( =-= ) : num -> num -> t
 
+  val complement_left : t -> t option
+  val complement_right : t -> t option
+
+  val left_bound_opt : t -> num option
+  val right_bound_opt : t -> num option
+
+  val is_left_unbound : t -> bool
+  val is_right_unbound : t -> bool
+
   include Sexplib0.Sexpable.S with type t := t
 end
 
@@ -49,7 +59,7 @@ module type Num = sig
   val ( + ) : t -> t -> t
 end
 
-module Make (N : Num) = struct
+module Make (N : Num) : I with type num = N.t = struct
   type num = N.t
 
   type bound =
@@ -144,6 +154,11 @@ module Make (N : Num) = struct
     | Empty -> None
   ;;
 
+  let constant_bounds = function
+    | Bound (Include x, Include y) -> Some (x, y)
+    | _ -> None
+  ;;
+
   let empty = Empty
 
   let inter x y =
@@ -155,6 +170,7 @@ module Make (N : Num) = struct
     | _ -> Empty
   ;;
 
+  (**[subset x y] returns true when [y] contains [x].*)
   let subset x y =
     match x, y with
     | Bound (a, b), Bound (c, d) -> LeftBound.more_eq a c && RightBound.less_eq b d
@@ -177,6 +193,7 @@ module Make (N : Num) = struct
     | _ -> false
   ;;
 
+  (**[contains i n] returns either element [n] is in interval [i].*)
   let contains i n = subset (return n) i
 
   let shift_by i n =
@@ -214,13 +231,15 @@ module Make (N : Num) = struct
     | _ -> false
   ;;
 
-  let left_bound_opt = function 
-  | Bound ((Exclude x | Include x), _) -> Some x
-  | _ -> None
+  let left_bound_opt = function
+    | Bound ((Exclude x | Include x), _) -> Some x
+    | _ -> None
+  ;;
 
-  let right_bound_opt = function 
-  | Bound (_, (Exclude x | Include x)) -> Some x
-  | _ -> None
+  let right_bound_opt = function
+    | Bound (_, (Exclude x | Include x)) -> Some x
+    | _ -> None
+  ;;
 end
 
 module MakeDebug (N : sig
@@ -252,30 +271,20 @@ end
 
 let%test_module _ =
   (module struct
-    module II : I with type num = int = Make (Number.Integer)
+    module II = Make (Number.Integer)
+    open II
 
-    let%test_unit _ =
-      [%test_eq: II.t] (II.make_include ~-1 1) (II.inter (II.pinf ~-1) (II.ninf 1))
-    ;;
-
-    let%test _ = II.subset (II.make_include ~-1 1) II.inf
-    let%test _ = II.contains II.inf 0
-    let%test _ = II.contains (II.pinf 0) 0
-    let%test _ = II.contains (II.ninf 0) 0
-    let%test_unit _ = [%test_eq: II.t] (II.inter (II.ninf 0) (II.pinf 0)) (II.return 0)
-
-    let%test_unit _ =
-      [%test_eq: II.t]
-        (II.inter (II.make_include ~-1 1) (II.make_include 0 2))
-        (II.make_include 0 1)
-    ;;
-
-    let%test_unit _ =
-      [%test_eq: II.t] (II.inter (II.ninf_strict 0) (II.pinf_strict 0)) II.empty
-    ;;
-
-    let%test_unit _ = [%test_eq: II.t] II.(0 <-= 0) II.empty
-    let%test_unit _ = [%test_eq: II.t] II.(0 =-> 0) II.empty
-    let%test_unit _ = [%test_eq: II.t] II.(0 <-> 0) II.empty
+    let%test_unit _ = [%test_eq: t] (-1 =-= 1) (inter (pinf (-1)) (ninf 1))
+    let%test _ = subset (-1 =-= 1) inf
+    let%test _ = subset (0 =-= 1) (0 =-= 2)
+    let%test _ = contains inf 0
+    let%test _ = contains (pinf 0) 0
+    let%test _ = contains (ninf 0) 0
+    let%test_unit _ = [%test_eq: t] (inter (ninf 0) (pinf 0)) (return 0)
+    let%test_unit _ = [%test_eq: t] (inter (-1 =-= 1) (0 =-= 2)) (0 =-= 1)
+    let%test_unit _ = [%test_eq: t] (inter (ninf_strict 0) (pinf_strict 0)) empty
+    let%test_unit _ = [%test_eq: t] (0 <-= 0) empty
+    let%test_unit _ = [%test_eq: t] (0 =-> 0) empty
+    let%test_unit _ = [%test_eq: t] (0 <-> 0) empty
   end)
 ;;

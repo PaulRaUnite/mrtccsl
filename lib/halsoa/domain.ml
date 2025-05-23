@@ -1,49 +1,51 @@
-(*TODO: prbably move to rtccsl itself*)
-type 'n distribution =
-  | Uniform of
-      { lower : 'n
-      ; upper : 'n
-      }
-  | TrunkNormal of
-      { mean : 'n
-      ; dev : 'n
-      ; lower : 'n
-      ; upper : 'n
-      }
-[@@deriving map]
+open Prelude
+open Mrtccsl.Automata.Simple
 
-type 'n trig_policy =
-  | Timer of 'n distribution
-  | Event of string
-[@@deriving map]
-
-type 'n service =
-  { inputs : string list
-  ; outputs : string list
-  ; execution_time : 'n distribution
-  ; trigger : 'n trig_policy
+type 'n bounded_distribution =
+  { bounds : 'n * 'n
+  ; dist : 'n distribution
   }
 [@@deriving map]
 
-type 'n component = 'n service list
+type id = string
+
+type 'n trig_policy =
+  [ `AbsoluteTimer of 'n * 'n bounded_distribution
+  | `CumulativeTimer of 'n bounded_distribution
+  | `Signal of id
+  ]
+[@@deriving map]
+
+type 'n service =
+  { name : id
+  ; inputs : id list
+  ; outputs : id list
+  ; execution_time : 'n bounded_distribution
+  ; policy : 'n trig_policy
+    (*TODO: add ability to specify the dependencies between inputs and outputs*)
+  }
+[@@deriving map]
+
+type 'n component =
+  { name : id
+  ; services : 'n service list
+  }
 [@@deriving map]
 
 type 'n signal =
   | Sensor of
-      { name : string
-      ; period : 'n distribution
-      ; latency : 'n distribution
+      { as_device : bool
+      ; policy :
+          [ `AbsoluteTimer of 'n * 'n bounded_distribution
+          | `CumulativeTimer of 'n bounded_distribution
+          ]
+      ; latency : 'n bounded_distribution
       }
   | Actuator of
-      { name : string
-      ; period : 'n distribution
-      ; latency : 'n distribution
+      { policy : 'n trig_policy
+      ; latency : 'n bounded_distribution
       }
 [@@deriving map]
 
-type 'n hal = 'n signal list
-[@@deriving map]
-type 'n system = 'n component list * 'n hal
-[@@deriving map]
-
-
+type 'n hal = (id, 'n signal) Hashtbl.t [@@deriving map]
+type 'n system = 'n component list * 'n hal [@@deriving map]

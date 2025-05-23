@@ -1,12 +1,7 @@
 open Prelude
+open Expr
 
-type 'a interval = 'a * 'a
-
-type op =
-  | Add
-  | Sub
-  | Mul
-  | Div
+type 'a interval = 'a * 'a [@@deriving map]
 
 (*TODO: good expression type should:
   - differentiate rational, time and integer expressions types
@@ -14,17 +9,14 @@ type op =
 type ('v, 'n) expr =
   | Var of 'v
   | Const of 'n
-  | Bin of ('v, 'n) expr * op * ('v, 'n) expr
+  | Bin of ('v, 'n) expr * num_op * ('v, 'n) expr
+[@@deriving map]
 
-type 'v int_param =
-  | IntVar of 'v
-  | IntConst of int
+let var v = Var v
+let const c = Const c
 
-type ('v, 't) time_param =
-  | TimeVar of 'v
-  | TimeConst of 't
-
-type ('c, 'p, 't) constr =
+(**RTCCSL constraint type. ['c] is clock variable type, ['p] is parameter variable type, ['n] numerical constraint type. *)
+type ('c, 'p, 'v, 't) constr =
   | Precedence of
       { cause : 'c
       ; conseq : 'c
@@ -47,7 +39,7 @@ type ('c, 'p, 't) constr =
   | Delay of
       { out : 'c
       ; arg : 'c
-      ; delay : 'p int_param interval
+      ; delay : ('p, int) expr * ('p, int) expr
       ; base : 'c option
       }
   | Fastest of
@@ -71,7 +63,7 @@ type ('c, 'p, 't) constr =
   | Periodic of
       { out : 'c
       ; base : 'c
-      ; period : 'p int_param
+      ; period : ('p, int) expr
       }
   | Sample of
       { out : 'c
@@ -85,19 +77,22 @@ type ('c, 'p, 't) constr =
   | RTdelay of
       { out : 'c
       ; arg : 'c
-      ; delay : ('p, 't) time_param interval
+      ; delay : 'v
       }
+  (* | Offset of
+      { out : 'c
+      ; delay : 'p
+      } *)
   | CumulPeriodic of
       { out : 'c
-      ; period : ('p, 't) time_param
-      ; error : ('p, 't) time_param interval
-      ; offset : ('p, 't) time_param
+      ; period : 'v
+      ; offset : ('p, 't) expr
       }
   | AbsPeriodic of
       { out : 'c
-      ; period : ('p, 't) time_param
-      ; error : ('p, 't) time_param interval
-      ; offset : ('p, 't) time_param
+      ; period : ('p, 't) expr
+      ; error : 'v
+      ; offset : ('p, 't) expr
       }
   | FirstSampled of
       { out : 'c
@@ -121,16 +116,35 @@ type ('c, 'p, 't) constr =
       }
   | Sporadic of
       { out : 'c
-      ; at_least : ('p, 't) time_param
+      ; at_least : ('p, 't) expr
       ; strict : bool
-      }
-  | TimeParameter of 'p * ('p, 't) expr interval
-  | LogicalParameter of 'p * ('p, int) expr interval
-  (**Encodes parameter [v] being inside of [[e1, e2]].*)
-  (*TODO: strange name, why logical?*)
-  | Pool of int * ('c * 'c) list (**Mutex is a special case of Pool where [n=1]*)
+      } (**Mutex is a special case of Pool where [n=1]*)
+  | Pool of int * ('c * 'c) list
+[@@deriving map]
 
-type ('c, 'p, 't) specification = ('c, 'p, 't) constr list
+(*TODO: replace rt.constraints with just delay and offset. *)
+(* module Complex = struct
+  let cumul_periodic out period_var offset_par = [ RTdelay { out; arg = out } ]
+end *)
+
+type ('p, 'v, 't) time_var_constr = TimeVarRelation of 'v * num_rel * ('p, 't) expr
+[@@deriving map]
+
+type ('c, 'p, 'v, 't) specification =
+  { constraints : ('c, 'p, 'v, 't) constr list
+  ; var_relations : ('p, 'v, 't) time_var_constr list
+  }
+[@@deriving map]
+
+let empty = { constraints = []; var_relations = [] }
+let constraints_only l = { constraints = l; var_relations = [] }
+
+let merge
+      { constraints = c1; var_relations = v1 }
+      { constraints = c2; var_relations = v2 }
+  =
+  { constraints = List.append c1 c2; var_relations = List.append v1 v2 }
+;;
 
 let name = function
   | Precedence _ -> "precedence"
@@ -155,10 +169,12 @@ let name = function
   | Forbid _ -> "forbid"
   | Allow _ -> "allow"
   | Sporadic _ -> "sporadic"
-  | TimeParameter (_, _) -> "time_param"
-  | LogicalParameter (_, _) -> "int_param"
   | Pool (_, _) -> "pool"
 ;;
+
+(* | TimeVarRelation _ -> "time_var_rel"
+  | IntParameterRelation _ -> "int_param_rel"
+  | Distribution (_, d) -> String.cat (dist_name d) "distribution" *)
 
 let clocks = function
   | Precedence { cause; conseq } | Causality { cause; conseq } -> [ cause; conseq ]
@@ -176,104 +192,17 @@ let clocks = function
   | FirstSampled { out; arg; base } | LastSampled { out; arg; base } -> [ out; arg; base ]
   | Forbid { from; until; args } | Allow { from; until; args } -> from :: until :: args
   | Sporadic { out; _ } -> [ out ]
-  | TimeParameter _ | LogicalParameter _ -> []
   | Pool (_, list) ->
     let lock, unlock = List.split list in
     List.append lock unlock
 ;;
 
-let spec_clocks l = List.flat_map clocks l
-
-let int_param_map f = function
-  | IntConst c -> IntConst c
-  | IntVar v -> IntVar (f v)
-;;
-
-let time_param_map_const f = function
-  | TimeVar v -> TimeVar v
-  | TimeConst c -> TimeConst (f c)
-;;
-
-let rec expr_map fv fc = function
-  | Var v -> Var (fv v)
-  | Const c -> Const (fc c)
-  | Bin (l, op, r) -> Bin (expr_map fv fc l, op, expr_map fv fc r)
-;;
-
-let map
-      (type c nc p np t nt)
-      (fc : c -> nc)
-      (fp : p -> np)
-      (fparam : (p, t) time_param -> (np, nt) time_param)
-      (fexp : (p, t) expr -> (np, nt) expr)
-      (c : (c, p, t) constr)
-  : (nc, np, nt) constr
-  =
-  match c with
-  | Precedence { cause; conseq } -> Precedence { cause = fc cause; conseq = fc conseq }
-  | Causality { cause; conseq } -> Causality { cause = fc cause; conseq = fc conseq }
-  | Exclusion list -> Exclusion (List.map fc list)
-  | Coincidence list -> Coincidence (List.map fc list)
-  | Subclocking { sub; super } -> Subclocking { sub = fc sub; super = fc super }
-  | Minus { out; arg; except } ->
-    Minus { out = fc out; arg = fc arg; except = List.map fc except }
-  | Delay { out; arg; delay; base } ->
-    Delay
-      { out = fc out
-      ; arg = fc arg
-      ; delay = Tuple.map2 (int_param_map fp) delay
-      ; base = Option.map fc base
-      }
-  | Fastest { out; left; right } ->
-    Fastest { out = fc out; left = fc left; right = fc right }
-  | Slowest { out; left; right } ->
-    Slowest { out = fc out; left = fc left; right = fc right }
-  | Intersection { out; args } -> Intersection { out = fc out; args = List.map fc args }
-  | Union { out; args } -> Union { out = fc out; args = List.map fc args }
-  | Periodic { out; base; period } ->
-    Periodic { out = fc out; base = fc base; period = int_param_map fp period }
-  | Sample { out; arg; base } -> Sample { out = fc out; arg = fc arg; base = fc base }
-  | Alternate { first; second } -> Alternate { first = fc first; second = fc second }
-  | RTdelay { out; arg; delay } ->
-    let l, r = delay in
-    RTdelay { out = fc out; arg = fc arg; delay = fparam l, fparam r }
-  | CumulPeriodic { out; period; error; offset } ->
-    let l, r = error in
-    CumulPeriodic
-      { out = fc out
-      ; period = fparam period
-      ; error = fparam l, fparam r
-      ; offset = fparam offset
-      }
-  | AbsPeriodic { out; period; error; offset } ->
-    let l, r = error in
-    AbsPeriodic
-      { out = fc out
-      ; period = fparam period
-      ; error = fparam l, fparam r
-      ; offset = fparam offset
-      }
-  | FirstSampled { out; arg; base } ->
-    FirstSampled { out = fc out; arg = fc arg; base = fc base }
-  | LastSampled { out; arg; base } ->
-    LastSampled { out = fc out; arg = fc arg; base = fc base }
-  | Forbid { from; until; args } ->
-    Forbid { from = fc from; until = fc until; args = List.map fc args }
-  | Allow { from; until; args } ->
-    Allow { from = fc from; until = fc until; args = List.map fc args }
-  | Sporadic { out; at_least; strict } ->
-    Sporadic { out = fc out; at_least = fparam at_least; strict }
-  | TimeParameter (v, (l, r)) -> TimeParameter (fp v, (fexp l, fexp r))
-  | LogicalParameter (v, (l, r)) ->
-    LogicalParameter (fp v, (expr_map fp Fun.id l, expr_map fp Fun.id r))
-  | Pool (n, pairs) -> Pool (n, List.map (Tuple.map2 fc) pairs)
-;;
-
-let map_time_const f = map Fun.id Fun.id (time_param_map_const f) (expr_map Fun.id f)
+let spec_clocks s = List.flat_map clocks s.constraints
+let map_time_const f = map_constr Fun.id Fun.id Fun.id f
 
 module Examples = struct
   module Macro = struct
-    let task_clocks name =
+    let task_names name =
       let start = Printf.sprintf "%s.s" name in
       let finish = Printf.sprintf "%s.f" name in
       let ready = Printf.sprintf "%s.r" name in
@@ -281,69 +210,76 @@ module Examples = struct
       name, ready, start, finish, deadline
     ;;
 
-    let rigid_task name exec_duration =
-      let _, _, start, finish, _ = task_clocks name in
-      [ RTdelay
-          { out = finish
-          ; arg = start
-          ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
-          }
-      ]
+    let rigid_task name (exec_lower, exec_upper) =
+      let exec_time = Printf.sprintf "%s.exec" name in
+      let _, _, start, finish, _ = task_names name in
+      { constraints = [ RTdelay { out = finish; arg = start; delay = exec_time } ]
+      ; var_relations =
+          [ TimeVarRelation (exec_time, MoreEq, const exec_lower)
+          ; TimeVarRelation (exec_time, LessEq, const exec_upper)
+          ]
+      }
     ;;
 
     let task name exec_duration =
-      let _, ready, start, finish, _ = task_clocks name in
-      [ Causality { cause = ready; conseq = start }
-      ; RTdelay
-          { out = finish
-          ; arg = start
-          ; delay = Tuple.map2 (fun x -> TimeConst x) exec_duration
-          }
-      ]
+      let _, ready, start, _, _ = task_names name in
+      merge
+        { constraints = [ Causality { cause = ready; conseq = start } ]
+        ; var_relations = []
+        }
+        (rigid_task name exec_duration)
     ;;
 
     let task_with_deadline name exec_duration deadline =
       let finish = Printf.sprintf "%s.f" name in
-      Precedence { cause = finish; conseq = deadline } :: task name exec_duration
+      merge
+        { constraints = [ Precedence { cause = finish; conseq = deadline } ]
+        ; var_relations = []
+        }
+        (task name exec_duration)
     ;;
 
-    let rigid_periodic_task name exec_duration period (nerror, perror) offset =
-      let _, _, start, _, _ = task_clocks name in
-      rigid_task name exec_duration
-      @ [ CumulPeriodic
-            { out = start
-            ; period = TimeConst period
-            ; error = TimeConst nerror, TimeConst perror
-            ; offset = TimeConst offset
-            }
-        ]
+    let rigid_periodic_task name exec_duration (period_lower, period_upper) offset =
+      let _, _, start, _, _ = task_names name in
+      let period = Printf.sprintf "%s.period" name in
+      merge
+        (rigid_task name exec_duration)
+        { constraints = [ CumulPeriodic { out = start; period; offset = const offset } ]
+        ; var_relations =
+            [ TimeVarRelation (period, MoreEq, const period_lower)
+            ; TimeVarRelation (period, LessEq, const period_upper)
+            ]
+        }
     ;;
 
-    let periodic_task name exec_duration period (nerror, perror) offset =
+    let periodic_task name exec_duration (period_lower, period_upper) offset =
       let ready = Printf.sprintf "%s.r" name in
       let timer = Printf.sprintf "%s.t" name in
       let deadline = Printf.sprintf "%s.d" name in
-      task_with_deadline name exec_duration deadline
-      @ [ CumulPeriodic
-            { out = timer
-            ; period = TimeConst period
-            ; error = TimeConst nerror, TimeConst perror
-            ; offset = TimeConst offset
-            }
-        ; Delay
-            { out = deadline
-            ; arg = timer
-            ; delay = IntConst 1, IntConst 1
-            ; base = Some timer
-            }
-        ; Coincidence [ timer; ready ]
-        ]
+      let period = Printf.sprintf "%s.period" name in
+      merge
+        (task_with_deadline name exec_duration deadline)
+        { constraints =
+            [ CumulPeriodic { out = timer; period; offset = const offset }
+            ; Delay
+                { out = deadline
+                ; arg = timer
+                ; delay = const 1, const 1
+                ; base = Some timer
+                }
+            ; Coincidence [ timer; ready ]
+            ]
+        ; var_relations =
+            [ TimeVarRelation (period, MoreEq, const period_lower)
+            ; TimeVarRelation (period, LessEq, const period_upper)
+            ]
+        }
     ;;
 
     let scheduling_pairs tasks =
       List.map
         (fun name ->
-           let _, _, start, finish, _ = task_clocks name in
+           let _, _, start, finish, _ = task_names name in
            start, finish)
         tasks
     ;;
@@ -352,68 +288,55 @@ module Examples = struct
   module SimpleControl = struct
     open Macro
 
-    let no_resource_constraint_rigid_certain p_s e_s e_c p_a e_a =
-      List.flatten
-        [ rigid_periodic_task "s" (e_s, e_s) p_s (0, 0) 0
-        ; rigid_periodic_task "a" (e_a, e_a) p_a (0, 0) 0
-        ; rigid_task "c" (e_c, e_c)
-        ; [ Coincidence [ "s.f"; "c.s" ] ]
-        ]
-    ;;
-
-    let period (l, r) = ((r - l) / 2) + l
-
-    let error (l, r) =
-      let p = period (l, r) in
-      l - p, r - p
-    ;;
-
-    let no_resource_constraint_rigid_uncertain p_s e_s e_c p_a e_a =
-      List.flatten
-        [ rigid_periodic_task "s" e_s (period p_s) (error p_s) 0
-        ; rigid_periodic_task "a" e_a (period p_a) (error p_a) 0
+    let no_resource_constraint_rigid p_s e_s e_c p_a e_a =
+      List.reduce_left
+        merge
+        Fun.id
+        [ rigid_periodic_task "s" e_s p_s 0
+        ; rigid_periodic_task "a" e_a p_a 0
         ; rigid_task "c" e_c
-        ; [ Coincidence [ "s.f"; "c.s" ] ]
+        ; constraints_only [ Coincidence [ "s.f"; "c.s" ] ]
         ]
     ;;
 
     let no_resource_constraint p_s e_s e_c =
-      List.flatten
-        [ periodic_task "s" e_s (period p_s) (error p_s) 0
-        ; periodic_task "a" e_s (period p_s) (error p_s) 0
+      List.reduce_left
+        merge
+        Fun.id
+        [ periodic_task "s" e_s p_s 0
+        ; periodic_task "a" e_s p_s 0
         ; task "c" e_c
-        ; [ Coincidence [ "s.f"; "c.r" ]; Alternate { first = "c.s"; second = "c.f" } ]
+        ; constraints_only
+            [ Coincidence [ "s.f"; "c.r" ]; Alternate { first = "c.s"; second = "c.f" } ]
         ]
     ;;
 
-    let no_resource_constraint_rigid p_s e_s e_c =
-      List.flatten
-        [ rigid_periodic_task "s" e_s (period p_s) (error p_s) 0
-        ; rigid_periodic_task "a" e_s (period p_s) (error p_s) 0
-        ; rigid_task "c" e_c
-        ; [ Coincidence [ "s.f"; "c.s" ] ]
-        ]
-    ;;
-
-    let par_pipeline =
-      List.flatten
-        [ [ Alternate { first = "a.s"; second = "a.f" }
-          ; Alternate { first = "s.s"; second = "s.f" }
-          ; Alternate { first = "c.s"; second = "c.f" }
-          ]
+    let par_pipeline : (string, string, string, int) specification =
+      List.reduce_left
+        merge
+        Fun.id
+        [ { constraints =
+              [ Alternate { first = "a.s"; second = "a.f" }
+              ; Alternate { first = "s.s"; second = "s.f" }
+              ; Alternate { first = "c.s"; second = "c.f" }
+              ]
+          ; var_relations = []
+          }
         ; no_resource_constraint (48, 52) (5, 10) (25, 40)
         ]
     ;;
 
-    let shared_2core =
-      Pool (2, scheduling_pairs [ "a"; "s"; "c" ])
-      :: no_resource_constraint (48, 52) (5, 10) (25, 40)
+    let shared_2core : (string, string, string, int) specification =
+      merge
+        (constraints_only [ Pool (2, scheduling_pairs [ "a"; "s"; "c" ]) ])
+        (no_resource_constraint (48, 52) (5, 10) (25, 40))
     ;;
 
-    let sa_group =
-      Pool (1, scheduling_pairs [ "a"; "s" ])
-      :: Pool (1, scheduling_pairs [ "c" ])
-      :: no_resource_constraint (48, 52) (5, 10) (25, 40)
+    let sa_group : (string, string, string, int) specification =
+      merge
+        (constraints_only
+           [ Pool (1, scheduling_pairs [ "a"; "s" ]); Pool (1, scheduling_pairs [ "c" ]) ])
+        (no_resource_constraint (48, 52) (5, 10) (25, 40))
     ;;
   end
 end

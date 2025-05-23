@@ -42,6 +42,8 @@ depends: [
   "alcotest" {with-test}
   "domainslib" {>= "0.5"}
   "sexplib0" {>= "0.17"}
+  "ppx_deriving" {>= "6.1.0"}
+  "owl" {= "1.2"}
 ]
 build: [
   ["dune" "subst"] {dev}

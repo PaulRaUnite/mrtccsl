@@ -49,141 +49,166 @@ let () =
     "Simple Automata"
     [ ( "causality"
       , rglwt
-          [ Causality { cause = "a"; conseq = "b" } ]
+          (constraints_only [ Causality { cause = "a"; conseq = "b" } ])
           [ "(ab)(ab)(ab)" ]
           [ "bbb"; "bababa" ] )
     ; ( "precedence"
-      , rglwt [ Precedence { cause = "a"; conseq = "b" } ] [ "a(ab)(ab)" ] [ "(ab)(ab)" ]
-      )
-    ; "exclusion", rglwt [ Exclusion [ "a"; "b"; "c" ] ] [ "abc" ] [ "(ab)"; "(abc)" ]
+      , rglwt
+          (constraints_only [ Precedence { cause = "a"; conseq = "b" } ])
+          [ "a(ab)(ab)" ]
+          [ "(ab)(ab)" ] )
+    ; ( "exclusion"
+      , rglwt
+          (constraints_only [ Exclusion [ "a"; "b"; "c" ] ])
+          [ "abc" ]
+          [ "(ab)"; "(abc)" ] )
     ; ( "periodic"
       , rglwt
-          [ Periodic { out = "o"; base = "b"; period = IntConst 3 } ]
+          (constraints_only [ Periodic { out = "o"; base = "b"; period = const 3 } ])
           [ "bb(bo)bb(bo)" ]
           [ "bbbbbb" ] )
     ; ( "sample"
       , rglwt
-          [ Sample { out = "o"; arg = "i"; base = "b" } ]
+          (constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ])
           [ "ii(bo)"; "bbi(bo)" ]
           [ "bbo"; "(bo)" ] )
     ; ( "delay-trivial"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 0; base = None } ]
+          (constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = const 0, const 0; base = None } ])
           [ "(oi)(oi)" ]
           [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = IntConst 2, IntConst 2; base = None } ]
+          (constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = const 2, const 2; base = None } ])
           [ "ii(oi)(oi)" ]
           [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = IntConst 2, IntConst 4; base = None } ]
+          (constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = const 2, const 4; base = None } ])
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
           [ "iiiii(oi)" ] )
     ; ( "delay-undet-zero"
       , rglwt
-          [ Delay { out = "o"; arg = "i"; delay = IntConst 0, IntConst 2; base = None } ]
+          (constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = const 0, const 2; base = None } ])
           [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
           [ "iiiii"; "oooo" ] )
     ; ( "delay-sample"
       , rglwt
-          [ Delay
-              { out = "o"; arg = "i"; delay = IntConst 1, IntConst 2; base = Some "b" }
-          ]
+          (constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = const 1, const 2; base = Some "b" } ])
           [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
           [ "ooo"; "(ib)bbb(ob)" ] )
     ; ( "minus"
       , rglwt
-          [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ]
+          (constraints_only [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ])
           [ "(ma)"; "(ab)(ac)(abc)"; "bc" ]
           [ "a" ] )
     ; ( "union"
       , rglwt
-          [ Union { out = "u"; args = [ "a"; "b" ] } ]
+          (constraints_only [ Union { out = "u"; args = [ "a"; "b" ] } ])
           [ "(uab)(ua)(ub)" ]
           [ "u"; "ab"; "ba"; "(ab)" ] )
     ; ( "alternate"
-      , rglwt [ Alternate { first = "a"; second = "b" } ] [ "abab" ] [ "baba"; "aa" ] )
+      , rglwt
+          (constraints_only [ Alternate { first = "a"; second = "b" } ])
+          [ "abab" ]
+          [ "baba"; "aa" ] )
     ; ( "fastest"
       , rglwt
-          [ Fastest { out = "o"; left = "a"; right = "b" } ]
+          (constraints_only [ Fastest { out = "o"; left = "a"; right = "b" } ])
           [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)" ]
           [ "aaaa"; "bbb"; "ooo" ] )
     ; ( "slowest"
       , rglwt
-          [ Slowest { out = "o"; left = "a"; right = "b" } ]
+          (constraints_only [ Slowest { out = "o"; left = "a"; right = "b" } ])
           [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
           [ "ooo" ] )
     ; ( "allow"
       , rglwt
-          [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] } ]
+          (constraints_only [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] } ])
           [ "fab(ab)t"; "(fa)(tb)" ]
           [ "aftb"; "b" ] )
     ; ( "allow-prec"
       , rglwt
-          [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] }
-          ; Precedence { cause = "f"; conseq = "a" }
-          ; Precedence { cause = "a"; conseq = "t" }
-          ]
+          (constraints_only
+             [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] }
+             ; Precedence { cause = "f"; conseq = "a" }
+             ; Precedence { cause = "a"; conseq = "t" }
+             ])
           [ "fat"; "fabt"; "fa(ft)at" ]
           [ "aftb"; "b"; "(fa)(tb)"; "faaat" ] )
     ; ( "forbid"
       , rglwt
-          [ Forbid { from = "f"; until = "t"; args = [ "a" ] } ]
+          (constraints_only [ Forbid { from = "f"; until = "t"; args = [ "a" ] } ])
           [ ""; "f"; "t"; "a(ft)a"; "(fta)" ]
           [ "fat"; "ffatt" ] )
     ; ( "forbid-prec"
       , rglwt
-          [ Forbid { from = "f"; until = "t"; args = [ "a" ] }
-          ; Precedence { cause = "f"; conseq = "a" }
-          ; Precedence { cause = "a"; conseq = "t" }
-          ]
+          (constraints_only
+             [ Forbid { from = "f"; until = "t"; args = [ "a" ] }
+             ; Precedence { cause = "f"; conseq = "a" }
+             ; Precedence { cause = "a"; conseq = "t" }
+             ])
           [ ""; "f" ]
           [ "fat" ] )
     ; ( "fl-sampled"
       , rglwt
-          [ FirstSampled { out = "f"; arg = "a"; base = "b" }
-          ; LastSampled { out = "l"; arg = "a"; base = "b" }
-          ]
+          (constraints_only
+             [ FirstSampled { out = "f"; arg = "a"; base = "b" }
+             ; LastSampled { out = "l"; arg = "a"; base = "b" }
+             ])
           [ "(falb)(fa)(al)b" ]
           [ "ab"; "(lab)" ] )
-    ; "subclock", rglwt [ Subclocking { sub = "a"; super = "b" } ] [ "(ab)b" ] [ "a" ]
+    ; ( "subclock"
+      , rglwt
+          (constraints_only [ Subclocking { sub = "a"; super = "b" } ])
+          [ "(ab)b" ]
+          [ "a" ] )
     ; ( "inter"
       , rglwt
-          [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ]
+          (constraints_only [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ])
           [ "(iabc)abc"; "(ab)" ]
           [ "(abc)"; "(iab)" ] )
     ; ( "rt-delay"
       , rtwt
-          [ RTdelay { arg = "i"; out = "o"; delay = TimeConst 1, TimeConst 3 } ]
+          { constraints = [ RTdelay { arg = "i"; out = "o"; delay = "t" } ]
+          ; var_relations =
+              [ TimeVarRelation ("t", LessEq, Const 3)
+              ; TimeVarRelation ("t", MoreEq, Const 1)
+              ]
+          }
           [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
           [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
     ; ( "cum-period"
       , rtwt
-          [ CumulPeriodic
-              { out = "o"
-              ; period = TimeConst 4
-              ; error = TimeConst (-1), TimeConst 1
-              ; offset = TimeConst 2
-              }
-          ]
-          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 4; 7 ] ]
-          [ "o", [ 4 ]; "ooo", [ 1; 5; 11 ] ] )
+          { constraints = [ CumulPeriodic { out = "o"; period = "p"; offset = Const 2 } ]
+          ; var_relations =
+              [ TimeVarRelation ("p", LessEq, Const 5)
+              ; TimeVarRelation ("p", MoreEq, Const 3)
+              ]
+          }
+          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 2; 5; 8 ] ]
+          [ "o", [ 4 ]; "o", [ 1 ]; "oo", [ 2; 11 ] ] )
     ; ( "abs-period"
       , rtwt
-          [ AbsPeriodic
-              { out = "o"
-              ; period = TimeConst 4
-              ; error = TimeConst (-1), TimeConst 1
-              ; offset = TimeConst 2
-              }
-          ]
+          { constraints =
+              [ AbsPeriodic { out = "o"; period = Const 4; error = "e"; offset = Const 2 }
+              ]
+          ; var_relations =
+              [ TimeVarRelation ("e", LessEq, Const 1)
+              ; TimeVarRelation ("e", MoreEq, Const ~-1)
+              ]
+          }
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
-          [ Sporadic { out = "a"; at_least = TimeConst 2; strict = false } ]
+          (constraints_only
+             [ Sporadic { out = "a"; at_least = Const 2; strict = false } ])
           [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]

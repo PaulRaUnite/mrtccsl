@@ -1,4 +1,5 @@
 open Prelude
+open Expr
 
 module type Var = sig
   open Interface

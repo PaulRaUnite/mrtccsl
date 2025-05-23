@@ -1,15 +1,9 @@
 open Prelude
+open Expr
 open Sexplib0.Sexp_conv
 
 (*Cannot refactor further, because the implementations and definitions depend on each other which requires mutually recursive modules which are simply annoying.*)
 open Ppx_compare_lib.Builtin
-
-type num_op =
-  | Add
-  | Sub
-  | Mul
-  | Div
-[@@deriving sexp, compare]
 
 type 'v var =
   | FreeVar of 'v
@@ -31,29 +25,8 @@ let rec num_expr_of_expr = function
   | Rtccsl.Var v -> Var (FreeVar v)
   | Rtccsl.Const c -> Const c
   | Rtccsl.Bin (l, op, r) ->
-    let op =
-      match op with
-      | Add -> Add
-      | Sub -> Sub
-      | Mul -> Mul
-      | Div -> Div
-    in
     Op (num_expr_of_expr l, op, num_expr_of_expr r)
 ;;
-
-let time_param = function
-  | Rtccsl.TimeConst c -> Const c
-  | Rtccsl.TimeVar v -> Var (FreeVar v)
-;;
-
-type num_rel =
-  | Neq
-  | Eq
-  | More
-  | Less
-  | MoreEq
-  | LessEq
-[@@deriving sexp, compare]
 
 type ('c, 'n) bool_expr =
   | Or of ('c, 'n) bool_expr list
