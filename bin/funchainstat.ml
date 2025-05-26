@@ -176,7 +176,7 @@ let func_chain_spec =
 
 let process name spec =
   let _ = Random.init 82763452 in
-  let system_spec = Rtccsl.map_specification Fun.id Fun.id Fun.id Rational.of_int spec in
+  let system_spec = Rtccsl.map_specification Fun.id Fun.id Fun.id Number.Rational.of_int spec in
   let strategy candidates = random_strat (prioritize_single candidates) in
   let steps = 1_000 in
   let horizon = of_int 20_000 in

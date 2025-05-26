@@ -10,8 +10,8 @@ type 'n bounded_distribution =
 type id = string
 
 type 'n trig_policy =
-  [ `AbsoluteTimer of 'n * 'n bounded_distribution
-  | `CumulativeTimer of 'n bounded_distribution
+  [ `AbsoluteTimer of 'n * 'n bounded_distribution * 'n
+  | `CumulativeTimer of 'n bounded_distribution * 'n
   | `Signal of id
   ]
 [@@deriving map]
@@ -36,8 +36,8 @@ type 'n signal =
   | Sensor of
       { as_device : bool
       ; policy :
-          [ `AbsoluteTimer of 'n * 'n bounded_distribution
-          | `CumulativeTimer of 'n bounded_distribution
+          [ `AbsoluteTimer of 'n * 'n bounded_distribution * 'n
+          | `CumulativeTimer of 'n bounded_distribution * 'n
           ]
       ; latency : 'n bounded_distribution
       }
