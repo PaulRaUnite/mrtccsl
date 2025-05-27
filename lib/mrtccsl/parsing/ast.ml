@@ -1,4 +1,3 @@
-(* TODO: need to probably wrap the things to add metadata?*)
 type location = Lexing.position * Lexing.position
 
 type 'a loc =
@@ -27,9 +26,9 @@ type type_name =
   ]
 
 type binop =
-  | Add (* can be union or plus *)
-  | Sub (* can be ccsl minus or not*)
-  | Mul (* can be intersection or not*)
+  | Add
+  | Sub
+  | Mul
   | Div
   | DisjUnion
 

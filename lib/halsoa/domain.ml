@@ -27,8 +27,7 @@ type 'n service =
 [@@deriving map]
 
 type 'n component =
-  { name : id
-  ; services : 'n service list
+  { services : 'n service list
   }
 [@@deriving map]
 

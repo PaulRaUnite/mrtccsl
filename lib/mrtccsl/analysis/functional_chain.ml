@@ -1,23 +1,56 @@
 open Prelude
 
+type relation =
+  [ `Causality
+  | `Sampling
+  ]
+
+type 'c chain =
+  { first : 'c
+  ; rest : (relation * 'c) list
+  }
+
+type instruction =
+  [ relation
+  | `New
+  ]
+
+let last_clock { first; rest } =
+  Option.value ~default:first (List.last (List.map (fun (_, x) -> x) rest))
+;;
+
+let instructions chain_spec =
+  let init = chain_spec.first, (`New : instruction) in
+  let rest_seq = chain_spec.rest |> List.map (fun (x, y) -> y, (x :> instruction)) in
+  init :: rest_seq
+;;
+
+let chain_start_finish_clocks chain =
+  ( chain.first
+  , Option.value
+      ~default:chain.first
+      (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
+;;
+
+let points_of_interest chain =
+  let _, sampling_links =
+    List.fold_left
+      (fun (prev, points) (rel, next) ->
+         let points =
+           match rel with
+           | `Sampling -> points @ [ prev, next ]
+           | _ -> points
+         in
+         next, points)
+      (chain.first, [])
+      chain.rest
+  in
+  chain_start_finish_clocks chain :: sampling_links
+;;
+
 module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
   module A = Automata.Simple.Make (C) (N)
   module CMap = Map.Make (C)
-
-  type relation =
-    [ `Causality
-    | `Sampling
-    ]
-
-  type chain =
-    { first : C.t
-    ; rest : (relation * C.t) list
-    }
-
-  type instruction =
-    [ relation
-    | `New
-    ]
 
   type chain_instance =
     { trace : N.t CMap.t
@@ -36,35 +69,6 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
       (CMap.to_string C.to_string N.to_string chain.trace)
       (CMap.to_string C.to_string Int.to_string chain.targets)
       (CMap.to_string C.to_string Int.to_string chain.misses)
-  ;;
-
-  let instructions chain_spec : (C.t * instruction) list =
-    let init = chain_spec.first, (`New : instruction) in
-    let rest_seq = chain_spec.rest |> List.map (fun (x, y) -> y, (x :> instruction)) in
-    init :: rest_seq
-  ;;
-
-  let chain_start_finish_clocks chain =
-    ( chain.first
-    , Option.value
-        ~default:chain.first
-        (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
-  ;;
-
-  let points_of_interest chain =
-    let _, sampling_links =
-      List.fold_left
-        (fun (prev, points) (rel, next) ->
-           let points =
-             match rel with
-             | `Sampling -> points @ [ prev, next ]
-             | _ -> points
-           in
-           next, points)
-        (chain.first, [])
-        chain.rest
-    in
-    chain_start_finish_clocks chain :: sampling_links
   ;;
 
   type semantics =
@@ -220,7 +224,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
         (s, n, time)
         (dist : _ Automata.Simple.dist list)
         (system_spec : _ Rtccsl.specification)
-        (chain : chain)
+        (chain : C.t chain)
     =
     let env = A.of_spec system_spec in
     let trace, deadlock =
@@ -236,7 +240,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    (Array.to_seq trace), deadlock, full_chains, dangling_chains
+    Array.to_seq trace, deadlock, full_chains, dangling_chains
   ;;
 
   let reaction_times pairs_to_compare chains =

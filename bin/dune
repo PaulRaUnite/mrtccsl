@@ -1,20 +1,8 @@
 (executable
- (public_name sim)
- (name sim)
- (modules sim)
- (libraries mrtccsl number std))
-
-(executable
- (public_name ind)
- (name ind)
- (modules ind)
- (libraries mrtccsl number std))
-
-(executable
  (public_name funchainstat)
  (name funchainstat)
  (modules funchainstat)
- (libraries mrtccsl number std)
+ (libraries mrtccsl number std domainslib)
  (modes byte exe))
 
 (executable
@@ -23,6 +11,13 @@
  (modules reaction)
  (libraries mrtccsl number std)
  (modes exe))
+
+(executable
+ (public_name sim_halsoa)
+ (name sim_halsoa)
+ (modules sim_halsoa)
+ (libraries mrtccsl number std domainslib halsoa)
+ (modes byte exe))
 
 (env
  (dev

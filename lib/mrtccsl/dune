@@ -12,7 +12,6 @@
   menhirLib
   spectrum
   cudd
-  domainslib
   number
   std
   owl)

@@ -26,22 +26,19 @@ let t_of_sexp sexp =
   of_frac x y
 ;;
 
-(*TODO: was not correct, need to redo*)
+(*TODO: lossy convertion, but low priority*)
 let t_to_string x = Float.to_string (to_float x)
 let to_string = t_to_string
 
 let round_up step x y =
   let v = x + step in
   let r = if more_eq v y then (x + y) / of_int 2 else v in
-  (* let _ = Printf.printf "%s" (t_to_string r) in *)
   r
 ;;
 
 let round_down step x y =
   let v = y - step in
-  (* let _ = Printf.printf "v: %s %s %s" (t_to_string x) (t_to_string y) (t_to_string v) in *)
   let r = if less_eq v x then (x + y) / of_int 2 else v in
-  (* let _ = Printf.printf "round_down: %s\n" (t_to_string r) in *)
   r
 ;;
 
@@ -56,8 +53,7 @@ let random l r =
 let from_int = of_int
 let to_rational = Fun.id
 
-(* TODO: is there another way to make it? Looks not performant. *)
-let from_pair nom denom = div (from_int nom) (from_int denom)
+let from_pair nom denom = of_frac nom denom
 
 let of_decimal_string s =
   match String.split_on_char '.' s with

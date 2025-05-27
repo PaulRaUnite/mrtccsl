@@ -1,7 +1,7 @@
 open Prelude
 open Expr
 
-type 'a interval = 'a * 'a [@@deriving map]
+type 'a interval = 'a * 'a [@@deriving map,show]
 
 (*TODO: good expression type should:
   - differentiate rational, time and integer expressions types
@@ -10,7 +10,7 @@ type ('v, 'n) expr =
   | Var of 'v
   | Const of 'n
   | Bin of ('v, 'n) expr * num_op * ('v, 'n) expr
-[@@deriving map]
+[@@deriving map,show]
 
 let var v = Var v
 let const c = Const c
@@ -120,7 +120,7 @@ type ('c, 'p, 'v, 't) constr =
       ; strict : bool
       } (**Mutex is a special case of Pool where [n=1]*)
   | Pool of int * ('c * 'c) list
-[@@deriving map]
+[@@deriving map, show]
 
 (*TODO: replace rt.constraints with just delay and offset. *)
 (* module Complex = struct
@@ -128,13 +128,13 @@ type ('c, 'p, 'v, 't) constr =
 end *)
 
 type ('p, 'v, 't) time_var_constr = TimeVarRelation of 'v * num_rel * ('p, 't) expr
-[@@deriving map]
+[@@deriving map, show]
 
 type ('c, 'p, 'v, 't) specification =
   { constraints : ('c, 'p, 'v, 't) constr list
   ; var_relations : ('p, 'v, 't) time_var_constr list
   }
-[@@deriving map]
+[@@deriving map, show]
 
 let empty = { constraints = []; var_relations = [] }
 let constraints_only l = { constraints = l; var_relations = [] }

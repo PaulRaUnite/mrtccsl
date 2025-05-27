@@ -49,13 +49,12 @@ let of_policy name trigger =
 let of_signal name s =
   let start = start name in
   let finish = finish name in
-  let trigger = trigger name in
   let latency_var = latency_var name in
   let (policy_dist, policy_spec), latency =
     match s with
     | Sensor { policy; latency; as_device } ->
-      of_policy name (if as_device then trigger else finish) policy, latency
-    | Actuator { policy; latency } -> of_policy name trigger policy, latency
+      of_policy name (if as_device then start else finish) policy, latency
+    | Actuator { policy; latency } -> of_policy name start policy, latency
   in
   let latency_dist = [ latency_var, latency.dist ] in
   let latency_spec =
@@ -68,8 +67,7 @@ let of_signal name s =
 
 let merge (d1, s1) (d2, s2) = d1 @ d2, merge s1 s2
 
-let of_service component { name; inputs = _; outputs; execution_time; policy } =
-  let name = Printf.sprintf "%s.%s" component name in
+let of_service { name; inputs = _; outputs; execution_time; policy } =
   let execution_var = exec_var name
   and trigger = trigger name
   and start = start name
@@ -87,9 +85,7 @@ let of_service component { name; inputs = _; outputs; execution_time; policy } =
   merge policy exec
 ;;
 
-let of_component { name; services } =
-  services |> List.to_seq |> Seq.map (fun s -> of_service name s)
-;;
+let of_component { services } = services |> List.to_seq |> Seq.map (fun s -> of_service s)
 
 let rigid_scheduling name =
   let trigger = trigger name
@@ -103,7 +99,7 @@ let relaxed_scheduling name =
   constraints_only [ Causality { cause = trigger; conseq = start } ]
 ;;
 
-(*FIXME: it is possible that the rtdelya queue does not respect the order between the ticks and WILL deadlock. *)
+(*FIXME: it is possible that the rtdelay queue does not respect the order between the ticks and so it WILL deadlock. *)
 let instant_communication signal =
   ( []
   , { constraints = [ Coincidence [ signal_emit signal; signal_receive signal ] ]
@@ -143,19 +139,15 @@ let schedule_on_cpu cores components =
   let pairs =
     components
     |> List.to_seq
-    |> Seq.flat_map (fun { name; services } ->
-      services
-      |> List.to_seq
-      |> Seq.map (fun (s : _ service) ->
-        let name = Printf.sprintf "%s.%s" name s.name in
-        start name, finish name))
+    |> Seq.flat_map (fun { services } ->
+      services |> List.to_seq |> Seq.map (fun { name; _ } -> start name, finish name))
   in
   constraints_only [ Pool (cores, List.of_seq pairs) ]
 ;;
 
 (*TODO: implement monitors*)
 (*TODO: use monitors for deadlines*)
-(*TODO: implement chains*)
+(*TODO: implement extraction of tasks for svgbob*)
 let of_system ~relaxed_sched ?delayed_comm ?cores ((components, hal) : _ system) =
   let hal_specs = hal |> Hashtbl.to_seq |> Seq.map (Tuple.fn2 of_signal) in
   let component_specs = components |> List.to_seq |> Seq.flat_map of_component in
@@ -163,12 +155,8 @@ let of_system ~relaxed_sched ?delayed_comm ?cores ((components, hal) : _ system)
   let scheduling =
     components
     |> List.to_seq
-    |> Seq.flat_map (fun { name = component; services } ->
-      services
-      |> List.to_seq
-      |> Seq.map (fun ({ name; _ } : _ service) ->
-        let name = Printf.sprintf "%s.%s" component name in
-        shedule_service name))
+    |> Seq.flat_map (fun { services } ->
+      services |> List.to_seq |> Seq.map (fun { name; _ } -> shedule_service name))
     |> Seq.map (fun spec -> [], spec)
   in
   let comm_pattern =
@@ -188,3 +176,55 @@ let of_system ~relaxed_sched ?delayed_comm ?cores ((components, hal) : _ system)
   in
   Seq.fold_left merge ([], empty) specs
 ;;
+
+(*
+   open Mrtccsl.Analysis.FunctionalChain
+
+let chains ((components, hal) : _ system) : _ chain list =
+  let initial =
+    ( []
+    , hal
+      |> Hashtbl.to_seq
+      |> Seq.filter_map (fun (name, c) ->
+        match c with
+        | Sensor _ -> Some { first = start name; rest = [ `Causality, finish name ] }
+        | Actuator _ -> None)
+      |> List.of_seq )
+  in
+  let partition_map_list f l =
+    l
+    |> List.flat_map (fun x ->
+      let left, right = f x in
+      List.map (fun y -> false, y) left @ List.map (fun y -> true, y) right)
+    |> List.partition_map (fun (p, x) -> if p then Either.Left x else Either.Right x)
+  in
+  let step (full, partial) =
+    let new_full, partial =
+      partition_map_list
+        (fun { first; rest } ->
+           let new_full =
+             hal
+             |> Hashtbl.to_seq
+             |> Seq.filter_map (fun (name, s) ->
+               match s with
+               | Sensor _ -> None
+               | Actuator { policy; _ } ->
+                 let rel =
+                   match policy with
+                   | `AbsoluteTimer _ | `CumulativeTimer _ -> `Sampling
+                   | `Signal _ -> `Causality
+                 in
+                 Some { first; rest = List.append rest [ rel, start name; `Causality, finish name; `Sampling, signal_emit name; `Causality, signal_receive name ] })
+             |> List.of_seq
+           and partial = components |> (List.to_seq) |> Seq.flat_map (fun c -> (c.services) |> List.to_seq |> Seq.map (
+            fun ({name;inputs;outputs;_}) ->  if List.exists (fun s -> signal_receive s) )) |> List.of_seq 
+           
+            in
+           new_full, partial )
+        partial
+    in
+    List.append new_full full, partial
+  in
+  let full, _ = fixpoint ( = ) step initial in
+  full
+;; *)

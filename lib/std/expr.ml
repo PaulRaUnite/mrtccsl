@@ -4,7 +4,7 @@ type num_op =
   | Sub
   | Mul
   | Div
-[@@deriving sexp, compare]
+[@@deriving sexp, compare, show]
 
 type num_rel =
   | Neq
@@ -13,4 +13,4 @@ type num_rel =
   | Less
   | MoreEq
   | LessEq
-[@@deriving sexp, compare]
+[@@deriving sexp, compare, show]

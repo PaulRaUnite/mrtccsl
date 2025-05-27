@@ -1,11 +1,11 @@
 open Mrtccsl
 open Prelude
+open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
 open FnCh
 
 let func_chain_spec =
-  FnCh.
     { first = "s.s"
     ; rest =
         [ `Causality, "s.f"

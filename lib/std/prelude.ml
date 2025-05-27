@@ -542,12 +542,10 @@ module Map = struct
   end
 end
 
-let fixpoint init eq trans start =
-  let rec aux value =
-    let next = trans value in
-    if eq next value then next else aux next
-  in
-  aux (init start)
+(**[fixpoint init eq f start] returns a value [v] such that [f(v) = v] by starting from [v].*)
+let rec fixpoint eq f v =
+  let next = f v in
+  if eq next v then next else fixpoint eq f next
 ;;
 
 module CircularList = struct

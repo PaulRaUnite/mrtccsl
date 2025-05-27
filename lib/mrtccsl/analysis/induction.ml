@@ -522,7 +522,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         , Array.combine ranges new_ranges
           |> Array.map (fun ((f, cov, _), range) -> f, cov, range) )
       in
-      let product, _ = fixpoint setup equal step formulae in
+      let product, _ = fixpoint equal step (setup formulae) in
       product
   ;;
 

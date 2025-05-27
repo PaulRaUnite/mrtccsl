@@ -3,7 +3,9 @@ open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
+module C = Halsoa.Examples.Make (Number.Rational)
 open Number.Rational
+open FnCh
 
 let step = of_int 1 / of_int 1000
 
@@ -96,13 +98,6 @@ let prioritize_single candidates =
   candidates
 ;;
 
-let fast_strat =
-  A.Strategy.Solution.random_label
-  @@ A.Strategy.Num.fast ~upper_bound:(of_int 10) ~floor:(round_down step)
-;;
-
-open FnCh
-
 let parallel_reaction_times
       ~sem
       ?(with_partial = false)
@@ -114,6 +109,7 @@ let parallel_reaction_times
   =
   let _, _, horizon = params in
   let start, finish = chain_start_finish_clocks func_chain_spec in
+  let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
   let body _ =
     let _, _, full_chains, partial_chains =
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
@@ -135,7 +131,6 @@ let parallel_reaction_times
           |> Hashtbl.of_seq ))
     else full_reaction_times
   in
-  let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
   Domainslib.Task.run pool (fun _ ->
     Domainslib.Task.parallel_for_reduce
       ~chunk_size:1
@@ -147,90 +142,46 @@ let parallel_reaction_times
       Seq.empty)
 ;;
 
-let dist = []
-
-let func_chain_spec =
-  Analysis.FunctionalChain.
-    { first = "s.s"
-    ; rest =
-        [ `Causality, "s.f"
-        ; `Causality, "c.s"
-        ; `Causality, "c.f"
-        ; `Sampling, "a.s"
-        ; `Causality, "a.f"
-        ]
-    }
+let rec create_dir fn =
+  if not (Sys.file_exists fn)
+  then (
+    Sys.mkdir fn 0o755;
+    let parent_dir = Filename.dirname fn in
+    create_dir parent_dir)
 ;;
 
-let process name spec =
-  let _ = Random.init 82763452 in
-  let system_spec =
-    Rtccsl.map_specification Fun.id Fun.id Fun.id Number.Rational.of_int spec
-  in
+let generate_trace ~steps ~horizon directory dist system_spec func_chain_spec i =
+  let _ = Random.self_init () in
   let strategy candidates = random_strat (prioritize_single candidates) in
-  let steps = 1_000 in
-  let horizon = of_int 20_000 in
-  let simulations = 1_000 in
-  let sem = Earliest in
-  let massive = true in
-  let points_of_interest = points_of_interest func_chain_spec in
-  let reactions =
-    if massive
-    then
-      parallel_reaction_times
-        ~sem
-        ~with_partial:false
-        (strategy, steps, horizon)
-        dist
-        system_spec
-        func_chain_spec
-        simulations
-    else (
-      let trace, deadlock, chains, partial_chains =
-        FnCh.functional_chains
-          ~sem
-          (strategy, steps, horizon)
-          dist
-          system_spec
-          func_chain_spec
-      in
-      let chains = List.to_seq chains in
-      let reactions = FnCh.reaction_times points_of_interest chains in
-      let _ = Printf.printf "deadlock: %b\n" !deadlock in
-      let svgbob_str =
-        A.trace_to_svgbob
-          ~numbers:true
-          ~precision:2
-          ~tasks:Rtccsl.Examples.Macro.[ task_names "s"; task_names "c"; task_names "a" ]
-          (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
-          trace
-      in
-      let _ =
-        let trace_file = open_out (Printf.sprintf "./%s_trace.txt" name) in
-        output_string trace_file svgbob_str;
-        close_out trace_file
-      in
-      let _ =
-        Printf.printf
-          "full chains:\n%s\n"
-          (Seq.to_string
-             ~sep:"\n"
-             (fun (t : chain_instance) ->
-                FnCh.CMap.to_string String.to_string to_string t.trace)
-             chains);
-        Printf.printf
-          "partial chains:\n%s\n"
-          (List.to_string ~sep:"\n" partial_chain_to_string partial_chains);
-        Printf.printf
-          "reaction times: %s"
-          (FnCh.reaction_times_to_string ~sep:"\n" reactions)
-      in
-      let trace_file = open_out "./cadp_trace.txt" in
-      let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
-      let _ = close_out trace_file in
-      reactions)
+  let basename = Printf.sprintf "%s/%i" directory i in
+  let sem = Earliest
+  and points_of_interest = points_of_interest func_chain_spec in
+  let trace, _, chains, _ =
+    FnCh.functional_chains
+      ~sem
+      (strategy, steps, horizon)
+      dist
+      system_spec
+      func_chain_spec
   in
-  let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
+  let svgbob_str =
+    A.trace_to_svgbob
+      ~numbers:true
+      ~precision:2
+      ~tasks:Rtccsl.Examples.Macro.[ task_names "radar"; task_names "aeb.control"; task_names "brake" ] (*TODO: extract automatically *)
+      (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
+      trace
+  in
+  let _ =
+    let trace_file = open_out (Printf.sprintf "./%s_trace.svgbob" basename) in
+    output_string trace_file svgbob_str;
+    close_out trace_file
+  in
+  let trace_file = open_out (Printf.sprintf "%s_trace.cadp" basename) in
+  let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
+  let _ = close_out trace_file in
+  let reactions = FnCh.reaction_times points_of_interest (List.to_seq chains) in
+  let data_file = open_out (Printf.sprintf "%s_reaction_times.csv" basename) in
   let _ =
     Printf.fprintf
       data_file
@@ -240,24 +191,52 @@ let process name spec =
   close_out data_file
 ;;
 
+let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec) =
+  let prefix = Filename.concat directory name in
+  let _ = print_endline prefix in
+  let _ = create_dir prefix in
+  let _ =
+    print_endline
+      (Rtccsl.show_specification
+         Format.pp_print_string
+         Format.pp_print_string
+         Format.pp_print_string
+         (fun state v ->
+            let s = to_string v in
+            Format.pp_print_string state s)
+         spec)
+  in
+  Domainslib.Task.run pool (fun _ ->
+    Domainslib.Task.parallel_for
+      ~chunk_size:1
+      ~start:0
+      ~finish:traces
+      ~body:(generate_trace ~steps ~horizon prefix dist spec C.icteri_chain)
+      pool)
+;;
+
 let () =
-  let use_cases =
-    [ (* "certain1", Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid_certain 15 2 5 5 2; *)
-      ( "c2"
-      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid
-          (14, 16)
-          (1, 3)
-          (2, 8)
-          (4, 6)
-          (1, 3) )
-    ; ( "c3"
-      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid
-          (14, 16)
-          (1, 3)
-          (2, 8)
-          (14, 16)
-          (1, 3) )
+  let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] <dir>" in
+  let traces = ref 10
+  and cores = ref 8
+  and steps = ref 1000
+  and horizon = ref 10_000.0 in
+  let speclist =
+    [ "-t", Arg.Set_int traces, "Number of traces to generate"
+    ; "-n", Arg.Set_int cores, "Number of cores to use"
+    ; "-h", Arg.Set_float horizon, "Max time of simulation"
+    ; "-s", Arg.Set_int steps, "Max steps of simulation"
     ]
   in
-  List.iter (fun (name, spec) -> process name spec) use_cases
+  let directory = ref None in
+  let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
+  let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in
+  List.iter
+    (process_config
+       ~pool
+       ~traces:!traces
+       ~directory:(Option.get !directory)
+       ~steps:!steps
+       ~horizon:(of_float !horizon))
+    C.icteri_configs
 ;;
