@@ -33,7 +33,7 @@ let chain_start_finish_clocks chain =
 ;;
 
 let points_of_interest chain =
-  let _, sampling_links =
+  (* let _, sampling_links =
     List.fold_left
       (fun (prev, points) (rel, next) ->
          let points =
@@ -45,7 +45,17 @@ let points_of_interest chain =
       (chain.first, [])
       chain.rest
   in
-  chain_start_finish_clocks chain :: sampling_links
+  chain_start_finish_clocks chain :: sampling_links *)
+  [chain_start_finish_clocks chain]
+;;
+
+let categorization_points chain =
+  List.filter_map
+    (fun (rel, next) ->
+       match rel with
+       | `Sampling -> Some next
+       | _ -> None)
+    chain.rest
 ;;
 
 module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct

@@ -11,6 +11,7 @@ let latency_var = Printf.sprintf "%s@l"
 let jitter_var = Printf.sprintf "%s@j"
 let signal_emit = Printf.sprintf "%s.e"
 let signal_receive = Printf.sprintf "%s.r"
+let signal_task = Printf.sprintf "oem.%s"
 
 open Mrtccsl.Rtccsl
 
@@ -47,14 +48,23 @@ let of_policy name trigger =
 ;;
 
 let of_signal name s =
-  let start = start name in
-  let finish = finish name in
-  let latency_var = latency_var name in
+  let task_name = signal_task name in
+  let start = start task_name in
+  let finish = finish task_name in
+  let latency_var = latency_var task_name in
   let (policy_dist, policy_spec), latency =
     match s with
     | Sensor { policy; latency; as_device } ->
-      of_policy name (if as_device then start else finish) policy, latency
-    | Actuator { policy; latency } -> of_policy name start policy, latency
+      let dist, spec = of_policy task_name (if as_device then start else finish) policy in
+      let spec =
+        { constraints =
+            Coincidence [ finish; signal_emit name ] :: spec.constraints
+            (*TODO: replace with probabilistic subclocking in the future?*)
+        ; var_relations = spec.var_relations
+        }
+      in
+      (dist, spec), latency
+    | Actuator { policy; latency } -> of_policy task_name start policy, latency
   in
   let latency_dist = [ latency_var, latency.dist ] in
   let latency_spec =
@@ -177,54 +187,21 @@ let of_system ~relaxed_sched ?delayed_comm ?cores ((components, hal) : _ system)
   Seq.fold_left merge ([], empty) specs
 ;;
 
-(*
-   open Mrtccsl.Analysis.FunctionalChain
-
-let chains ((components, hal) : _ system) : _ chain list =
-  let initial =
-    ( []
-    , hal
-      |> Hashtbl.to_seq
-      |> Seq.filter_map (fun (name, c) ->
-        match c with
-        | Sensor _ -> Some { first = start name; rest = [ `Causality, finish name ] }
-        | Actuator _ -> None)
-      |> List.of_seq )
+let system_tasks (components, hal) =
+  let task = fun name -> name, trigger name, start name, finish name, deadline name in
+  let signal_exec_tasks =
+    hal |> Hashtbl.to_seq_keys |> Seq.map (fun name -> task (signal_task name))
+  and component_tasks =
+    components
+    |> List.to_seq
+    |> Seq.flat_map (fun c ->
+      c.services |> List.to_seq |> Seq.map (fun { name; _ } -> task name))
+  and signal_comm_tasks =
+    hal
+    |> Hashtbl.to_seq_keys
+    |> Seq.map (fun name -> name, "", signal_emit name, signal_receive name, "")
   in
-  let partition_map_list f l =
-    l
-    |> List.flat_map (fun x ->
-      let left, right = f x in
-      List.map (fun y -> false, y) left @ List.map (fun y -> true, y) right)
-    |> List.partition_map (fun (p, x) -> if p then Either.Left x else Either.Right x)
-  in
-  let step (full, partial) =
-    let new_full, partial =
-      partition_map_list
-        (fun { first; rest } ->
-           let new_full =
-             hal
-             |> Hashtbl.to_seq
-             |> Seq.filter_map (fun (name, s) ->
-               match s with
-               | Sensor _ -> None
-               | Actuator { policy; _ } ->
-                 let rel =
-                   match policy with
-                   | `AbsoluteTimer _ | `CumulativeTimer _ -> `Sampling
-                   | `Signal _ -> `Causality
-                 in
-                 Some { first; rest = List.append rest [ rel, start name; `Causality, finish name; `Sampling, signal_emit name; `Causality, signal_receive name ] })
-             |> List.of_seq
-           and partial = components |> (List.to_seq) |> Seq.flat_map (fun c -> (c.services) |> List.to_seq |> Seq.map (
-            fun ({name;inputs;outputs;_}) ->  if List.exists (fun s -> signal_receive s) )) |> List.of_seq 
-           
-            in
-           new_full, partial )
-        partial
-    in
-    List.append new_full full, partial
-  in
-  let full, _ = fixpoint ( = ) step initial in
-  full
-;; *)
+  [ signal_exec_tasks; component_tasks; signal_comm_tasks ]
+  |> Seq.append_list
+  |> List.of_seq
+;;

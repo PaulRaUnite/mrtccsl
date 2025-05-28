@@ -145,14 +145,14 @@ let parallel_reaction_times
 let rec create_dir fn =
   if not (Sys.file_exists fn)
   then (
-    Sys.mkdir fn 0o755;
     let parent_dir = Filename.dirname fn in
-    create_dir parent_dir)
+    create_dir parent_dir;
+    Sys.mkdir fn 0o755)
 ;;
 
-let generate_trace ~steps ~horizon directory dist system_spec func_chain_spec i =
+let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_spec i =
   let _ = Random.self_init () in
-  let strategy candidates = random_strat (prioritize_single candidates) in
+  let strategy candidates = (A.Strategy.Solution.refuse_empty random_strat) candidates in
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
   and points_of_interest = points_of_interest func_chain_spec in
@@ -168,30 +168,26 @@ let generate_trace ~steps ~horizon directory dist system_spec func_chain_spec i 
     A.trace_to_svgbob
       ~numbers:true
       ~precision:2
-      ~tasks:Rtccsl.Examples.Macro.[ task_names "radar"; task_names "aeb.control"; task_names "brake" ] (*TODO: extract automatically *)
+      ~tasks
       (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
       trace
   in
   let _ =
-    let trace_file = open_out (Printf.sprintf "./%s_trace.svgbob" basename) in
+    let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
     output_string trace_file svgbob_str;
     close_out trace_file
   in
-  let trace_file = open_out (Printf.sprintf "%s_trace.cadp" basename) in
+  let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
+  (*TODO: randomize*)
   let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
   let _ = close_out trace_file in
   let reactions = FnCh.reaction_times points_of_interest (List.to_seq chains) in
-  let data_file = open_out (Printf.sprintf "%s_reaction_times.csv" basename) in
-  let _ =
-    Printf.fprintf
-      data_file
-      "%s"
-      (FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest reactions)
-  in
-  close_out data_file
+  reactions
 ;;
 
-let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec) =
+let parallel = true
+
+let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
@@ -206,24 +202,45 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec) =
             Format.pp_print_string state s)
          spec)
   in
-  Domainslib.Task.run pool (fun _ ->
-    Domainslib.Task.parallel_for
-      ~chunk_size:1
-      ~start:0
-      ~finish:traces
-      ~body:(generate_trace ~steps ~horizon prefix dist spec C.icteri_chain)
-      pool)
+  let reaction_times =
+    if parallel
+    then
+      Domainslib.Task.run pool (fun _ ->
+        Domainslib.Task.parallel_for_reduce
+          ~chunk_size:1
+          ~start:0
+          ~finish:traces
+          ~body:(generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
+          pool
+          Seq.append
+          Seq.empty)
+    else
+      Seq.int_seq_inclusive (0, traces)
+      |> Seq.map (generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
+      |> Seq.fold_left Seq.append Seq.empty
+  in
+  let points_of_interest = points_of_interest C.icteri_chain in
+  let categories = categorization_points C.icteri_chain in
+  let data_file = open_out (Printf.sprintf "%s/reaction_times.csv" prefix) in
+  let _ =
+    Printf.fprintf
+      data_file
+      "%s"
+      (FnCh.reaction_times_to_csv categories points_of_interest reaction_times)
+  in
+  close_out data_file
 ;;
 
 let () =
+(*TODO: add some argument checking*)
   let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] <dir>" in
-  let traces = ref 10
-  and cores = ref 8
+  let traces = ref 0
+  and cores = ref 1
   and steps = ref 1000
   and horizon = ref 10_000.0 in
   let speclist =
     [ "-t", Arg.Set_int traces, "Number of traces to generate"
-    ; "-n", Arg.Set_int cores, "Number of cores to use"
+    ; "-c", Arg.Set_int cores, "Number of cores to use"
     ; "-h", Arg.Set_float horizon, "Max time of simulation"
     ; "-s", Arg.Set_int steps, "Max steps of simulation"
     ]

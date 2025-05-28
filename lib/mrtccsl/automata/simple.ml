@@ -13,11 +13,23 @@ type 'n distribution =
 [@@deriving map]
 
 let truncated_guassian_rvs ~a ~b ~mu ~sigma =
-let prob_l, prob_r =
-                  Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a,b)
-                in
-                let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
-                Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma
+  if Float.equal sigma 0.0
+  then mu
+  else (
+    let prob_l, prob_r = Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a, b) in
+    let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
+    (* let _ =
+      Printf.printf "%f %f %f %f %f %f %f\n" a b mu sigma prob_l prob_r sample_prob
+    in *)
+    let v = Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma in
+    (* Printf.printf "prob_l %f prob_r %f %f\n" prob_l prob_r sample_prob; *)
+    if Float.is_nan v
+    then failwith (Printf.sprintf "a: %f b: %f mu: %f sigma: %f gets nan!" a b mu sigma)
+    else if Float.is_infinite v
+    then failwith (Printf.sprintf "a: %f b: %f mu: %f sigma: %f gets inf!" a b mu sigma)
+    else v)
+;;
+
 (**Specifies the distribution of the time variable. *)
 type ('v, 't) dist = 'v * 't distribution [@@deriving map]
 
@@ -155,9 +167,11 @@ module Make (C : ID) (N : Num) = struct
   let noop_transition _ n (_, n') = N.compare n n' < 0
   let empty : t = noop_guard, noop_transition, L.empty
 
-  let guard_to_string (label, cond) =
+  let variant_to_string (label, cond) =
     Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
   ;;
+
+  let guard_to_string variants = List.to_string ~sep:" || " variant_to_string variants
 
   let solution_to_string (label, now) =
     Printf.sprintf "%s ! %s" (L.to_string label) (N.to_string now)
@@ -176,14 +190,9 @@ module Make (C : ID) (N : Num) = struct
     g, t, clocks
   ;;
 
-  let debug_g name g now =
-    let variants = g now in
-    let _ =
-      Printf.printf
-        "%s variants %s\n"
-        name
-        (List.to_string ~sep:" | " guard_to_string variants)
-    in
+  let debug_g name g vars now =
+    let variants = g vars now in
+    let _ = Printf.printf "<%s>: %s\n" name (guard_to_string variants) in
     variants
   ;;
 
@@ -209,22 +218,14 @@ module Make (C : ID) (N : Num) = struct
       Some (l, c)
     in
     let g vars now =
-      (* let _ = Printf.printf "sync---\n" in *)
+      (* let _ = Printf.printf "sync--- at %s\n" (N.to_string now) in *)
       let g1 = g1 vars now in
-      (* let _ =
-        Printf.printf "sync sol 1: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g1)
-      in *)
+      (* let _ = Printf.printf "sync sol 1: %s\n" (guard_to_string g1) in *)
       let g2 = g2 vars now in
-      (* let _ =
-        Printf.printf "sync sol 2: %s\n" (Sexplib0.Sexp.to_string @@ sexp_of_guard g2)
-      in *)
+      (* let _ = Printf.printf "sync sol 2: %s\n" (guard_to_string g2) in *)
       let pot_solutions = List.cartesian g1 g2 in
       let solutions = List.filter_map guard_solver pot_solutions in
-      (* let _ =
-        Printf.printf
-          "sync sols: %s\n"
-          (Sexplib0.Sexp.to_string @@ sexp_of_guard solutions)
-      in *)
+      (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
       solutions
     in
     let t vars n l = t1 vars n l && t2 vars n l in
@@ -268,19 +269,19 @@ module Make (C : ID) (N : Num) = struct
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
       | Exclusion clocks ->
-        let l = label_list @@ ([] :: List.map (fun x -> [ x ]) clocks) in
+        let l = label_list ([] :: List.map (fun x -> [ x ]) clocks) in
         stateless l
       | Coincidence clocks ->
         let l = label_list [ clocks; [] ] in
         stateless l
       | RTdelay { out = b; arg = a; delay } ->
-        let queue = Queue.create () in
+        let queue = ref [] in
         let g _ now =
-          if Queue.is_empty queue
+          if List.is_empty !queue
           then [ L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now ]
           else (
-            let next = Queue.peek queue in
-            [ L.of_list [ a ], next
+            let next = List.hd !queue in
+            [ L.of_list [ a ], Option.get (I.complement_left next)
             ; L.empty, Option.get (I.complement_left next)
             ; L.of_list [ a; b ], next
             ; L.of_list [ b ], next
@@ -288,10 +289,25 @@ module Make (C : ID) (N : Num) = struct
         in
         let t vars _ (l, n') =
           let _ =
-            if L.mem a l then Queue.push (I.shift_by (vars.current delay) n') queue;
-            vars.consume delay
+            if L.mem a l
+            then (
+              let v = vars.current delay in
+              (* Printf.printf
+                "generated %s %s at %s\n"
+                (C.to_string delay)
+                (I.to_string v)
+                (N.to_string n'); *)
+              (* Printf.printf "%s\n" (I.to_string (I.shift_by v n')); *)
+              queue (*FIXME: this is an error*)
+              := List.stable_sort
+                   (fun n n' ->
+                      N.compare
+                        (Option.get @@ I.left_bound_opt n)
+                        (Option.get @@ I.left_bound_opt n'))
+                   (List.append !queue [ I.shift_by v n' ]);
+              vars.consume delay)
           in
-          let _ = if L.mem b l then ignore @@ Queue.pop queue in
+          let _ = if L.mem b l then queue := List.tl !queue in
           true
         in
         g, t
@@ -303,7 +319,11 @@ module Make (C : ID) (N : Num) = struct
             | None -> I.return offset
             | Some v -> I.shift_by (vars.current period) v
           in
-          [ L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) ]
+          let g =
+            [ L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) ]
+          in
+          (* let _ = Printf.printf "%s: %s\n" (C.to_string period) (guard_to_string g) in  *)
+          g
         in
         let t vars _ (l, n') =
           let _ =
@@ -701,7 +721,7 @@ module Make (C : ID) (N : Num) = struct
               let sigma = N.to_float dev in
               fun cond ->
                 let bounds = Option.get @@ I.constant_bounds cond in
-                let a,b = Tuple.map2 N.to_float bounds in
+                let a, b = Tuple.map2 N.to_float bounds in
                 let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
                 I.return @@ N.of_float sample )
         in
@@ -804,6 +824,11 @@ module Make (C : ID) (N : Num) = struct
         let variants = List.filter (fun (l, _) -> not (L.is_empty l)) variants in
         s variants
       ;;
+
+      let debug f variants =
+        let _ = Printf.printf "variants at strategy: %s\n" (guard_to_string variants) in
+        f variants
+      ;;
     end
   end
 
@@ -819,18 +844,10 @@ module Make (C : ID) (N : Num) = struct
     in *)
     if List.is_empty possible
     then None
-    else (
-      let possible_shifted =
-        List.map
-          (fun (l, c) ->
-             let c = I.shift_by c (N.neg now) in
-             l, c)
-          possible
-      in
-      let* l, d = strat possible_shifted in
-      let sol = l, N.(d + now) in
+    else
+      let* sol = strat possible in
       (* let _ = Printf.printf "decision: %s\n" (solution_to_string sol) in *)
-      if transition vars now sol then Some sol else None)
+      if transition vars now sol then Some sol else None
   ;;
 
   let empty_vars = { current = (fun _ -> failwith "none"); consume = (fun _ -> ()) }
@@ -841,8 +858,15 @@ module Make (C : ID) (N : Num) = struct
         (fun k ->
           match CMap.find_opt k !storage with
           | Some x -> x
-          | None -> strat k (var2cond k))
-    ; consume = (fun k -> storage := CMap.remove k !storage)
+          | None ->
+            let new_v = strat k (var2cond k) in
+            storage := CMap.add k new_v !storage;
+            (* Printf.printf "generate %s with %s\n" (C.to_string k) (I.to_string new_v); *)
+            new_v)
+    ; consume =
+        (fun k ->
+          (* Printf.printf "consume %s\n" (C.to_string k); *)
+          storage := CMap.remove k !storage)
     }
   ;;
 
@@ -851,7 +875,7 @@ module Make (C : ID) (N : Num) = struct
       (fun (vars, now) ->
          let* l, now = next_step sol_strat a vars now in
          Some ((l, now), (vars, now)))
-      (vars_from_rels var_strat vrel, N.zero)
+      (vars_from_rels var_strat vrel, N.neg N.one)
   ;;
 
   let until_horizon time trace =
@@ -899,6 +923,7 @@ module Make (C : ID) (N : Num) = struct
   let proj_trace clocks trace = Seq.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = Seq.filter (fun (l, _) -> not (L.is_empty l)) trace
 
+  (*TODO: translate into a printer. *)
   let trace_to_svgbob ?(numbers = false) ?(tasks = []) ?precision clocks trace =
     if List.is_empty clocks
     then ""
@@ -1042,6 +1067,7 @@ module Make (C : ID) (N : Num) = struct
       Buffer.contents total)
   ;;
 
+  (*TODO: translate into a printer https://ocaml.org/manual/5.3/api/Printf.html *)
   let trace_to_csl trace =
     let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
     Seq.to_string ~sep:",STEP," serialize trace
@@ -1197,5 +1223,15 @@ module MakeExtendedString (N : Num) = struct
   let%test _ =
     trace_of_regexp "ab(cd)"
     = trace_of_strings [ "a", "x  "; "b", " x "; "c", "  x"; "d", "  x" ]
+  ;;
+
+  let test_truncated a b mu sigma =
+    let v = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+    a <= v && v <= b
+  ;;
+
+  let%test _ =
+    let _ = Random.init 12312 in
+    test_truncated (-1.0) 1.0 0.0 0.5
   ;;
 end

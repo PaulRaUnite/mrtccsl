@@ -13,8 +13,9 @@ module Make (N : Num) = struct
   open N
 
   let sigma n (l, r) =
-    let dev = (l - r) / of_int (Int.mul 2 n) in
-    let mean = (l - r) / of_int 2 in
+    let dev = (r - l) / of_int (Int.mul 2 n) in
+    let mean = l + ((r - l) / of_int 2) in
+    (* Printf.printf "mean: %s dev:%s\n" (N.to_string mean) (N.to_string dev); *)
     Normal { mean; dev }
   ;;
 
@@ -90,6 +91,51 @@ module Make (N : Num) = struct
     components, hal
   ;;
 
+  let icteri_chain =
+    let open Mrtccsl.Analysis.FunctionalChain in
+    let open Semantics in
+    let s = "radar"
+    and c = "aeb.control"
+    and a = "brake" in
+    let st = signal_task s
+    and at = signal_task a in
+    { first = start st
+    ; rest =
+        [ `Causality, finish st
+        ; `Causality, signal_emit s
+        ; `Causality, signal_receive s
+        ; `Causality, start c
+        ; `Causality, finish c
+        ; `Causality, signal_emit a
+        ; `Causality, signal_receive a
+        ; `Sampling, start at
+        ; `Causality, finish at
+        ]
+    }
+  ;;
+
+  let useless_spec chain =
+    let open Mrtccsl.Analysis.FunctionalChain in
+    let open Mrtccsl.Rtccsl in
+    let constraints, _ =
+      List.fold_left
+        (fun (spec, prev) -> function
+           | `Sampling, c ->
+             let useful = Printf.sprintf "%s.useful" c
+             and useless = Printf.sprintf "%s.useless" c in
+             ( List.append
+                 [ Sample { out = useful; arg = prev; base = c }
+                 ; Minus { out = useless; arg = c; except = [ useful ] }
+                 ]
+                 spec
+             , c )
+           | `Causality, c -> spec, c)
+        ([], chain.first)
+        chain.rest
+    in
+    Mrtccsl.Rtccsl.constraints_only constraints
+  ;;
+
   let of_config c =
     let c = map_config of_int c in
     let { name; n_sigma; relaxed_sched; delayed_comm; cores; _ } = c in
@@ -101,7 +147,8 @@ module Make (N : Num) = struct
         ?cores
         sys
     in
-    name, dist, spec
+    let tasks = Semantics.system_tasks sys in
+    name, dist, Mrtccsl.Rtccsl.merge spec (useless_spec icteri_chain), tasks
   ;;
 
   let icteri_configs =
@@ -161,28 +208,21 @@ module Make (N : Num) = struct
       ; delayed_comm = None
       ; cores = None
       }
+    ; { name = "c5"
+      ; n_sigma = 2
+      ; absolute = false
+      ; sensor_sampling_period = 14, 16
+      ; sensor_latency = 1, 3
+      ; sensor_offset = 0
+      ; controller_exec_time = 2, 4
+      ; actuator_sampling_period = 4, 6
+      ; actuator_latency = 1, 3
+      ; actuator_offset = 0
+      ; relaxed_sched = false
+      ; delayed_comm = None
+      ; cores = None
+      }
     ]
     |> List.map of_config
-  ;;
-
-  let icteri_chain =
-    let open Mrtccsl.Analysis.FunctionalChain in
-    let open Semantics in
-    let s = "radar"
-    and c = "aeb.control"
-    and a = "brake" in
-    { first = start s
-    ; rest =
-        [ `Causality, finish s
-        ; `Sampling, signal_emit s
-        ; `Causality, signal_receive s
-        ; `Causality, start c
-        ; `Causality, finish c
-        ; `Sampling, signal_emit a
-        ; `Causality, signal_receive a
-        ; `Sampling, start a
-        ; `Causality, finish a
-        ]
-    }
   ;;
 end

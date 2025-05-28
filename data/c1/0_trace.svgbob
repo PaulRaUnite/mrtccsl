@@ -1,0 +1,13 @@
+aeb.control.f +----
+aeb.control.s |----
+aeb.control.t |----
+      brake.e |----
+      brake.f |----
+      brake.r |----
+      brake.s |-1--
+      radar.e |-|--
+      radar.f |-|--
+      radar.r |-|--
+      radar.s |-1--
+              +-┴-->
+                0. seconds

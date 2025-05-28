@@ -25,7 +25,7 @@ rounded(x) = bin_width * ( bin_number(x) + 0.5 )
 
 set ylabel "probability"
 
-files = system("ls -1 ./data/*.csv")
+files = system("ls -1 ./data/*/*.csv")
 print files ;
 # array titles = ["C2 with 2 cores", "C2 with 16 cores", "C4 with 2 cores", "C4 with 16 cores", "C5 with 2 cores", "C5 with 16 cores"]
 do for [i=1:words(files)] {

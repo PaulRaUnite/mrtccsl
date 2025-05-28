@@ -53,6 +53,7 @@ let process filename =
 ;;
 
 let () =
+(*TODO: add some actual interface.*)
   let traces = Sys.readdir "./traces/" in
   Array.iter process traces
 ;;
