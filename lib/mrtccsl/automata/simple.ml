@@ -1063,6 +1063,156 @@ module Make (C : ID) (N : Num) = struct
     let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
     Seq.to_string ~sep:",STEP," serialize trace
   ;;
+
+  let trace_to_vertical_svgbob
+        ?(numbers = false)
+        ?(tasks = [])
+        clocks
+        (ch : out_channel)
+        trace
+    =
+    if List.is_empty clocks
+    then ()
+    else (
+      let marker =
+        if numbers
+        then fun _ j -> Int.to_string j
+        else
+          fun i _ ->
+            match Int.rem i 9 with
+            | 0 -> "*"
+            | 1 -> "o"
+            | 2 -> "◆"
+            | 3 -> ">"
+            | 4 -> "O"
+            | 5 -> "^"
+            | 6 -> "#"
+            | 7 -> "<"
+            | 8 -> "v"
+            | _ -> failwith "unreachable"
+      in
+      let clocks =
+        clocks
+        |> List.filter (fun c ->
+          not
+            (List.exists (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d) tasks))
+        |> Array.of_list
+      in
+      let width =
+        List.fold_left
+          (fun off (name, _, _, _, _) ->
+             let s = C.to_string name in
+             Printf.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
+             off + 8)
+          0
+          tasks
+      in
+      let width =
+        Array.fold_left
+          (fun off clock ->
+             let s = C.to_string clock in
+             Printf.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
+             off + 2)
+          width
+          clocks
+      in
+      let _ =
+        for _ = 1 to List.length tasks do
+          Printf.fprintf ch "-+---+--"
+        done
+      in
+      let _ =
+        for _ = 1 to Array.length clocks do
+          Printf.fprintf ch "+-"
+        done
+      in
+      let _ = Printf.fprintf ch "+\n" in
+      let serialize_record (tasks, clocks) (l, n) =
+        let new_tasks =
+          Array.map
+            (fun ((name, r, s, f, d), executes, constrains) ->
+               let ready = L.mem r l
+               and start = L.mem s l
+               and finish = L.mem f l
+               and deadline = L.mem d l in
+               let now_executes = (executes || start) && not finish
+               and now_constrains = (constrains || ready) && not deadline in
+               let _ =
+                 match executes, now_executes with
+                 | false, true -> Printf.fprintf ch ".+."
+                 | true, true ->
+                   Printf.fprintf
+                     ch
+                     (if start then if finish then "###" else ".-." else "| |")
+                 | false, false ->
+                   Printf.fprintf ch (if start && finish then "###" else " | ")
+                 | true, false -> Printf.fprintf ch "'+'"
+               in
+               Printf.fprintf ch " ";
+               let _ =
+                 match constrains, now_constrains with
+                 | false, true -> Printf.fprintf ch ".+."
+                 | true, true ->
+                   Printf.fprintf
+                     ch
+                     (if ready then if deadline then ":=:" else ".-." else ": :")
+                 | false, false ->
+                   Printf.fprintf ch (if ready && deadline then ".+." else " | ")
+                 | true, false -> Printf.fprintf ch "'+'"
+               in
+               Printf.fprintf ch " ";
+               (name, r, s, f, d), now_executes, now_constrains)
+            tasks
+        in
+        let horizontal = ref false in
+        let new_clocks =
+          Array.mapi
+            (fun i (clock, count) ->
+               let count =
+                 if L.mem clock l
+                 then (
+                   horizontal := true;
+                   Printf.fprintf ch "%s" (marker i count);
+                   count + 1)
+                 else (
+                   Printf.fprintf ch "+";
+                   count)
+               in
+               Printf.fprintf ch (if !horizontal then "-" else " ");
+               clock, count)
+            clocks
+        in
+        let time_label = N.to_string n in
+        Printf.fprintf ch "+ %s\n" time_label;
+        Array.iter
+          (fun ((_, r, _, _, d), executes, constrains) ->
+             let ready = L.mem r l
+             and deadline = L.mem d l in
+             Printf.fprintf ch (if executes then "| | " else " |  ");
+             Printf.fprintf
+               ch
+               (if constrains
+                then ": : "
+                else if ready && deadline
+                then "'+' "
+                else " |  "))
+          new_tasks;
+        Array.iter (fun _ -> Printf.fprintf ch "| ") new_clocks;
+        Printf.fprintf ch "|\n";
+        new_tasks, new_clocks
+      in
+      let task_states =
+        tasks |> List.map (fun task -> task, false, false) |> Array.of_list
+      in
+      let clock_states = Array.map (fun clock -> clock, 0) clocks in
+      let _ = Seq.fold_left serialize_record (task_states, clock_states) trace in
+      let _ =
+        for _ = 0 to width do
+          Printf.fprintf ch " "
+        done
+      in
+      Printf.fprintf ch "v")
+  ;;
 end
 
 let%test_module _ =

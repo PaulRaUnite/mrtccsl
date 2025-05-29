@@ -164,28 +164,21 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
       system_spec
       func_chain_spec
   in
-  let svgbob_str =
-    A.trace_to_svgbob
-      ~numbers:true
-      ~precision:2
-      ~tasks
-      (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
-      trace
-  in
+  let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
   let _ =
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
-    output_string trace_file svgbob_str;
+    A.trace_to_vertical_svgbob ~numbers:false ~precision:2 ~tasks clocks trace_file trace;
     close_out trace_file
   in
   let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
-  (*TODO: randomize*)
+  (*TODO: decide on better *)
   let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
   let _ = close_out trace_file in
   let reactions = FnCh.reaction_times points_of_interest (List.to_seq chains) in
   reactions
 ;;
 
-let parallel = true
+let parallel = false
 
 let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
   let prefix = Filename.concat directory name in
@@ -232,7 +225,7 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
 ;;
 
 let () =
-(*TODO: add some argument checking*)
+  (*TODO: add some argument checking*)
   let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] <dir>" in
   let traces = ref 0
   and cores = ref 1
