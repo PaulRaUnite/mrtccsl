@@ -52,7 +52,6 @@ let random l r =
 
 let from_int = of_int
 let to_rational = Fun.id
-
 let from_pair nom denom = of_frac nom denom
 
 let of_decimal_string s =
@@ -64,4 +63,12 @@ let of_decimal_string s =
     let decimal = from_pair decimal_num len_after_zero in
     add whole decimal
   | _ -> failwith "wrong decimal number"
+;;
+
+let of_float v =
+  if Float.is_nan v
+  then failwith "cannot represent nan as rational"
+  else if Float.is_infinite v
+  then failwith "cannot represent infinity as rational"
+  else of_float v
 ;;

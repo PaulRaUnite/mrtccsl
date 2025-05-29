@@ -18,16 +18,7 @@ let truncated_guassian_rvs ~a ~b ~mu ~sigma =
   else (
     let prob_l, prob_r = Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a, b) in
     let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
-    (* let _ =
-      Printf.printf "%f %f %f %f %f %f %f\n" a b mu sigma prob_l prob_r sample_prob
-    in *)
-    let v = Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma in
-    (* Printf.printf "prob_l %f prob_r %f %f\n" prob_l prob_r sample_prob; *)
-    if Float.is_nan v
-    then failwith (Printf.sprintf "a: %f b: %f mu: %f sigma: %f gets nan!" a b mu sigma)
-    else if Float.is_infinite v
-    then failwith (Printf.sprintf "a: %f b: %f mu: %f sigma: %f gets inf!" a b mu sigma)
-    else v)
+    Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma)
 ;;
 
 (**Specifies the distribution of the time variable. *)

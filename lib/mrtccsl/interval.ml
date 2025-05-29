@@ -39,13 +39,10 @@ module type I = sig
   val ( =-> ) : num -> num -> t
   val ( <-= ) : num -> num -> t
   val ( =-= ) : num -> num -> t
-
   val complement_left : t -> t option
   val complement_right : t -> t option
-
   val left_bound_opt : t -> num option
   val right_bound_opt : t -> num option
-
   val is_left_unbound : t -> bool
   val is_right_unbound : t -> bool
 
