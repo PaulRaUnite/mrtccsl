@@ -47,6 +47,15 @@ module ExpOrder = struct
 
     let min x y = if less_eq x y then x else y
     let max x y = if more_eq x y then x else y
+
+    module Operators = struct
+      let ( = ) = equal
+      let ( <> ) x y = not (equal x y)
+      let ( < ) = less
+      let ( <= ) = less_eq
+      let ( > ) = more
+      let ( >= ) = more_eq
+    end
   end
 end
 
@@ -56,16 +65,38 @@ module Number = struct
 
     val zero : t
     val one : t
-    val ( + ) : t -> t -> t
-    val ( * ) : t -> t -> t
+    val add : t -> t -> t
+    val mul : t -> t -> t
   end
 
   module type Field = sig
     include Ring
 
     val neg : t -> t
-    val ( - ) : t -> t -> t
-    val ( / ) : t -> t -> t
+    val sub : t -> t -> t
+    val div : t -> t -> t
+  end
+
+  module Operators = struct
+    module type S = sig
+      type t
+
+      val ( + ) : t -> t -> t
+      val ( - ) : t -> t -> t
+      val ( * ) : t -> t -> t
+      val ( / ) : t -> t -> t
+      val ( ~- ) : t -> t
+    end
+
+    module Make (F : Field) = struct
+      include F
+
+      let ( ~- ) = neg
+      let ( + ) = add
+      let ( - ) = sub
+      let ( * ) = mul
+      let ( / ) = div
+    end
   end
 end
 

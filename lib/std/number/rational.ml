@@ -7,12 +7,12 @@ include Interface.ExpOrder.Make (struct
     let compare = cmp
   end)
 
-let zero = of_int 0
-let one = of_int 1
-let ( + ) = add
-let ( - ) = sub
-let ( * ) = mul
-let ( / ) = div
+include Interface.Number.Operators.Make (struct
+    include Mpqf
+
+    let zero = of_int 0
+    let one = of_int 1
+  end)
 
 let sexp_of_t x =
   let nom = get_num x in

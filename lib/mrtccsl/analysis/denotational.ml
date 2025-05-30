@@ -24,8 +24,7 @@ type ('c, 'n) num_expr =
 let rec num_expr_of_expr = function
   | Rtccsl.Var v -> Var (FreeVar v)
   | Rtccsl.Const c -> Const c
-  | Rtccsl.Bin (l, op, r) ->
-    Op (num_expr_of_expr l, op, num_expr_of_expr r)
+  | Rtccsl.Bin (l, op, r) -> Op (num_expr_of_expr l, op, num_expr_of_expr r)
 ;;
 
 type ('c, 'n) bool_expr =
@@ -158,6 +157,7 @@ module MakeExtNumExpr (N : Num) = struct
   module N = struct
     include N
     include Interface.ExpOrder.Make (N)
+    include Interface.Number.Operators.Make (N)
   end
 
   include NumExpr

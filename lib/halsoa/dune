@@ -3,7 +3,7 @@
 (library
  (name halsoa)
  (public_name mrtccsl.halsoa)
- (libraries mrtccsl std number)
+ (libraries mrtccsl std)
  (preprocess
   (pps ppx_deriving.map)))
 

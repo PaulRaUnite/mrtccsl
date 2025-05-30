@@ -2,21 +2,21 @@
  (public_name funchainstat)
  (name funchainstat)
  (modules funchainstat)
- (libraries mrtccsl number std domainslib)
+ (libraries mrtccsl std domainslib)
  (modes byte exe))
 
 (executable
  (public_name reaction)
  (name reaction)
  (modules reaction)
- (libraries mrtccsl number std)
+ (libraries mrtccsl std)
  (modes exe))
 
 (executable
  (public_name sim_halsoa)
  (name sim_halsoa)
  (modules sim_halsoa)
- (libraries mrtccsl number std domainslib halsoa)
+ (libraries mrtccsl std domainslib halsoa)
  (modes byte exe))
 
 (env

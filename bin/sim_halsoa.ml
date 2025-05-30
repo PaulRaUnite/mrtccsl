@@ -15,7 +15,7 @@ let priority_strategy priorities general_strategy =
     let candidates =
       List.stable_sort
         (fun (x, _) (y, _) ->
-           -Int.compare
+           Int.neg @@ Int.compare
               (A.L.cardinal (A.L.inter x priorities))
               (A.L.cardinal (A.L.inter y priorities)))
         candidates

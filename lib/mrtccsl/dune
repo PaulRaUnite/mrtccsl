@@ -12,7 +12,6 @@
   menhirLib
   ocolor
   cudd
-  number
   std
   owl)
  (preprocess
