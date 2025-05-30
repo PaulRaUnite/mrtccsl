@@ -9,52 +9,44 @@ let shift_position (p : Lexing.position) offset =
 let highlight warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg : string) =
   if not (String.equal s.pos_fname f.pos_fname)
   then failwith "Trying to highlight range in different files"
-  else (
-    let reset_ppf = Spectrum.prepare_ppf Format.std_formatter in
-    if s.pos_lnum = f.pos_lnum
-    then (
-      (* Format.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
-      let prefix = Bytes.sub lexbuf s.pos_bol (s.pos_cnum - s.pos_bol) in
-      let offset =
-        Bytes.fold_right
-          (fun c mono ->
-            mono
-            +
-            match c with
-            | '\t' -> 4
-            | _ -> 1)
-          prefix
-          0
-      and width = max (f.pos_cnum - s.pos_cnum) 1
-      and linenum = Format.sprintf "%i | " s.pos_lnum
-      and linewidth =
-        Fun.catch_with_default
-          (Bytes.index_from lexbuf f.pos_cnum)
-          '\n'
-          (Bytes.length lexbuf)
-        - s.pos_bol
-      in
-      Format.print_string linenum;
-      Format.print_string
-        (String.replace
-           ~sub:"\t"
-           ~by:"    "
-           (Bytes.sub_string lexbuf s.pos_bol linewidth));
-      Format.print_newline ();
-      for _ = 0 to String.length linenum + offset - 1 do
-        Format.print_char ' '
-      done;
-      let buf = Buffer.create 16 in
-      Buffer.add_chars buf width '^';
-      Buffer.add_char buf '\n';
-      Buffer.add_string buf (if warning then "Warning: " else "Error: ");
-      Buffer.add_string buf msg;
-      if warning
-      then Format.printf "@{<yellow>%s@}\n" (Buffer.contents buf)
-      else Format.printf "@{<red>%s@}\n" (Buffer.contents buf);
-      print_endline "")
-    else ();
-    reset_ppf ())
+  else if s.pos_lnum = f.pos_lnum
+  then (
+    (* Format.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
+    let prefix = Bytes.sub lexbuf s.pos_bol (s.pos_cnum - s.pos_bol) in
+    let offset =
+      Bytes.fold_right
+        (fun c mono ->
+           mono
+           +
+           match c with
+           | '\t' -> 4
+           | _ -> 1)
+        prefix
+        0
+    and width = max (f.pos_cnum - s.pos_cnum) 1
+    and linenum = Format.sprintf "%i | " s.pos_lnum
+    and linewidth =
+      Fun.catch_with_default
+        (Bytes.index_from lexbuf f.pos_cnum)
+        '\n'
+        (Bytes.length lexbuf)
+      - s.pos_bol
+    in
+    Format.print_string linenum;
+    Format.print_string
+      (String.replace ~sub:"\t" ~by:"    " (Bytes.sub_string lexbuf s.pos_bol linewidth));
+    Format.print_newline ();
+    let buf = Buffer.create 16 in
+    Buffer.add_chars buf (String.length linenum + offset) ' ';
+    Buffer.add_chars buf width '^';
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf (if warning then "Warning: " else "Error: ");
+    Buffer.add_string buf msg;
+    if warning
+    then Ocolor_format.printf "@{<yellow>%s@}\n" (Buffer.contents buf)
+    else Ocolor_format.printf "@{<red>%s@}\n" (Buffer.contents buf);
+    print_endline "")
+  else ()
 ;;
 
 let string_token =
@@ -194,38 +186,40 @@ let parse_with_error_handling buffer =
       Parser.MenhirInterpreter.loop_handle_undo
         (fun ast -> Ready ast)
         (fun input _conseq ->
-          let next_action =
-            match List.last (CircularList.content last_tokens) with
-            | Some (lexeme, _, startp, endp) ->
-              (match Fun.catch_to_opt Lexer.id (Lexing.from_string lexeme) with
-               | Some token ->
-                 if Parser.MenhirInterpreter.acceptable input token startp
-                 then Retry (input, (token, startp, endp))
-                 else Failed
-               | _ -> Failed)
-            | None -> Failed
-          in
-          let range = MenhirLib.LexerUtil.range (buffer.lex_start_p, buffer.lex_curr_p) in
-          print_string range;
-          let _ =
-            if retrying next_action
-            then
-              highlight
-                true
-                buffer.lex_buffer
-                buffer.lex_start_p
-                buffer.lex_curr_p
-                "Unexpected token, but recovered by interpretting as identifier"
-            else (
-              highlight
-                false
-                buffer.lex_buffer
-                buffer.lex_start_p
-                buffer.lex_curr_p
-                "Unexpected token, cannot recover";
-              print_tokens (CircularList.content last_tokens))
-          in
-          next_action)
+           let next_action =
+             match List.last (CircularList.content last_tokens) with
+             | Some (lexeme, _, startp, endp) ->
+               (match Fun.catch_to_opt Lexer.id (Lexing.from_string lexeme) with
+                | Some token ->
+                  if Parser.MenhirInterpreter.acceptable input token startp
+                  then Retry (input, (token, startp, endp))
+                  else Failed
+                | _ -> Failed)
+             | None -> Failed
+           in
+           let range =
+             MenhirLib.LexerUtil.range (buffer.lex_start_p, buffer.lex_curr_p)
+           in
+           print_string range;
+           let _ =
+             if retrying next_action
+             then
+               highlight
+                 true
+                 buffer.lex_buffer
+                 buffer.lex_start_p
+                 buffer.lex_curr_p
+                 "Unexpected token, but recovered by interpretting as identifier"
+             else (
+               highlight
+                 false
+                 buffer.lex_buffer
+                 buffer.lex_start_p
+                 buffer.lex_curr_p
+                 "Unexpected token, cannot recover";
+               print_tokens (CircularList.content last_tokens))
+           in
+           next_action)
         supply
         checkpoint
     in

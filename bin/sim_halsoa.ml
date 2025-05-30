@@ -167,7 +167,7 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
   let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
   let _ =
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
-    A.trace_to_vertical_svgbob ~numbers:false ~precision:2 ~tasks clocks trace_file trace;
+    A.trace_to_vertical_svgbob ~numbers:false ~tasks clocks trace_file trace;
     close_out trace_file
   in
   let trace_file = open_out (Printf.sprintf "%s.trace" basename) in

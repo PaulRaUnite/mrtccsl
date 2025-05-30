@@ -10,7 +10,7 @@
   vpl-core
   ocamlgraph
   menhirLib
-  spectrum
+  ocolor
   cudd
   number
   std

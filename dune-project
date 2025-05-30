@@ -44,8 +44,8 @@
   mlgmpidl
   vpl-core
   ocamlgraph
-  (spectrum
-   (>= 0.6.0))
+  (ocolor
+   (>= 1.3.1))
   containers
   (odoc :with-doc)
   (odig :with-doc)
@@ -57,7 +57,7 @@
   (ppx_deriving
    (>= 6.1.0))
   (owl
-   (= 1.2)))
+   (>= 1.2)))
  (tags
   (simulation
    "model checking"
