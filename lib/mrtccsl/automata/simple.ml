@@ -57,7 +57,7 @@ module type S = sig
   module L : Set.S with type elt := clock and type t := label
 
   type num_cond = I.t
-  type guard = (label * num_cond) list
+  type guard = (label * num_cond) Iter.t
   type solution = label * N.t
   type trace = solution Seq.t
 
@@ -135,7 +135,7 @@ module Make (C : ID) (N : Num) = struct
 
   type label = L.t
   type num_cond = I.t
-  type guard = (label * num_cond) list
+  type guard = (label * num_cond) Iter.t
   type solution = label * N.t
   type trace = solution Seq.t
 
@@ -154,7 +154,11 @@ module Make (C : ID) (N : Num) = struct
   let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
   let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
   let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
-  let noop_guard _ now = [ L.empty, I.inter (I.pinf N.zero) (I.pinf_strict now) ]
+
+  let noop_guard _ now =
+    Iter.of_array [| L.empty, I.inter (I.pinf N.zero) (I.pinf_strict now) |]
+  ;;
+
   let noop_transition _ n (_, n') = N.compare n n' < 0
   let empty : t = noop_guard, noop_transition, L.empty
 
@@ -162,7 +166,7 @@ module Make (C : ID) (N : Num) = struct
     Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
   ;;
 
-  let guard_to_string variants = List.to_string ~sep:" || " variant_to_string variants
+  let guard_to_string variants = Iter.to_string ~sep:" || " variant_to_string variants
 
   let solution_to_string (label, now) =
     Printf.sprintf "%s ! %s" (L.to_string label) (N.to_string now)
@@ -174,7 +178,7 @@ module Make (C : ID) (N : Num) = struct
       let possible = g vars n in
       let proj = L.inter clocks l in
       let present =
-        List.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n') possible
+        Iter.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n') possible
       in
       present && t vars n (l, n')
     in
@@ -214,17 +218,20 @@ module Make (C : ID) (N : Num) = struct
       (* let _ = Printf.printf "sync sol 1: %s\n" (guard_to_string g1) in *)
       let g2 = g2 vars now in
       (* let _ = Printf.printf "sync sol 2: %s\n" (guard_to_string g2) in *)
-      let pot_solutions = List.cartesian g1 g2 in
-      let solutions = List.filter_map guard_solver pot_solutions in
+      let pot_solutions = Iter.product g1 g2 in
+      let solutions = Iter.filter_map guard_solver pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
-      solutions
+      Iter.persistent solutions
     in
     let t vars n l = t1 vars n l && t2 vars n l in
     g, t, c
   ;;
 
   (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.**)
-  let lo_guard l _ now = List.map (fun l -> l, I.pinf_strict now) l
+  let lo_guard l =
+    let l = Array.map (fun l -> l, I.pinf N.zero) l in
+    fun _ _ -> l
+  ;;
 
   let stateless labels =
     let g = lo_guard labels in
@@ -242,7 +249,7 @@ module Make (C : ID) (N : Num) = struct
     in
     let g now =
       let l = if !c = 0 then l2 else l1 in
-      lo_guard l now
+      lo_guard (Array.of_list l) now
     in
     ( g
     , fun _ _ (l, _) ->
@@ -254,51 +261,49 @@ module Make (C : ID) (N : Num) = struct
 
   let of_constr constr : t =
     let open Rtccsl in
-    let label_list = List.map L.of_list in
+    let label_array l = Array.map L.of_list (Array.of_list l) in
     let g, t =
       match constr with
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
       | Exclusion clocks ->
-        let l = label_list ([] :: List.map (fun x -> [ x ]) clocks) in
+        let l = label_array ([] :: List.map (fun x -> [ x ]) clocks) in
         stateless l
       | Coincidence clocks ->
-        let l = label_list [ clocks; [] ] in
+        let l = label_array [ clocks; [] ] in
         stateless l
       | RTdelay { out = b; arg = a; delay } ->
-        let queue = ref [] in
+        let module Heap =
+          Heap (struct
+            include I
+
+            let compare n n' =
+              N.compare
+                (Option.get @@ I.left_bound_opt n)
+                (Option.get @@ I.left_bound_opt n')
+            ;;
+          end)
+        in
+        let queue = Heap.create () in
         let g _ now =
-          if List.is_empty !queue
-          then [ L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now ]
-          else (
-            let next = List.hd !queue in
-            [ L.of_list [ a ], Option.get (I.complement_left next)
-            ; L.empty, Option.get (I.complement_left next)
-            ; L.of_list [ a; b ], next
-            ; L.of_list [ b ], next
-            ])
+          match Heap.peek queue with
+          | None -> [| L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now |]
+          | Some next ->
+            [| L.of_list [ a ], Option.get (I.complement_left next)
+             ; L.empty, Option.get (I.complement_left next)
+             ; L.of_list [ a; b ], next
+             ; L.of_list [ b ], next
+            |]
         in
         let t vars _ (l, n') =
           let _ =
             if L.mem a l
             then (
               let v = vars.current delay in
-              (* Printf.printf
-                "generated %s %s at %s\n"
-                (C.to_string delay)
-                (I.to_string v)
-                (N.to_string n'); *)
-              (* Printf.printf "%s\n" (I.to_string (I.shift_by v n')); *)
-              queue (*FIXME: this is an error*)
-              := List.stable_sort
-                   (fun n n' ->
-                      N.compare
-                        (Option.get @@ I.left_bound_opt n)
-                        (Option.get @@ I.left_bound_opt n'))
-                   (List.append !queue [ I.shift_by v n' ]);
+              Heap.add queue (I.shift_by v n');
               vars.consume delay)
           in
-          let _ = if L.mem b l then queue := List.tl !queue in
+          let _ = if L.mem b l then ignore (Heap.pop_min queue) in
           true
         in
         g, t
@@ -311,7 +316,7 @@ module Make (C : ID) (N : Num) = struct
             | Some v -> I.shift_by (vars.current period) v
           in
           let g =
-            [ L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) ]
+            [| L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) |]
           in
           (* let _ = Printf.printf "%s: %s\n" (C.to_string period) (guard_to_string g) in  *)
           g
@@ -335,7 +340,7 @@ module Make (C : ID) (N : Num) = struct
             | Some v -> N.(v + period)
           in
           let next = I.shift_by (vars.current error) next in
-          [ L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) ]
+          [| L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) |]
         in
         let t vars _ (l, _) =
           let _ =
@@ -356,13 +361,13 @@ module Make (C : ID) (N : Num) = struct
         let last = ref None in
         let g _ now =
           match !last with
-          | None -> [ L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now ]
+          | None -> [| L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now |]
           | Some v ->
             let next_after = N.(at_least + v) in
-            [ ( L.of_list [ c ]
-              , if strict then I.pinf_strict next_after else I.pinf next_after )
-            ; (L.empty, I.(now <-> next_after))
-            ]
+            [| ( L.of_list [ c ]
+               , if strict then I.pinf_strict next_after else I.pinf next_after )
+             ; (L.empty, I.(now <-> next_after))
+            |]
         in
         let t _ _ (l, n') =
           let _ = if L.mem c l then last := Some n' in
@@ -370,8 +375,8 @@ module Make (C : ID) (N : Num) = struct
         in
         g, t
       | Periodic { out; base; period = Const period } ->
-        let labels_eqp = label_list [ [ base; out ]; [] ] in
-        let labels_lp = label_list [ [ base ]; [] ] in
+        let labels_eqp = label_array [ [ base; out ]; [] ] in
+        let labels_lp = label_array [ [ base ]; [] ] in
         let c = ref 0 in
         let g now =
           let labels = if !c = period - 1 then labels_eqp else labels_lp in
@@ -387,9 +392,11 @@ module Make (C : ID) (N : Num) = struct
         g, t
       | Sample { out; arg; base } ->
         let labels_latched =
-          label_list [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
+          label_array [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
         in
-        let labels_unlatched = label_list [ []; [ arg ]; [ out; arg; base ]; [ base ] ] in
+        let labels_unlatched =
+          label_array [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
+        in
         let latched = ref false in
         let g now =
           if !latched then lo_guard labels_latched now else lo_guard labels_unlatched now
@@ -427,7 +434,7 @@ module Make (C : ID) (N : Num) = struct
             | Some _ -> labels_empty
           in
           let labels = List.sort_uniq (List.compare C.compare) labels in
-          let labels = label_list labels in
+          let labels = label_array labels in
           lo_guard labels now
         in
         let t _ _ (l, _) =
@@ -458,17 +465,17 @@ module Make (C : ID) (N : Num) = struct
           :: [ out; arg ]
           :: List.flat_cartesian [ [ arg ]; [] ] (List.powerset_nz except)
         in
-        stateless (label_list labels)
+        stateless (label_array labels)
       | Union { out; args } ->
         let labels = [] :: List.map (fun l -> out :: l) (List.powerset_nz args) in
-        stateless (label_list labels)
+        stateless (label_array labels)
       | Alternate { first = a; second = b } ->
         let phase = ref false in
         let g n =
           let labels =
             if not !phase
-            then [ L.empty; L.of_list [ a ] ]
-            else [ L.empty; L.of_list [ b ] ]
+            then [| L.empty; L.of_list [ a ] |]
+            else [| L.empty; L.of_list [ b ] |]
           in
           lo_guard labels n
         in
@@ -479,8 +486,8 @@ module Make (C : ID) (N : Num) = struct
         g, t
       | Fastest { out; left = a; right = b } | Slowest { out; left = a; right = b } ->
         let count = ref 0 in
+        let general_labels = [ []; [ a; b; out ] ] in
         let g n =
-          let general_labels = [ []; [ a; b; out ] ] in
           let fastest_labels =
             general_labels
             @
@@ -505,7 +512,7 @@ module Make (C : ID) (N : Num) = struct
             | Slowest _ -> slowest_labels
             | _ -> failwith "unreachable"
           in
-          let labels = label_list labels in
+          let labels = label_array labels in
           lo_guard labels n
         in
         let t _ _ (l, _) =
@@ -524,7 +531,7 @@ module Make (C : ID) (N : Num) = struct
             else
               [] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args)
           in
-          let labels = label_list labels in
+          let labels = label_array labels in
           lo_guard labels n
         in
         let g_forbid n =
@@ -539,7 +546,7 @@ module Make (C : ID) (N : Num) = struct
                 [ []; [ from ]; [ from; until ]; [ until ] ]
                 (List.powerset args)
           in
-          let labels = label_list labels in
+          let labels = label_array labels in
           lo_guard labels n
         in
         let g =
@@ -569,7 +576,7 @@ module Make (C : ID) (N : Num) = struct
             then [ []; [ arg ]; [ base ] ]
             else [ []; [ out; arg; base ]; [ out; arg ]; [ base ] ]
           in
-          let labels = label_list labels in
+          let labels = label_array labels in
           lo_guard labels n
         in
         let t _ _ (l, _) =
@@ -580,13 +587,13 @@ module Make (C : ID) (N : Num) = struct
         g, t
       | LastSampled { out; arg; base } ->
         let last = ref false in
-        let g n =
+        let g vars n =
           let labels =
             if !last
             then [ []; [ base ] ]
             else [ []; [ out; arg; base ]; [ out; arg ]; [ arg ] ]
           in
-          lo_guard (label_list labels) n
+          lo_guard (label_array labels) vars n
         in
         let t _ _ (l, _) =
           let _ = if L.mem out l then last := true in
@@ -595,11 +602,11 @@ module Make (C : ID) (N : Num) = struct
         in
         g, t
       | Subclocking { sub = a; super = b } ->
-        stateless (label_list [ []; [ a; b ]; [ b ] ])
+        stateless (label_array [ []; [ a; b ]; [ b ] ])
       | Intersection { out; args } ->
         let labels = List.powerset args in
         let labels = List.map (fun l -> if l = args then out :: args else l) labels in
-        stateless (label_list labels)
+        stateless (label_array labels)
       | Pool (n, lock_unlocks) ->
         let locks, unlocks = List.split lock_unlocks in
         let lock_clocks, unlock_clocks = L.of_list locks, L.of_list unlocks in
@@ -631,7 +638,7 @@ module Make (C : ID) (N : Num) = struct
               if List.length l > available then None else Some (to_free @ l))
             |> List.to_seq)
           |> Seq.map (fun l -> L.of_list l, I.pinf_strict now)
-          |> List.of_seq
+          |> Array.of_seq
         in
         let t _ _ (l, _) =
           (* let _ = Printf.printf "---Transition---\n" in *)
@@ -659,6 +666,7 @@ module Make (C : ID) (N : Num) = struct
         g, t
       | _ -> failwith "not implemented"
     in
+    let g vars now = Iter.of_array (g vars now) in
     let clocks = L.of_list (clocks constr) in
     correctness_decorator (g, t, clocks)
   ;;
@@ -775,44 +783,39 @@ module Make (C : ID) (N : Num) = struct
     module Solution = struct
       type t = guard -> solution option
 
-      let rec first num_decision = function
-        | [] -> None
-        | (l, c) :: tail ->
-          if L.is_empty l
-          then (
-            match first num_decision tail with
-            | None ->
-              let n = num_decision c in
-              Some (l, n)
-            | Some x -> Some x)
-          else (
-            let n = num_decision c in
-            Some (l, n))
+      let first num_decision variants =
+        let non_empty_first =
+          variants
+          |> Iter.find_map (fun (l, c) ->
+            if L.is_empty l then None else Some (l, num_decision c))
+        in
+        let any_first () =
+          let* l, c = Iter.head variants in
+          Some (l, num_decision c)
+        in
+        Option.bind_or non_empty_first any_first
       ;;
 
       let random_label num_decision solutions =
-        if List.is_empty solutions
+        let solutions = Iter.to_array solutions in
+        if Array.length solutions = 0
         then None
         else (
-          let len = List.length solutions in
+          let len = Array.length solutions in
           let choice = Random.int len in
-          let l, c = List.nth solutions choice in
+          let l, c = Array.get solutions choice in
           let n = num_decision c in
           Some (l, n))
       ;;
 
       let avoid_empty s variants =
-        let empty, others =
-          List.partition_map
-            (fun (l, c) ->
-               if L.is_empty l then Either.Left (l, c) else Either.Right (l, c))
-            variants
-        in
-        Option.bind_or (s others) (fun () -> s empty)
+        let empty = Iter.filter (fun (l, _) -> L.is_empty l) variants
+        and non_empty = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
+        Option.bind_or (s non_empty) (fun () -> s empty)
       ;;
 
       let refuse_empty s variants =
-        let variants = List.filter (fun (l, _) -> not (L.is_empty l)) variants in
+        let variants = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
         s variants
       ;;
 
@@ -833,7 +836,7 @@ module Make (C : ID) (N : Num) = struct
         (fun guard -> Printf.printf "* %s\n" (guard_to_string guard))
         (List.filter (fun (l, _) -> not (L.is_empty l)) possible)
     in *)
-    if List.is_empty possible
+    if Iter.is_empty possible
     then None
     else
       let* sol = strat possible in
@@ -1257,7 +1260,7 @@ let%test_module _ =
       let g, _, _ = A.of_constr (Coincidence [ "a"; "b" ]) in
       let v = A.empty_vars in
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0); *)
-      not (List.is_empty (g v 0.0))
+      not (Iter.is_empty (g v 0.0))
     ;;
 
     let%test _ =

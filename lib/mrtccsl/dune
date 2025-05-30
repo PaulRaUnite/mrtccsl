@@ -13,11 +13,21 @@
   ocolor
   cudd
   std
+  iter
   owl)
  (preprocess
-  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare ppx_deriving.map ppx_deriving.show)))
+  (pps
+   ppx_inline_test
+   ppx_assert
+   ppx_sexp_conv
+   ppx_compare
+   ppx_deriving.map
+   ppx_deriving.show)))
 
 (env
  (dev
   (flags
-   (:standard -warn-error -32))))
+   (:standard -warn-error -32)))
+ (release
+  (ocamlopt_flags
+   (:standard -O3))))

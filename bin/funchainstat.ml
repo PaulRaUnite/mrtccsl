@@ -75,9 +75,9 @@ let random_strat =
 module LSet = Set.Make (A.L)
 
 let prioritize_single candidates =
-  let labels = LSet.of_list (List.map (fun (x, _) -> x) candidates) in
+  let labels = candidates |> Iter.map (fun (x, _) -> x) |> Iter.to_set (module LSet) in
   let candidates =
-    List.filter
+    Iter.filter
       (fun (l, _) ->
          A.L.cardinal l <= 1
          ||
