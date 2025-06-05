@@ -15,9 +15,10 @@ let priority_strategy priorities general_strategy =
     let candidates =
       List.stable_sort
         (fun (x, _) (y, _) ->
-           Int.neg @@ Int.compare
-              (A.L.cardinal (A.L.inter x priorities))
-              (A.L.cardinal (A.L.inter y priorities)))
+           Int.neg
+           @@ Int.compare
+                (A.L.cardinal (A.L.inter x priorities))
+                (A.L.cardinal (A.L.inter y priorities)))
         candidates
     in
     let priotized, rest =
@@ -73,9 +74,8 @@ let random_strat =
           ~rand:random)
 ;;
 
-module LSet = Set.Make (A.L)
-
-let prioritize_single candidates =
+(*
+   let prioritize_single candidates =
   let labels = LSet.of_list (List.map (fun (x, _) -> x) candidates) in
   let candidates =
     List.filter
@@ -96,7 +96,7 @@ let prioritize_single candidates =
       candidates
   in
   candidates
-;;
+;; *)
 
 let parallel_reaction_times
       ~sem
@@ -151,7 +151,7 @@ let rec create_dir fn =
 ;;
 
 let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_spec i =
-  let _ = Random.self_init () in
+  let _ = Random.init 2174367364 in
   let strategy candidates = (A.Strategy.Solution.refuse_empty random_strat) candidates in
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
@@ -223,6 +223,7 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
   in
   close_out data_file
 ;;
+
 
 let () =
   (*TODO: add some argument checking*)

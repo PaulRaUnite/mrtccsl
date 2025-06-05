@@ -71,7 +71,7 @@ let random_strat =
           ~floor:(round_down step)
           ~rand:random)
 ;;
-
+(* 
 module LSet = Set.Make (A.L)
 
 let prioritize_single candidates =
@@ -95,7 +95,7 @@ let prioritize_single candidates =
       candidates
   in
   candidates
-;;
+;; *)
 
 let fast_strat =
   A.Strategy.Solution.random_label
@@ -168,7 +168,7 @@ let process name spec =
   let system_spec =
     Rtccsl.map_specification Fun.id Fun.id Fun.id Number.Rational.of_int spec
   in
-  let strategy candidates = random_strat (prioritize_single candidates) in
+  let strategy candidates = random_strat ( candidates) in
   let steps = 1_000 in
   let horizon = of_int 20_000 in
   let simulations = 1_000 in

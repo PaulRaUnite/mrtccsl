@@ -45,8 +45,8 @@ module ExpOrder = struct
     (**[more_eq x y] is [x >= y]*)
     let more_eq x y = M.compare x y >= 0
 
-    let min x y = if less_eq x y then x else y
-    let max x y = if more_eq x y then x else y
+    let[@inline always] min x y = if less_eq x y then x else y
+    let[@inline always] max x y = if more_eq x y then x else y
 
     module Operators = struct
       let ( = ) = equal

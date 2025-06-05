@@ -125,7 +125,7 @@ module Make (N : Num) : I with type num = N.t = struct
     | Empty
   [@@deriving sexp]
 
-  let normalize i =
+  let[@inline always] normalize i =
     let pass =
       match i with
       | Bound (Include x, Include y) -> N.compare x y <= 0
@@ -158,7 +158,7 @@ module Make (N : Num) : I with type num = N.t = struct
 
   let empty = Empty
 
-  let inter x y =
+  let[@inline always] inter x y =
     match x, y with
     | Bound (a, b), Bound (c, d) ->
       let left = LeftBound.max a c
@@ -185,7 +185,7 @@ module Make (N : Num) : I with type num = N.t = struct
     else failwith "incomparable intervals"
   ;;
 
-  let is_empty = function
+  let[@inline always] is_empty = function
     | Empty -> true
     | _ -> false
   ;;

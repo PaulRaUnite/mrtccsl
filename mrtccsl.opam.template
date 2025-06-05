@@ -3,4 +3,5 @@ pin-depends: [
   ["bddapron.2.5.0" "git+https://github.com/paulraunite/bddapron"]
   ["vpl-core.0.6" "git+https://github.com/PaulRaUnite/VPL"]
   ["mlcuddidl.3.0.9" "git+https://github.com/PaulRaUnite/mlcuddidl"]
+  ["bitvectorset.0.1.0" "git+https://github.com/PaulRaUnite/bitvectorset"]
 ]

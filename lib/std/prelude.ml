@@ -251,7 +251,7 @@ module List = struct
   let%test_unit _ =
     [%test_eq: int list list]
       (general_cartesian [ [ 1; 2 ]; [ 3; 4 ] ])
-      [ [ 1; 3 ]; [ 2; 3 ]; [ 1; 4 ]; [ 2; 4 ] ]
+      [ [ 1; 3 ]; [ 1; 4 ]; [ 2; 3 ]; [ 2; 4 ] ]
   ;;
 
   let unfold_for f init n : 'a list = Seq.unfold f init |> Seq.take n |> List.of_seq

@@ -14,7 +14,8 @@
   cudd
   std
   iter
-  owl)
+  owl
+  bitvectorset)
  (preprocess
   (pps
    ppx_inline_test

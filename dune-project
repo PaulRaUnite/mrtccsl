@@ -17,7 +17,7 @@
 
 (documentation https://github.com/PaulRaUnite/mrtccsl)
 
-(version 0.2-preview)
+(version 0.3)
 
 (package
  (name mrtccsl)
@@ -26,7 +26,7 @@
   "MRTCCSL stands for Modular Real-Time Clock Constraint Specification Language. It is an extension to CCSL that is used to describe events and their relations in a system. In this project we provide simulator and partial analysis of such specifications implementing real-time and module extentions.")
  (depends
   (ocaml
-   (>= 4.14.3))
+   (>= 5.3.0))
   (dune :with-build)
   menhir
   camllib
@@ -39,7 +39,8 @@
   (uutf
    (>= 1.0.3))
   ppx_assert
-  ppx_inline_test
+  (ppx_inline_test
+   (>= 0.17.0))
   ppx_compare
   mlgmpidl
   vpl-core
@@ -47,8 +48,6 @@
   (ocolor
    (>= 1.3.1))
   containers
-  (odoc :with-doc)
-  (odig :with-doc)
   (alcotest :with-test)
   (domainslib
    (>= 0.5))
@@ -57,7 +56,8 @@
   (ppx_deriving
    (>= 6.1.0))
   (owl
-   (>= 1.2)))
+   (>= 1.2))
+  bitvectorset)
  (tags
   (simulation
    "model checking"

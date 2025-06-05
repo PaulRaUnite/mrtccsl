@@ -27,6 +27,7 @@ type ('v, 't) dist = 'v * 't distribution [@@deriving map]
 module type ID = sig
   open Interface
   include OrderedType
+  include Hashtbl.HashedType with type t := t
   include Stringable with type t := t
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -46,6 +47,11 @@ module type Num = sig
   val of_float : float -> t
 end
 
+module type Label = sig
+  type t
+  type elt
+end
+
 module type S = sig
   type clock
   type param
@@ -54,7 +60,7 @@ module type S = sig
 
   module N : Num
   module I : Interval.I with type num := N.t
-  module L : Set.S with type elt := clock and type t := label
+  module L : Label with type elt := clock and type t := label
 
   type num_cond = I.t
   type guard = (label * num_cond) Iter.t
@@ -119,9 +125,8 @@ module Make (C : ID) (N : Num) = struct
 
   module N = N
 
-  (*TODO: optimize the label solving*)
   module L = struct
-    include Set.Make (C)
+    include BitvectorSet.Make (C)
 
     let to_string label =
       match to_list label with
@@ -196,32 +201,28 @@ module Make (C : ID) (N : Num) = struct
     let g2, t2, c2 = a2 in
     let c = L.union c1 c2 in
     let conf_surface = L.inter c1 c2 in
-    let sat_solver l l' =
-      if
-        L.is_empty conf_surface
-        || L.equal (L.inter conf_surface l) (L.inter conf_surface l')
-      then Some (L.union l l')
-      else None
+    let[@inline always] sat_solver l l' =
+      if L.equal_modulo ~modulo:conf_surface l l' then Some (L.union l l') else None
     in
-    let linear_solver c c' =
+    let[@inline always] linear_solver c c' =
       let res = I.inter (I.pinf N.zero) (I.inter c c') in
       if I.is_empty res then None else Some res
     in
-    let guard_solver ((l, c), (l', c')) =
+    let[@inline always] guard_solver ((l, c), (l', c')) =
       let* l = sat_solver l l'
       and* c = linear_solver c c' in
       Some (l, c)
     in
     let g vars now =
       (* let _ = Printf.printf "sync--- at %s\n" (N.to_string now) in *)
-      let g1 = g1 vars now in
+      let g1 = g1 vars now
       (* let _ = Printf.printf "sync sol 1: %s\n" (guard_to_string g1) in *)
-      let g2 = g2 vars now in
+      and g2 = g2 vars now in
       (* let _ = Printf.printf "sync sol 2: %s\n" (guard_to_string g2) in *)
       let pot_solutions = Iter.product g1 g2 in
       let solutions = Iter.filter_map guard_solver pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
-      Iter.persistent solutions
+      Iter.of_array (Iter.to_array solutions)
     in
     let t vars n l = t1 vars n l && t2 vars n l in
     g, t, c
@@ -287,12 +288,12 @@ module Make (C : ID) (N : Num) = struct
         let queue = Heap.create () in
         let g _ now =
           match Heap.peek queue with
-          | None -> [| L.of_list [ a ], I.pinf_strict now; L.empty, I.pinf_strict now |]
+          | None -> [| L.singleton a, I.pinf_strict now; L.empty, I.pinf_strict now |]
           | Some next ->
-            [| L.of_list [ a ], Option.get (I.complement_left next)
+            [| L.singleton a, Option.get (I.complement_left next)
              ; L.empty, Option.get (I.complement_left next)
-             ; L.of_list [ a; b ], next
-             ; L.of_list [ b ], next
+             ; L.doubleton a b, next
+             ; L.singleton b, next
             |]
         in
         let t vars _ (l, n') =
@@ -316,7 +317,7 @@ module Make (C : ID) (N : Num) = struct
             | Some v -> I.shift_by (vars.current period) v
           in
           let g =
-            [| L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) |]
+            [| L.singleton out, next; L.empty, Option.get (I.complement_left next) |]
           in
           (* let _ = Printf.printf "%s: %s\n" (C.to_string period) (guard_to_string g) in  *)
           g
@@ -340,7 +341,7 @@ module Make (C : ID) (N : Num) = struct
             | Some v -> N.(v + period)
           in
           let next = I.shift_by (vars.current error) next in
-          [| L.of_list [ out ], next; L.empty, Option.get (I.complement_left next) |]
+          [| L.singleton out, next; L.empty, Option.get (I.complement_left next) |]
         in
         let t vars _ (l, _) =
           let _ =
@@ -361,10 +362,10 @@ module Make (C : ID) (N : Num) = struct
         let last = ref None in
         let g _ now =
           match !last with
-          | None -> [| L.of_list [ c ], I.pinf_strict now; L.empty, I.pinf_strict now |]
+          | None -> [| L.singleton c, I.pinf_strict now; L.empty, I.pinf_strict now |]
           | Some v ->
             let next_after = N.(at_least + v) in
-            [| ( L.of_list [ c ]
+            [| ( L.singleton c
                , if strict then I.pinf_strict next_after else I.pinf next_after )
              ; (L.empty, I.(now <-> next_after))
             |]
@@ -474,8 +475,8 @@ module Make (C : ID) (N : Num) = struct
         let g n =
           let labels =
             if not !phase
-            then [| L.empty; L.of_list [ a ] |]
-            else [| L.empty; L.of_list [ b ] |]
+            then [| L.empty; L.singleton a |]
+            else [| L.empty; L.singleton b |]
           in
           lo_guard labels n
         in
@@ -864,6 +865,7 @@ module Make (C : ID) (N : Num) = struct
     }
   ;;
 
+  (*TODO: replace with iterator? Add dynarray.of_iter with size hint *)
   let gen_trace var_strat (sol_strat : Strategy.Solution.t) (vrel, a) : trace =
     Seq.unfold
       (fun (vars, now) ->
