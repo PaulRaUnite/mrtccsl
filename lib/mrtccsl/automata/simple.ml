@@ -50,6 +50,13 @@ end
 module type Label = sig
   type t
   type elt
+
+  val of_list : elt list -> t
+  val singleton : elt -> t
+  val mem : elt -> t -> bool
+  val fold : (elt -> 'a -> 'a) -> t -> 'a -> 'a
+  val cardinal : t -> int
+  val inter : t -> t -> t
 end
 
 module type S = sig
@@ -61,6 +68,7 @@ module type S = sig
   module N : Num
   module I : Interval.I with type num := N.t
   module L : Label with type elt := clock and type t := label
+  module CMap : Map.S with type key := clock
 
   type num_cond = I.t
   type guard = (label * num_cond) Iter.t
@@ -116,9 +124,30 @@ module type S = sig
   val gen_trace : Strategy.Var.t -> Strategy.Solution.t -> env -> trace
   val until_horizon : N.t -> trace -> trace * bool ref
   val bisimulate : Strategy.Var.t -> Strategy.Solution.t -> env -> env -> trace
+  val accept_trace : env -> N.t -> trace -> N.t option
+
+  val trace_to_svgbob
+    :  ?numbers:bool
+    -> ?tasks:(var * var * var * var * var) list
+    -> ?precision:int
+    -> clock list
+    -> trace
+    -> string
+
+  val trace_to_vertical_svgbob
+    :  ?numbers:bool
+    -> ?tasks:(var * var * var * var * var) list
+    -> clock list
+    -> out_channel
+    -> trace
+    -> unit
+
+  val trace_to_csl : trace -> string
 end
 
-module Make (C : ID) (N : Num) = struct
+module Make (C : ID) (N : Num) :
+  S with type clock = C.t and type var = C.t and type param = C.t and module N = N =
+struct
   type clock = C.t
   type param = C.t
   type var = C.t
@@ -904,7 +933,7 @@ module Make (C : ID) (N : Num) = struct
       transition vars n sol
     in
     let _, result =
-      List.fold_left
+      Seq.fold_left
         (fun (vars, n) (l, n') ->
            match n with
            | Some n -> if step a vars n (l, n') then vars, Some n' else vars, None
