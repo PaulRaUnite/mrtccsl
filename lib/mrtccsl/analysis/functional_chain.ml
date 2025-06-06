@@ -46,7 +46,7 @@ let points_of_interest chain =
       chain.rest
   in
   chain_start_finish_clocks chain :: sampling_links *)
-  [chain_start_finish_clocks chain]
+  [ chain_start_finish_clocks chain ]
 ;;
 
 let categorization_points chain =
@@ -239,18 +239,18 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     let env = A.of_spec system_spec in
     let trace, deadlock =
       A.gen_trace (A.Strategy.Var.use_dist dist) s env
-      |> Seq.take n
-      |> A.until_horizon time
+      |> A.Trace.take ~steps:n
+      |> A.Trace.until ~horizon:time
     in
-    let trace = Array.of_seq trace in
-    let full_chains, dangling_chains = trace_to_chain sem chain (Array.to_seq trace) in
+    let trace = (A.Trace.persist trace) in
+    let full_chains, dangling_chains = trace_to_chain sem chain (A.Trace.to_seq trace) in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    Array.to_seq trace, deadlock, full_chains, dangling_chains
+    trace, deadlock, full_chains, dangling_chains
   ;;
 
   let reaction_times pairs_to_compare chains =

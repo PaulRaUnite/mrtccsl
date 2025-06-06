@@ -22,7 +22,7 @@ let logical_wall_test spec names_traces_results =
     let trace =
       List.combine trace (List.init (List.length trace) (fun x -> N.from_int (x + 1)))
     in
-    name, (List.to_seq trace), result
+    name, trace |> List.to_seq |> A.Trace.of_seq, result
   in
   wall_test spec (List.map add_time names_traces_results)
 ;;
@@ -39,7 +39,10 @@ let rglwt spec t f =
 
 (** Real-time wall test maps trace strings and timescale to Alcotest cases. *)
 let rtwt spec t f =
-  let map v = List.map (fun (s, time) -> s, List.to_seq (List.combine (A.trace_of_regexp s) time), v) in
+  let map v =
+    List.map (fun (s, time) ->
+      s, List.combine (A.trace_of_regexp s) time |> List.to_seq |> A.Trace.of_seq, v)
+  in
   let cases = map true t @ map false f in
   wall_test spec cases
 ;;

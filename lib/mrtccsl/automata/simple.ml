@@ -63,17 +63,27 @@ module type S = sig
   type clock
   type param
   type var
-  type label
 
   module N : Num
   module I : Interval.I with type num := N.t
-  module L : Label with type elt := clock and type t := label
+  module L : Label with type elt := clock
   module CMap : Map.S with type key := clock
 
   type num_cond = I.t
-  type guard = (label * num_cond) Iter.t
-  type solution = label * N.t
-  type trace = solution Seq.t
+  type guard = (L.t * num_cond) Iter.t
+  type solution = L.t * N.t
+
+  module Trace : sig
+    type t
+
+    val persist : t -> t
+    val to_iter : t -> solution Iter.t
+    val to_seq : t -> solution Seq.t
+    val of_seq : solution Seq.t -> t
+    val is_empty : t -> bool
+    val until : horizon:N.t -> t -> t * bool ref
+    val take : steps:int -> t -> t
+  end
 
   module Strategy : sig
     module Var : sig
@@ -112,26 +122,32 @@ module type S = sig
     ; consume : var -> unit
     }
 
-  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * label
-  type env = (var -> I.t) * t
+  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
+  type varrel_t = (var -> I.t) * t
 
   val empty : t
-  val return_env : t -> env
+  val return_env : t -> varrel_t
   val empty_vars : vars
   val sync : t -> t -> t
   val of_constr : (clock, param, var, N.t) Rtccsl.constr -> t
-  val of_spec : (clock, param, var, N.t) Rtccsl.specification -> env
-  val gen_trace : Strategy.Var.t -> Strategy.Solution.t -> env -> trace
-  val until_horizon : N.t -> trace -> trace * bool ref
-  val bisimulate : Strategy.Var.t -> Strategy.Solution.t -> env -> env -> trace
-  val accept_trace : env -> N.t -> trace -> N.t option
+  val of_spec : (clock, param, var, N.t) Rtccsl.specification -> varrel_t
+  val gen_trace : Strategy.Var.t -> Strategy.Solution.t -> varrel_t -> Trace.t
+
+  val bisimulate
+    :  Strategy.Var.t
+    -> Strategy.Solution.t
+    -> varrel_t
+    -> varrel_t
+    -> Trace.t
+
+  val accept_trace : varrel_t -> N.t -> Trace.t -> N.t option
 
   val trace_to_svgbob
     :  ?numbers:bool
     -> ?tasks:(var * var * var * var * var) list
     -> ?precision:int
     -> clock list
-    -> trace
+    -> Trace.t
     -> string
 
   val trace_to_vertical_svgbob
@@ -139,12 +155,18 @@ module type S = sig
     -> ?tasks:(var * var * var * var * var) list
     -> clock list
     -> out_channel
-    -> trace
+    -> Trace.t
     -> unit
 
-  val trace_to_csl : trace -> string
+  val trace_to_csl : Trace.t -> string
 end
 
+(*TODO: replace clocks with integers *)
+(*TODO: specialize the bitvectorset *)
+(*TODO: and generalize bitvector set to use any bijection *)
+(*TODO: replace seq with iter in simulation *)
+(*TODO: make reaction chain extraction streamable and add index to avade N^2 complexity *)
+(*TODO: add size hints for trace collection to avoid reallocation *)
 module Make (C : ID) (N : Num) :
   S with type clock = C.t and type var = C.t and type param = C.t and module N = N =
 struct
@@ -155,7 +177,7 @@ struct
   module N = N
 
   module L = struct
-    include BitvectorSet.Make (C)
+    include BitvectorSet.Make (BitvectorSet.BijectionToInt.Hashed (C))
 
     let to_string label =
       match to_list label with
@@ -171,7 +193,31 @@ struct
   type num_cond = I.t
   type guard = (label * num_cond) Iter.t
   type solution = label * N.t
-  type trace = solution Seq.t
+
+  module Trace = struct
+    type t = solution Seq.t
+
+    let persist seq = Seq.memoize seq
+    let of_seq = Fun.id
+    let to_iter seq = Iter.of_seq seq
+    let to_seq seq = seq
+    let is_empty seq = Seq.is_empty seq
+
+    let until ~horizon trace =
+      let was_cut = ref false in
+      ( Seq.take_while
+          (fun (_, n) ->
+             if N.less n horizon
+             then true
+             else (
+               was_cut := true;
+               false))
+          trace
+      , was_cut )
+    ;;
+
+    let take ~steps = Seq.take steps
+  end
 
   type vars =
     { current : var -> I.t
@@ -180,7 +226,7 @@ struct
     }
 
   type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * label
-  type env = (var -> I.t) * t
+  type varrel_t = (var -> I.t) * t
 
   open Sexplib0.Sexp_conv
 
@@ -719,7 +765,7 @@ struct
     | _ -> failwith "not implemented"
   ;;
 
-  let of_spec spec =
+  let of_spec spec : varrel_t =
     let constraints =
       List.fold_left sync empty (List.map of_constr Rtccsl.(spec.constraints))
     and relations =
@@ -895,25 +941,12 @@ struct
   ;;
 
   (*TODO: replace with iterator? Add dynarray.of_iter with size hint *)
-  let gen_trace var_strat (sol_strat : Strategy.Solution.t) (vrel, a) : trace =
+  let gen_trace var_strat (sol_strat : Strategy.Solution.t) (vrel, a) : Trace.t =
     Seq.unfold
       (fun (vars, now) ->
          let* l, now = next_step sol_strat a vars now in
          Some ((l, now), (vars, now)))
       (vars_from_rels var_strat vrel, N.neg N.one)
-  ;;
-
-  let until_horizon time trace =
-    let was_cut = ref false in
-    ( Seq.take_while
-        (fun (_, n) ->
-           if N.less n time
-           then true
-           else (
-             was_cut := true;
-             false))
-        trace
-    , was_cut )
   ;;
 
   let bisimulate var_strat s (vrel, a1) (_, a2) =
@@ -1273,18 +1306,18 @@ let%test_module _ =
 
     let%test _ =
       let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (Seq.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
+      not (A.Trace.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
     ;;
 
     let%test _ =
       let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (Seq.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
+      not (A.Trace.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
     ;;
 
     let%test _ =
       let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
       let trace = A.gen_trace A.Strategy.Var.none random_strat a in
-      not (Seq.is_empty trace)
+      not (A.Trace.is_empty trace)
     ;;
 
     let%test _ =
@@ -1304,12 +1337,12 @@ let%test_module _ =
       let empty2 = A.return_env @@ A.empty in
       let steps = 10 in
       let trace =
-        A.bisimulate A.Strategy.Var.none slow_strat empty1 empty2 |> Seq.take steps
+        A.bisimulate A.Strategy.Var.none slow_strat empty1 empty2 |> A.Trace.take ~steps
       in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Seq.length trace = steps
+      Seq.length (A.Trace.to_seq trace) = steps
     ;;
 
     let%test _ =
@@ -1325,23 +1358,24 @@ let%test_module _ =
           random_strat
           (A.return_env @@ sampling1)
           (A.return_env @@ sampling2)
-        |> Seq.take steps
+        |> A.Trace.take ~steps
       in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Seq.length trace = steps
+      Seq.length (A.Trace.to_seq trace) = steps
     ;;
 
     let%test _ =
       let a = A.of_constr (Precedence { cause = "a"; conseq = "b" }) in
       let trace =
-        A.gen_trace A.Strategy.Var.none slow_strat (A.return_env @@ a) |> Seq.take 10
+        A.gen_trace A.Strategy.Var.none slow_strat (A.return_env @@ a)
+        |> A.Trace.take ~steps:10
       in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
-      Seq.length trace = 10
+      Seq.length (A.Trace.to_seq trace) = 10
     ;;
   end)
 ;;
