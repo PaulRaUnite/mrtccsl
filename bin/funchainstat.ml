@@ -3,6 +3,7 @@ open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
+module S = FnCh.S
 open Number.Rational
 
 let step = of_int 1 / of_int 1000
@@ -28,7 +29,7 @@ let priority_strategy priorities general_strategy =
 ;;
 
 (*TODO: need to review if the priority strategy is really correct*)
-let fifo_strategy priorities general_strategy =
+(* let fifo_strategy priorities general_strategy =
   let queue = ref [] in
   let priorities = A.CMap.of_list priorities in
   let f candidates =
@@ -60,19 +61,20 @@ let fifo_strategy priorities general_strategy =
     | None -> None
   in
   f
-;;
+;; *)
 
 let random_strat =
-  A.Strategy.Solution.avoid_empty
-  @@ A.Strategy.Solution.random_label
-       (A.Strategy.Num.random_leap
+  S.Solution.avoid_empty
+  @@ S.Solution.random_label
+       (S.Num.random_leap
           ~upper_bound:(of_int 1000)
           ~ceil:(round_up step)
           ~floor:(round_down step)
           ~rand:random)
 ;;
-(* 
-module LSet = Set.Make (A.L)
+
+(*
+   module LSet = Set.Make (A.L)
 
 let prioritize_single candidates =
   let labels = candidates |> Iter.map (fun (x, _) -> x) |> Iter.to_set (module LSet) in
@@ -98,8 +100,7 @@ let prioritize_single candidates =
 ;; *)
 
 let fast_strat =
-  A.Strategy.Solution.random_label
-  @@ A.Strategy.Num.fast ~upper_bound:(of_int 10) ~floor:(round_down step)
+  S.Solution.random_label @@ S.Num.fast ~upper_bound:(of_int 10) ~floor:(round_down step)
 ;;
 
 open FnCh
@@ -168,7 +169,7 @@ let process name spec =
   let system_spec =
     Rtccsl.map_specification Fun.id Fun.id Fun.id Number.Rational.of_int spec
   in
-  let strategy candidates = random_strat ( candidates) in
+  let strategy candidates = random_strat candidates in
   let steps = 1_000 in
   let horizon = of_int 20_000 in
   let simulations = 1_000 in

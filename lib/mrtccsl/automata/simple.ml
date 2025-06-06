@@ -27,7 +27,6 @@ type ('v, 't) dist = 'v * 't distribution [@@deriving map]
 module type ID = sig
   open Interface
   include OrderedType
-  include Hashtbl.HashedType with type t := t
   include Stringable with type t := t
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -57,20 +56,64 @@ module type Label = sig
   val fold : (elt -> 'a -> 'a) -> t -> 'a -> 'a
   val cardinal : t -> int
   val inter : t -> t -> t
+  val to_seq : t -> elt Seq.t
+  val of_seq : elt Seq.t -> t
+  val is_empty : t -> bool
+end
+
+module type Strategy = sig
+  type var
+  type num
+
+  module I : Interval.I with type num := num
+  module L : Label
+
+  type guard = (L.t * I.t) Iter.t
+  type solution = L.t * num
+
+  module Var : sig
+    type t = var -> I.t -> I.t
+
+    val none : t
+    val use_dist : (var, num) dist list -> t
+  end
+
+  module Num : sig
+    type t = I.t -> num
+
+    val random_leap
+      :  upper_bound:num
+      -> ceil:(num -> num -> num)
+      -> floor:(num -> num -> num)
+      -> rand:(num -> num -> num)
+      -> t
+
+    val slow : upper_bound:num -> ceil:(num -> num -> num) -> t
+    val fast : upper_bound:num -> floor:(num -> num -> num) -> t
+  end
+
+  module Solution : sig
+    type t = guard -> solution option
+
+    val first : Num.t -> t
+    val random_label : Num.t -> t
+    val avoid_empty : t -> t
+    val refuse_empty : t -> t
+  end
 end
 
 module type S = sig
-  type clock
-  type param
-  type var
+  module C : ID
+
+  type clock = C.t
+  type param = C.t
+  type var = C.t
 
   module N : Num
-  module I : Interval.I with type num := N.t
-  module L : Label with type elt := clock
-  module CMap : Map.S with type key := clock
+  module I : Interval.I with type num = N.t
+  module L : Label with type elt = clock
 
-  type num_cond = I.t
-  type guard = (L.t * num_cond) Iter.t
+  type guard = (L.t * I.t) Iter.t
   type solution = L.t * N.t
 
   module Trace : sig
@@ -85,37 +128,8 @@ module type S = sig
     val take : steps:int -> t -> t
   end
 
-  module Strategy : sig
-    module Var : sig
-      type t = var -> I.t -> I.t
-
-      val none : t
-      val use_dist : (var, N.t) dist list -> t
-    end
-
-    module Num : sig
-      type t = num_cond -> N.t
-
-      val random_leap
-        :  upper_bound:N.t
-        -> ceil:(N.t -> N.t -> N.t)
-        -> floor:(N.t -> N.t -> N.t)
-        -> rand:(N.t -> N.t -> N.t)
-        -> t
-
-      val slow : upper_bound:N.t -> ceil:(N.t -> N.t -> N.t) -> t
-      val fast : upper_bound:N.t -> floor:(N.t -> N.t -> N.t) -> t
-    end
-
-    module Solution : sig
-      type t = guard -> solution option
-
-      val first : Num.t -> t
-      val random_label : Num.t -> t
-      val avoid_empty : t -> t
-      val refuse_empty : t -> t
-    end
-  end
+  type var_strategy = var -> I.t -> I.t
+  type sol_strategy = guard -> solution option
 
   type vars =
     { current : var -> I.t
@@ -123,24 +137,14 @@ module type S = sig
     }
 
   type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
-  type varrel_t = (var -> I.t) * t
+  type limits = var -> I.t
+  type sim
 
-  val empty : t
-  val return_env : t -> varrel_t
-  val empty_vars : vars
-  val sync : t -> t -> t
-  val of_constr : (clock, param, var, N.t) Rtccsl.constr -> t
-  val of_spec : (clock, param, var, N.t) Rtccsl.specification -> varrel_t
-  val gen_trace : Strategy.Var.t -> Strategy.Solution.t -> varrel_t -> Trace.t
-
-  val bisimulate
-    :  Strategy.Var.t
-    -> Strategy.Solution.t
-    -> varrel_t
-    -> varrel_t
-    -> Trace.t
-
-  val accept_trace : varrel_t -> N.t -> Trace.t -> N.t option
+  val empty_sim : sim
+  val of_spec : (clock, param, var, N.t) Rtccsl.specification -> sim
+  val gen_trace : var_strategy -> sol_strategy -> sim -> Trace.t
+  val bisimulate : var_strategy -> sol_strategy -> sim -> sim -> Trace.t
+  val accept_trace : sim -> N.t -> Trace.t -> N.t option
 
   val trace_to_svgbob
     :  ?numbers:bool
@@ -167,9 +171,13 @@ end
 (*TODO: replace seq with iter in simulation *)
 (*TODO: make reaction chain extraction streamable and add index to avade N^2 complexity *)
 (*TODO: add size hints for trace collection to avoid reallocation *)
-module Make (C : ID) (N : Num) :
-  S with type clock = C.t and type var = C.t and type param = C.t and module N = N =
-struct
+module MakeWithBijection
+    (C : ID)
+    (N : Num)
+    (B : BitvectorSet.BijectionToInt.S with type elt = C.t) :
+  S with module C = C and module N = N = struct
+  module C = C
+
   type clock = C.t
   type param = C.t
   type var = C.t
@@ -177,7 +185,7 @@ struct
   module N = N
 
   module L = struct
-    include BitvectorSet.Make (BitvectorSet.BijectionToInt.Hashed (C))
+    include BitvectorSet.Make (B)
 
     let to_string label =
       match to_list label with
@@ -193,19 +201,21 @@ struct
   type num_cond = I.t
   type guard = (label * num_cond) Iter.t
   type solution = label * N.t
+  type var_strategy = var -> I.t -> I.t
+  type sol_strategy = guard -> solution option
 
   module Trace = struct
-    type t = solution Seq.t
+    type t = solution Iter.t
 
-    let persist seq = Seq.memoize seq
-    let of_seq = Fun.id
-    let to_iter seq = Iter.of_seq seq
-    let to_seq seq = seq
-    let is_empty seq = Seq.is_empty seq
+    let persist t = t |> Iter.to_array |> Iter.of_array
+    let of_seq t = t |> Iter.of_seq
+    let to_iter = Fun.id
+    let to_seq seq = Iter.to_seq_persistent seq
+    let is_empty t = Iter.is_empty t
 
     let until ~horizon trace =
       let was_cut = ref false in
-      ( Seq.take_while
+      ( Iter.take_while
           (fun (_, n) ->
              if N.less n horizon
              then true
@@ -216,7 +226,7 @@ struct
       , was_cut )
     ;;
 
-    let take ~steps = Seq.take steps
+    let take ~steps = Iter.take steps
   end
 
   type vars =
@@ -225,8 +235,13 @@ struct
     ; consume : var -> unit (**[consume v] invalidates the value *)
     }
 
-  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * label
-  type varrel_t = (var -> I.t) * t
+  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
+  type limits = var -> I.t
+
+  type sim =
+    { limits : limits
+    ; automata : t
+    }
 
   open Sexplib0.Sexp_conv
 
@@ -241,6 +256,11 @@ struct
 
   let noop_transition _ n (_, n') = N.compare n n' < 0
   let empty : t = noop_guard, noop_transition, L.empty
+
+  let empty_sim : sim =
+    { limits = (fun _ -> failwith "not implemented")
+    ; automata = noop_guard, noop_transition, L.empty
+    }
 
   let variant_to_string (label, cond) =
     Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
@@ -765,7 +785,7 @@ struct
     | _ -> failwith "not implemented"
   ;;
 
-  let of_spec spec : varrel_t =
+  let of_spec spec : sim =
     let constraints =
       List.fold_left sync empty (List.map of_constr Rtccsl.(spec.constraints))
     and relations =
@@ -773,134 +793,10 @@ struct
       |> List.map of_var_rel
       |> List.fold_left (CMap.union (fun _ x y -> Some (I.inter x y))) CMap.empty
     in
-    (fun v -> Option.value ~default:I.inf (CMap.find_opt v relations)), constraints
+    { limits = (fun v -> Option.value ~default:I.inf (CMap.find_opt v relations))
+    ; automata = constraints
+    }
   ;;
-
-  module Strategy = struct
-    module Var = struct
-      type t = var -> I.t -> I.t
-
-      let none _ x = x
-
-      let use_dist dist =
-        let prepare (var, dist) =
-          ( var
-          , match dist with
-            | Uniform { lower; upper } ->
-              fun cond ->
-                assert (I.subset I.(lower =-= upper) cond);
-                I.return @@ N.random lower upper
-            (* | AnyUniform -> N.random left right *)
-            | Normal { mean; dev } ->
-              let mu = N.to_float mean in
-              let sigma = N.to_float dev in
-              fun cond ->
-                let bounds = Option.get @@ I.constant_bounds cond in
-                let a, b = Tuple.map2 N.to_float bounds in
-                let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
-                I.return @@ N.of_float sample )
-        in
-        let dist = dist |> List.map prepare |> CMap.of_list in
-        fun var cond ->
-          match CMap.find_opt var dist with
-          | Some f -> f cond
-          | None -> cond
-      ;;
-    end
-
-    module Num = struct
-      type t = num_cond -> N.t
-
-      let bounded bound lin_cond =
-        assert (I.subset bound (I.pinf N.zero));
-        let choice = I.inter lin_cond bound in
-        if I.is_empty choice then None else Some choice
-      ;;
-
-      let random_leap ~upper_bound ~ceil ~floor ~rand cond =
-        let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
-        let cond =
-          if I.is_right_unbound cond
-          then I.inter cond I.(left_bound =-= N.(left_bound + upper_bound))
-          else cond
-        in
-        let x, y =
-          match cond with
-          | I.Bound (I.Include x, I.Include y) -> x, y
-          | I.Bound (I.Exclude x, I.Include y) -> ceil x y, y
-          | I.Bound (I.Include x, I.Exclude y) -> x, floor x y
-          | I.Bound (I.Exclude x, I.Exclude y) -> ceil x y, floor x y
-          | _ -> invalid_arg "random on infinite interval is not supported"
-        in
-        rand x y
-      ;;
-
-      let slow ~upper_bound ~ceil cond =
-        let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
-        let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
-        match cond with
-        | I.Bound (I.Include x, _) -> x
-        | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
-          ceil x y
-        | _ -> invalid_arg "random on infinite interval is not supported"
-      ;;
-
-      let fast ~upper_bound ~floor cond =
-        let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
-        let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
-        match cond with
-        | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
-        | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
-          floor x y
-        | _ -> invalid_arg "random on infinite interval is not supported"
-      ;;
-    end
-
-    module Solution = struct
-      type t = guard -> solution option
-
-      let first num_decision variants =
-        let non_empty_first =
-          variants
-          |> Iter.find_map (fun (l, c) ->
-            if L.is_empty l then None else Some (l, num_decision c))
-        in
-        let any_first () =
-          let* l, c = Iter.head variants in
-          Some (l, num_decision c)
-        in
-        Option.bind_or non_empty_first any_first
-      ;;
-
-      let random_label num_decision solutions =
-        let solutions = Iter.to_array solutions in
-        if Array.length solutions = 0
-        then None
-        else (
-          let len = Array.length solutions in
-          let choice = Random.int len in
-          let l, c = Array.get solutions choice in
-          let n = num_decision c in
-          Some (l, n))
-      ;;
-
-      let avoid_empty s variants =
-        let empty = Iter.filter (fun (l, _) -> L.is_empty l) variants
-        and non_empty = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
-        Option.bind_or (s non_empty) (fun () -> s empty)
-      ;;
-
-      let refuse_empty s variants =
-        let variants = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
-        s variants
-      ;;
-
-      let debug f variants =
-        let _ = Printf.printf "variants at strategy: %s\n" (guard_to_string variants) in
-        f variants
-      ;;
-    end
-  end
 
   let next_step strat (a : t) vars now : solution option =
     let guards, transition, _ = a in
@@ -922,7 +818,7 @@ struct
 
   let empty_vars = { current = (fun _ -> failwith "none"); consume = (fun _ -> ()) }
 
-  let vars_from_rels (strat : Strategy.Var.t) (var2cond : var -> I.t) =
+  let vars_from_rels (strat : var_strategy) (var2cond : var -> I.t) =
     let storage = ref CMap.empty in
     { current =
         (fun k ->
@@ -941,45 +837,44 @@ struct
   ;;
 
   (*TODO: replace with iterator? Add dynarray.of_iter with size hint *)
-  let gen_trace var_strat (sol_strat : Strategy.Solution.t) (vrel, a) : Trace.t =
-    Seq.unfold
+  let gen_trace var_strat (sol_strat : sol_strategy) { limits; automata } : Trace.t =
+    Iter.unfoldr
       (fun (vars, now) ->
-         let* l, now = next_step sol_strat a vars now in
+         let* l, now = next_step sol_strat automata vars now in
          Some ((l, now), (vars, now)))
-      (vars_from_rels var_strat vrel, N.neg N.one)
+      (vars_from_rels var_strat limits, N.neg N.one)
   ;;
 
-  let bisimulate var_strat s (vrel, a1) (_, a2) =
+  let bisimulate var_strat s { limits; automata = a1; _ } { automata = a2; _ } =
     let _, trans, _ = a2 in
-    Seq.unfold
+    Iter.unfoldr
       (fun (vars, now) ->
          let* l, n = next_step s a1 vars now in
          if trans vars now (l, n) then Some ((l, n), (vars, n)) else None)
-      (vars_from_rels var_strat vrel, N.zero)
+      (vars_from_rels var_strat limits, N.zero)
   ;;
 
   (*TODO: investigate relation between the vrel1 and vrel2. *)
 
-  let accept_trace (rval, a) n t =
+  let accept_trace { limits; automata; _ } n t =
     let step a vars n sol =
       let _, transition, _ = a in
       transition vars n sol
     in
     let _, result =
-      Seq.fold_left
+      Iter.fold
         (fun (vars, n) (l, n') ->
            match n with
-           | Some n -> if step a vars n (l, n') then vars, Some n' else vars, None
+           | Some n -> if step automata vars n (l, n') then vars, Some n' else vars, None
            | None -> vars, None)
-        (vars_from_rels (fun _ c -> c) rval, Some n)
+        (vars_from_rels (fun _ c -> c) limits, Some n)
         t
     in
     result
   ;;
 
-  let return_env a = (fun _ -> failwith "not implemented"), a
-  let proj_trace clocks trace = Seq.map (fun (l, n) -> L.inter clocks l, n) trace
-  let skip_empty trace = Seq.filter (fun (l, _) -> not (L.is_empty l)) trace
+  let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace
+  let skip_empty trace = Iter.filter (fun (l, _) -> not (L.is_empty l)) trace
 
   (*TODO: translate into a printer. *)
   let trace_to_svgbob ?(numbers = false) ?(tasks = []) ?precision clocks trace =
@@ -1097,7 +992,7 @@ struct
         task_state
       in
       let task_state =
-        Seq.fold_left
+        Iter.fold
           serialize_label
           (List.map (fun t -> t, (Buffer.create 32, false)) tasks)
           trace
@@ -1128,7 +1023,7 @@ struct
   (*TODO: translate into a printer https://ocaml.org/manual/5.3/api/Printf.html *)
   let trace_to_csl trace =
     let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
-    Seq.to_string ~sep:",STEP," serialize trace
+    Iter.to_string ~sep:",STEP," serialize trace
   ;;
 
   let trace_to_vertical_svgbob
@@ -1272,7 +1167,7 @@ struct
         tasks |> List.map (fun task -> task, false, false) |> Array.of_list
       in
       let clock_states = Array.map (fun clock -> clock, 0) clocks in
-      let _ = Seq.fold_left serialize_record (task_states, clock_states) trace in
+      let _ = Iter.fold serialize_record (task_states, clock_states) trace in
       let _ =
         for _ = 0 to width do
           Printf.fprintf ch " "
@@ -1282,22 +1177,277 @@ struct
   ;;
 end
 
+module Strategy (A : S) :
+  Strategy
+  with type var = A.var
+   and type num = A.N.t
+   and module I = A.I
+   and module L = A.L = struct
+  open A
+  module CMap = Map.Make (A.C)
+
+  type var = A.var
+  type num = A.N.t
+
+  module L = A.L
+  module I = A.I
+
+  type guard = A.guard
+  type solution = A.solution
+
+  module Var = struct
+    type t = var -> I.t -> I.t
+
+    let none _ x = x
+
+    let use_dist dist =
+      let prepare (var, dist) =
+        ( var
+        , match dist with
+          | Uniform { lower; upper } ->
+            fun cond ->
+              assert (I.subset I.(lower =-= upper) cond);
+              I.return @@ N.random lower upper
+          (* | AnyUniform -> N.random left right *)
+          | Normal { mean; dev } ->
+            let mu = N.to_float mean in
+            let sigma = N.to_float dev in
+            fun cond ->
+              let bounds = Option.get @@ I.constant_bounds cond in
+              let a, b = Tuple.map2 N.to_float bounds in
+              let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+              I.return @@ N.of_float sample )
+      in
+      let dist = dist |> List.map prepare |> CMap.of_list in
+      fun var cond ->
+        match CMap.find_opt var dist with
+        | Some f -> f cond
+        | None -> cond
+    ;;
+  end
+
+  module Num = struct
+    type t = I.t -> N.t
+
+    let bounded bound lin_cond =
+      assert (I.subset bound (I.pinf N.zero));
+      let choice = I.inter lin_cond bound in
+      if I.is_empty choice then None else Some choice
+    ;;
+
+    let random_leap ~upper_bound ~ceil ~floor ~rand cond =
+      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
+      let cond =
+        if I.is_right_unbound cond
+        then I.inter cond I.(left_bound =-= N.(left_bound + upper_bound))
+        else cond
+      in
+      let x, y =
+        match cond with
+        | I.Bound (I.Include x, I.Include y) -> x, y
+        | I.Bound (I.Exclude x, I.Include y) -> ceil x y, y
+        | I.Bound (I.Include x, I.Exclude y) -> x, floor x y
+        | I.Bound (I.Exclude x, I.Exclude y) -> ceil x y, floor x y
+        | _ -> invalid_arg "random on infinite interval is not supported"
+      in
+      rand x y
+    ;;
+
+    let slow ~upper_bound ~ceil cond =
+      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
+      let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
+      match cond with
+      | I.Bound (I.Include x, _) -> x
+      | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
+        ceil x y
+      | _ -> invalid_arg "random on infinite interval is not supported"
+    ;;
+
+    let fast ~upper_bound ~floor cond =
+      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
+      let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
+      match cond with
+      | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
+      | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
+        floor x y
+      | _ -> invalid_arg "random on infinite interval is not supported"
+    ;;
+  end
+
+  module Solution = struct
+    type t = guard -> solution option
+
+    let first num_decision variants =
+      let non_empty_first =
+        variants
+        |> Iter.find_map (fun (l, c) ->
+          if L.is_empty l then None else Some (l, num_decision c))
+      in
+      let any_first () =
+        let* l, c = Iter.head variants in
+        Some (l, num_decision c)
+      in
+      Option.bind_or non_empty_first any_first
+    ;;
+
+    let random_label num_decision solutions =
+      let solutions = Iter.to_array solutions in
+      if Array.length solutions = 0
+      then None
+      else (
+        let len = Array.length solutions in
+        let choice = Random.int len in
+        let l, c = Array.get solutions choice in
+        let n = num_decision c in
+        Some (l, n))
+    ;;
+
+    let avoid_empty s variants =
+      let empty = Iter.filter (fun (l, _) -> L.is_empty l) variants
+      and non_empty = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
+      Option.bind_or (s non_empty) (fun () -> s empty)
+    ;;
+
+    let refuse_empty s variants =
+      let variants = Iter.filter (fun (l, _) -> not (L.is_empty l)) variants in
+      s variants
+    ;;
+    (*
+       let debug f variants =
+      let _ = Printf.printf "variants at strategy: %s\n" (guard_to_string variants) in
+      f variants
+    ;; *)
+  end
+end
+
+module Hashed = struct
+  module type ID = sig
+    include ID
+    include Hashtbl.HashedType with type t := t
+  end
+
+  module BijectionLevel (C : ID) (N : Num) = struct
+    include MakeWithBijection (C) (N) (BitvectorSet.BijectionToInt.Hashed (C))
+  end
+
+  (* module TraceLevel (C : ID) (N : Num) : S with module C = C and module N = N = struct
+    module Inner =
+      MakeWithBijection (Number.Integer) (N) (BitvectorSet.BijectionToInt.Int)
+
+    module C = C
+
+    module Session = struct
+      module H = Hashtbl.Make (C)
+
+      type t = int H.t * C.t Dynarray.t
+
+      let create () =
+        let mapping : int H.t = H.create 128 in
+        let inverse : C.t Dynarray.t = Dynarray.create () in
+        mapping, inverse
+      ;;
+
+      let to_offset (mapping, _) k = H.find mapping k
+      let of_offset (_, inverse) i = Dynarray.get inverse i
+
+      let save (mapping, inverse) k =
+        match H.find_opt mapping k with
+        | Some _ -> ()
+        | None ->
+          let x = Dynarray.length inverse in
+          H.add mapping k x;
+          Dynarray.add_last inverse k
+      ;;
+    end
+
+    type clock = C.t
+    type param = C.t
+    type var = C.t
+
+    module N = Inner.N
+    module I = Inner.I
+
+    module L = struct
+      include Set.Make (C)
+
+      let to_string label =
+        match to_list label with
+        | [] -> "∅"
+        | l -> List.to_string C.to_string l
+      ;;
+
+      let from_inner s label =
+        label |> Inner.L.to_seq |> Seq.map (Session.of_offset s) |> of_seq
+      ;;
+
+      let to_inner s label =
+        label |> to_seq |> Seq.map (Session.to_offset s) |> Inner.L.of_seq
+      ;;
+    end
+
+    type num_cond = I.t
+    type guard = (L.t * num_cond) Iter.t
+    type solution = L.t * N.t
+
+  type var_strategy = var -> I.t -> I.t
+  type sol_strategy = guard -> solution option
+    module Trace = struct
+      type t = Session.t * Inner.Trace.t
+
+      let to_seq s trace =
+        trace |> Inner.Trace.to_seq |> Seq.map (fun (l, n) -> L.from_inner s l, n)
+      ;;
+
+      let of_seq s trace =
+        trace |> Seq.map (fun (l, n) -> L.to_inner s l, n) |> Inner.Trace.of_seq
+      ;;
+    end
+
+    type vars =
+      { current : var -> I.t
+      ; consume : var -> unit
+      }
+
+    type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
+    type limits = var -> I.t
+    type sim = Session.t * Inner.sim
+
+    let of_spec spec =
+      let session = Session.create () in
+      let f () k = Session.save session k in
+      let _ = Rtccsl.fold_specification f f f (fun () _ -> ()) () spec in
+      let f = Session.to_offset session in
+      let spec = Rtccsl.map_specification f f f Fun.id spec in
+      session, Inner.of_spec spec
+    ;;
+
+    let gen_trace var_strat sol_strat (session, sim) =
+      session, Inner.gen_trace var_strat sol_strat sim
+    ;;
+
+    let bisimulate vs ss s1 s2 =
+      Inner.bisimulate
+  end *)
+end
+
+module Make = Hashed.BijectionLevel
+
 let%test_module _ =
   (module struct
     open Rtccsl
     open Number
     module A = Make (Clock.String) (Float)
+    module S = Strategy (A)
 
     let step = 0.1
 
     let slow_strat =
-      A.Strategy.Solution.first
-      @@ A.Strategy.Num.slow ~upper_bound:2.0 ~ceil:(Float.round_up step)
+      S.Solution.first @@ S.Num.slow ~upper_bound:2.0 ~ceil:(Float.round_up step)
     ;;
 
     let random_strat =
-      A.Strategy.Solution.random_label
-        (A.Strategy.Num.random_leap
+      S.Solution.random_label
+        (S.Num.random_leap
            ~upper_bound:1.0
            ~ceil:(Float.round_up step)
            ~floor:(Float.round_down step)
@@ -1305,27 +1455,29 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (A.Trace.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
+      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
+      not (A.Trace.is_empty (A.gen_trace S.Var.none slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
-      not (A.Trace.is_empty (A.gen_trace A.Strategy.Var.none slow_strat a))
+      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
+      not (A.Trace.is_empty (A.gen_trace S.Var.none slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.return_env @@ A.of_constr (Coincidence [ "a"; "b" ]) in
-      let trace = A.gen_trace A.Strategy.Var.none random_strat a in
+      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let trace = A.gen_trace S.Var.none random_strat a in
       not (A.Trace.is_empty trace)
     ;;
 
-    let%test _ =
-      let g, _, _ = A.of_constr (Coincidence [ "a"; "b" ]) in
+    (* let%test _ =
+      let _, (g, _, _) =
+        A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ]
+      in
       let v = A.empty_vars in
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0); *)
       not (Iter.is_empty (g v 0.0))
-    ;;
+    ;; *)
 
     let%test _ =
       let empty1 =
@@ -1334,10 +1486,10 @@ let%test_module _ =
           ; var_relations = []
           }
       in
-      let empty2 = A.return_env @@ A.empty in
+      let empty2 = A.empty_sim in
       let steps = 10 in
       let trace =
-        A.bisimulate A.Strategy.Var.none slow_strat empty1 empty2 |> A.Trace.take ~steps
+        A.bisimulate S.Var.none slow_strat empty1 empty2 |> A.Trace.take ~steps
       in
       (* match trace with
       | Ok l | Error l ->
@@ -1347,18 +1499,17 @@ let%test_module _ =
 
     let%test _ =
       let sampling1 =
-        A.of_constr
-        @@ Delay { out = "o"; arg = "i"; delay = Const 0, Const 0; base = Some "b" }
+        A.of_spec
+        @@ Rtccsl.constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = Const 0, Const 0; base = Some "b" } ]
       in
-      let sampling2 = A.of_constr @@ Sample { out = "o"; arg = "i"; base = "b" } in
+      let sampling2 =
+        A.of_spec
+        @@ Rtccsl.constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
+      in
       let steps = 10 in
       let trace =
-        A.bisimulate
-          A.Strategy.Var.none
-          random_strat
-          (A.return_env @@ sampling1)
-          (A.return_env @@ sampling2)
-        |> A.Trace.take ~steps
+        A.bisimulate S.Var.none random_strat sampling1 sampling2 |> A.Trace.take ~steps
       in
       (* match trace with
       | Ok l | Error l ->
@@ -1367,11 +1518,10 @@ let%test_module _ =
     ;;
 
     let%test _ =
-      let a = A.of_constr (Precedence { cause = "a"; conseq = "b" }) in
-      let trace =
-        A.gen_trace A.Strategy.Var.none slow_strat (A.return_env @@ a)
-        |> A.Trace.take ~steps:10
+      let a =
+        A.of_spec @@ Rtccsl.constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
       in
+      let trace = A.gen_trace S.Var.none slow_strat a |> A.Trace.take ~steps:10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)

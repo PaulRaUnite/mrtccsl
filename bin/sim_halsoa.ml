@@ -3,6 +3,7 @@ open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
+module S = FnCh.S
 module C = Halsoa.Examples.Make (Number.Rational)
 open Number.Rational
 open FnCh
@@ -30,7 +31,7 @@ let priority_strategy priorities general_strategy =
 ;;
 
 (*TODO: need to review if the priority strategy is really correct*)
-let fifo_strategy priorities general_strategy =
+(* let fifo_strategy priorities general_strategy =
   let queue = ref [] in
   let priorities = A.CMap.of_list priorities in
   let f candidates =
@@ -62,12 +63,12 @@ let fifo_strategy priorities general_strategy =
     | None -> None
   in
   f
-;;
+;; *)
 
 let random_strat =
-  A.Strategy.Solution.avoid_empty
-  @@ A.Strategy.Solution.random_label
-       (A.Strategy.Num.random_leap
+  S.Solution.avoid_empty
+  @@ S.Solution.random_label
+       (S.Num.random_leap
           ~upper_bound:(of_int 1000)
           ~ceil:(round_up step)
           ~floor:(round_down step)
@@ -152,7 +153,7 @@ let rec create_dir fn =
 
 let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_spec i =
   let _ = Random.init 2174367364 in
-  let strategy candidates = (A.Strategy.Solution.refuse_empty random_strat) candidates in
+  let strategy candidates = (S.Solution.refuse_empty random_strat) candidates in
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
   and points_of_interest = points_of_interest func_chain_spec in
@@ -223,7 +224,6 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
   in
   close_out data_file
 ;;
-
 
 let () =
   (*TODO: add some argument checking*)

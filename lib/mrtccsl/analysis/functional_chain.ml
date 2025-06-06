@@ -58,8 +58,9 @@ let categorization_points chain =
     chain.rest
 ;;
 
-module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
+module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   module A = Automata.Simple.Make (C) (N)
+  module S = Automata.Simple.Strategy(A)
   module CMap = Map.Make (C)
 
   type chain_instance =
@@ -238,7 +239,7 @@ module Make (C : Automata.Simple.ID) (N : Automata.Simple.Num) = struct
     =
     let env = A.of_spec system_spec in
     let trace, deadlock =
-      A.gen_trace (A.Strategy.Var.use_dist dist) s env
+      A.gen_trace (S.Var.use_dist dist) s env
       |> A.Trace.take ~steps:n
       |> A.Trace.until ~horizon:time
     in
