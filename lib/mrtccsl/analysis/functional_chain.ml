@@ -75,7 +75,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   type partial_chain =
     { trace : N.t CMap.t
     ; targets : int CMap.t
-    ; misses : int CMap.t
+    ; mutable misses : int CMap.t
     }
 
   let partial_chain_to_string session chain =
@@ -92,14 +92,12 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     | Lastest
     | Randomized
 
-  (*TODO: optimize*)
   let consume_label
         ?(sem = All)
         instructions
-        (full_chains, partial_chains, counters)
+        (full_chains, (partial_chains : _ Queue.t array), counters)
         (label, now)
     =
-    let len = Array.length instructions in
     let targets_from i =
       let chain_target = Array.get counters i in
       let targets, _ =
@@ -123,112 +121,93 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
            current)
         counters
     in
+    let add_missed i k =
+      for j = 0 to pred i do
+        Queue.iter
+          (fun c -> c.misses <- CMap.entry (fun v -> v + 1) 0 k c.misses)
+          partial_chains.(j)
+      done
+    in
     (* let dropped = ref 0 in *)
-    let execute_instruction (partial_chains, index) (c, instr) =
-      let partial_chain =
-        if A.L.mem c label
-        then (
-          match instr with
-          | `New ->
-            let targets = targets_from index in
-            List.append
-              partial_chains
-              [ { trace = CMap.singleton c now; targets; misses = CMap.empty } ]
-          | `Causality ->
-            partial_chains
-            |> List.map (fun chain ->
-              match CMap.find_opt c chain.targets with
-              | Some target ->
-                let counter = Array.get counters index in
-                if target = counter
-                then
-                  { trace = CMap.add c now chain.trace
-                  ; targets = chain.targets
-                  ; misses = chain.misses
-                  }
-                else chain
-              | None -> chain)
-          | `Sampling ->
-            let targets = targets_from index in
-            let candidates =
-              List.filter_mapi
-                (fun i chain ->
-                   if CMap.cardinal chain.trace = index then Some i else None)
-                partial_chains
+    let execute_instruction index (c, instr) =
+      if A.L.mem c label
+      then (
+        match instr with
+        | `New ->
+          let targets = targets_from index in
+          Queue.add
+            { trace = CMap.singleton c now; targets; misses = CMap.empty }
+            partial_chains.(0)
+        | `Causality ->
+          let q = partial_chains.(index - 1) in
+          let next = partial_chains.(index) in
+          let counter = counters.(index) in
+          let rec aux q =
+            match Queue.peek_opt q with
+            | Some chain ->
+              (match CMap.find_opt c chain.targets with
+               | Some target when target = counter ->
+                 Queue.add
+                   { trace = CMap.add c now chain.trace
+                   ; targets = chain.targets
+                   ; misses = chain.misses
+                   }
+                   next;
+                 Queue.drop q;
+                 aux q
+               | _ -> ())
+            | None -> ()
+          in
+          aux q
+        | `Sampling ->
+          let targets = targets_from index in
+          let candidates = partial_chains.(index - 1) in
+          if not (Queue.is_empty candidates)
+          then (
+            let to_sample =
+              match sem with
+              | All -> Queue.to_seq candidates
+              | Earliest ->
+                let first = Queue.peek_opt candidates in
+                Option.to_seq first
+              | Lastest ->
+                let last = Queue.last candidates in
+                Option.to_seq last
+              | Randomized ->
+                let el = Iter.sample 1 (Queue.to_iter candidates) in
+                Seq.return el.(0)
             in
-            if List.is_empty candidates
-            then partial_chains
-            else (
-              let to_modify, to_drop =
-                match sem with
-                | All -> candidates, []
-                | Earliest ->
-                  let first, rest = List.first_partition candidates in
-                  Option.to_list first, rest
-                | Lastest ->
-                  let last, rest = List.last_partition candidates in
-                  Option.to_list last, rest
-                | Randomized ->
-                  let index =
-                    Random.int_in_range ~min:0 ~max:(List.length candidates - 1)
-                  in
-                  let el = List.nth candidates index in
-                  [ el ], List.drop_nth candidates index
-              in
-              List.filter_mapi
-                (fun i chain ->
-                   if List.mem i to_modify
-                   then
-                     Some
-                       { trace = CMap.add c now chain.trace
-                       ; targets
-                       ; misses = chain.misses
-                       }
-                   else if List.mem i to_drop
-                   then
-                     (* dropped := !dropped + 1; *)
-                     None
-                   else Some chain)
-                partial_chains))
-        else partial_chains
-      in
-      partial_chain, index + 1
+            let to_sample =
+              Seq.map
+                (fun chain ->
+                   { trace = CMap.add c now chain.trace; targets; misses = chain.misses })
+                to_sample
+            in
+            let next = partial_chains.(index) in
+            Queue.add_seq next to_sample;
+            Queue.clear candidates;
+            add_missed index c))
     in
-    let partial_chains, _ =
-      Array.fold_left execute_instruction (partial_chains, 0) instructions
+    let _ = Array.iteri execute_instruction instructions in
+    let new_full f a =
+      let last = Array.length instructions - 1 in
+      Queue.iter (fun chain -> f { trace = chain.trace; misses = chain.misses }) a.(last);
+      Queue.clear a.(last)
     in
-    let partial_chains =
-      List.map
-        (fun { trace; targets; misses } ->
-           let misses =
-             A.L.fold
-               (fun k misses ->
-                  if not (CMap.mem k trace)
-                  then CMap.entry (fun v -> v + 1) 0 k misses
-                  else misses)
-               label
-               misses
-           in
-           { trace; targets; misses })
-        partial_chains
-    in
-    let new_full, rest =
-      List.partition (fun c -> CMap.cardinal c.trace = len) partial_chains
-    in
-    let new_full =
-      List.map (fun chain -> { trace = chain.trace; misses = chain.misses }) new_full
-    in
+    let _ = Dynarray.append_iter full_chains new_full partial_chains in
     (* let _ = Printf.printf "dropped: %d\n" !dropped in *)
-    List.append full_chains new_full, rest, counters
+    full_chains, partial_chains, counters
   ;;
 
   let trace_to_chain sem chain trace =
     let instructions = Array.of_list (instructions chain) in
     let len_instr = Array.length instructions in
     let full_chains, dangling_chains, _ =
-      Seq.fold_left
+      Iter.fold
         (consume_label ~sem instructions)
-        ([], [], Array.make len_instr 0)
+        ( Dynarray.create ()
+        , Array.init len_instr (fun _ -> Queue.create ())
+        , Array.make len_instr 0 )
         trace
     in
     full_chains, dangling_chains
@@ -252,7 +231,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     let trace = A.Trace.persist trace in
     let session_chain = map_chain (to_offset session) chain in
     let full_chains, dangling_chains =
-      trace_to_chain sem session_chain (A.Trace.to_seq trace)
+      trace_to_chain sem session_chain (A.Trace.to_iter trace)
     in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
@@ -317,38 +296,32 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       seq
   ;;
 
-  let reaction_times_to_csv categories pairs_to_print seq =
-    let buf = Buffer.create 128 in
-    let _ =
-      Printf.bprintf
-        buf
-        "%s\n"
-        (List.to_string
-           ~sep:","
-           Fun.id
-           (List.map C.to_string categories
-            @ List.map
-                (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
-                pairs_to_print))
-    in
-    let _ =
-      Seq.iter
-        (fun (misses, times) ->
-           Printf.bprintf
-             buf
-             "%s\n"
-             (List.to_string
-                ~sep:","
-                Fun.id
-                (List.map
-                   (fun h ->
-                      let v = Option.value ~default:0 (Hashtbl.find_opt misses h) in
-                      Int.to_string v)
-                   categories
-                 @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
-        seq
-    in
-    Buffer.contents buf
+  let reaction_times_to_csv categories pairs_to_print ch seq =
+    Printf.fprintf
+      ch
+      "%s\n"
+      (List.to_string
+         ~sep:","
+         Fun.id
+         (List.map C.to_string categories
+          @ List.map
+              (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
+              pairs_to_print));
+    Seq.iter
+      (fun (misses, times) ->
+         Printf.fprintf
+           ch
+           "%s\n"
+           (List.to_string
+              ~sep:","
+              Fun.id
+              (List.map
+                 (fun h ->
+                    let v = Option.value ~default:0 (Hashtbl.find_opt misses h) in
+                    Int.to_string v)
+                 categories
+               @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
+      seq
   ;;
 
   module Export = struct

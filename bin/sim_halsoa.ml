@@ -116,12 +116,13 @@ let parallel_reaction_times
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times session [ start, finish ] (List.to_seq full_chains)
+      FnCh.reaction_times session [ start, finish ] (Dynarray.to_seq full_chains)
     in
     if with_partial
     then
       partial_chains
-      |> List.to_seq
+      |> Array.to_seq
+      |> Seq.flat_map Queue.to_seq
       |> Seq.map (fun (t : partial_chain) ->
         ( t.misses
           |> A.CMap.to_seq
@@ -186,7 +187,9 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
     Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace
   in
   let _ = close_out trace_file in
-  let reactions = FnCh.reaction_times session points_of_interest (List.to_seq chains) in
+  let reactions =
+    FnCh.reaction_times session points_of_interest (Dynarray.to_seq chains)
+  in
   reactions
 ;;
 
@@ -228,10 +231,7 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
   let categories = categorization_points C.icteri_chain in
   let data_file = open_out (Printf.sprintf "%s/reaction_times.csv" prefix) in
   let _ =
-    Printf.fprintf
-      data_file
-      "%s"
-      (FnCh.reaction_times_to_csv categories points_of_interest reaction_times)
+    FnCh.reaction_times_to_csv categories points_of_interest data_file reaction_times
   in
   close_out data_file
 ;;

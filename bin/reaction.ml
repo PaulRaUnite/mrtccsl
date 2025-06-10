@@ -37,20 +37,15 @@ let process filename =
   in
   (* let _ = List.print (print_endline << A.solution_to_string) trace in *)
   let _ = Printf.printf "chain computation for %s\n" filename in
-  let trace = Array.to_seq (Array.of_list trace) in
+  let trace = Iter.of_list trace in
   let chains, _ = trace_to_chain Randomized (map_chain to_inner func_chain_spec) trace in
-  let _ = FnCh.print_statistics session (to_inner "a.s") (List.to_seq chains) in
+  let _ = FnCh.print_statistics session (to_inner "a.s") (Dynarray.to_seq chains) in
   let _ = print_endline "reaction computation" in
   let interest = points_of_interest func_chain_spec in
-  let reactions = FnCh.reaction_times session interest (List.to_seq chains) in
+  let reactions = FnCh.reaction_times session interest (Dynarray.to_seq chains) in
   let name = Filename.remove_extension filename in
   let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
-  let _ =
-    Printf.fprintf
-      data_file
-      "%s"
-      (FnCh.reaction_times_to_csv [ "a.s" ] interest reactions)
-  in
+  let _ = FnCh.reaction_times_to_csv [ "a.s" ] interest data_file reactions in
   close_out data_file
 ;;
 

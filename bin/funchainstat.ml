@@ -122,12 +122,13 @@ let parallel_reaction_times
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times s [ start, finish ] (List.to_seq full_chains)
+      FnCh.reaction_times s [ start, finish ] (Dynarray.to_seq full_chains)
     in
     if with_partial
     then
       partial_chains
-      |> List.to_seq
+      |> Array.to_seq
+      |> Seq.flat_map Queue.to_seq
       |> Seq.map (fun (t : partial_chain) ->
         ( t.misses
           |> A.CMap.to_seq
@@ -201,7 +202,7 @@ let process name spec =
           system_spec
           func_chain_spec
       in
-      let chains = List.to_seq chains in
+      let chains = Dynarray.to_seq chains in
       let reactions = FnCh.reaction_times s points_of_interest chains in
       let _ = Printf.printf "deadlock: %b\n" deadlock in
       let _ =
@@ -226,7 +227,10 @@ let process name spec =
              chains);
         Printf.printf
           "partial chains:\n%s\n"
-          (List.to_string ~sep:"\n" (partial_chain_to_string s) partial_chains);
+          (Seq.to_string
+             ~sep:"\n"
+             (partial_chain_to_string s)
+             (partial_chains |> Array.to_seq |> Seq.flat_map Queue.to_seq));
         Printf.printf
           "reaction times: %s"
           (FnCh.reaction_times_to_string ~sep:"\n" reactions)
@@ -238,10 +242,7 @@ let process name spec =
   in
   let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
   let _ =
-    Printf.fprintf
-      data_file
-      "%s"
-      (FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest reactions)
+      (FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest data_file reactions)
   in
   close_out data_file
 ;;

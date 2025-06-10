@@ -542,14 +542,23 @@ module Map = struct
     let value ~default k map = Option.value ~default (find_opt k map)
   end
 end
+
 module Set = struct
-include Set
-module Make (K : OrderedType) = struct
-include Make(K)
-let to_iter s f = iter f s
-let of_iter iter = let acc = ref empty in iter (fun e -> acc:= add e !acc); !acc
+  include Set
+
+  module Make (K : OrderedType) = struct
+    include Make (K)
+
+    let to_iter s f = iter f s
+
+    let of_iter iter =
+      let acc = ref empty in
+      iter (fun e -> acc := add e !acc);
+      !acc
+    ;;
+  end
 end
-end
+
 (**[fixpoint init eq f start] returns a value [v] such that [f(v) = v] by starting from [v].*)
 let rec fixpoint eq f v =
   let next = f v in
@@ -583,6 +592,231 @@ module Array = struct
   include Array
 
   let updatei a f i = Array.set a i (f (Array.get a i))
+
+  (**[fold_lefti] is like [fold_left] just with index. *)
+  let fold_lefti f x a =
+    let r = ref x in
+    for i = 0 to length a - 1 do
+      r := f !r i (unsafe_get a i)
+    done;
+    !r
+  ;;
+end
+
+module Dynarray = struct
+  include Dynarray
+
+  let rev_iteri f a =
+    for i = length a - 1 downto 0 do
+      f i (get a i)
+    done
+  ;;
+
+  let filter_mapi f a =
+    let b = create () in
+    iteri
+      (fun i x ->
+         match f i x with
+         | None -> ()
+         | Some y -> add_last b y)
+      a;
+    b
+  ;;
+end
+
+module Iter = struct
+  include Iter
+
+  let last iter =
+    fold
+      (fun acc x ->
+         match acc with
+         | Some _ -> Some x
+         | None -> Some x)
+      None
+      iter
+  ;;
+
+  let to_dynarray iter =
+    let a = Dynarray.create () in
+    iter (fun el -> Dynarray.add_last a el);
+    a
+  ;;
+
+  let of_dynarray a f = Dynarray.iter f a
+end
+
+module Queue = struct
+  exception Empty
+
+  type 'a cell =
+    | Nil
+    | Cons of
+        { content : 'a
+        ; mutable next : 'a cell
+        }
+
+  type 'a t =
+    { mutable length : int
+    ; mutable first : 'a cell
+    ; mutable last : 'a cell
+    }
+
+  let create () = { length = 0; first = Nil; last = Nil }
+
+  let clear q =
+    q.length <- 0;
+    q.first <- Nil;
+    q.last <- Nil
+  ;;
+
+  let add x q =
+    let cell = Cons { content = x; next = Nil } in
+    match q.last with
+    | Nil ->
+      q.length <- 1;
+      q.first <- cell;
+      q.last <- cell
+    | Cons last ->
+      q.length <- q.length + 1;
+      last.next <- cell;
+      q.last <- cell
+  ;;
+
+  let push = add
+
+  let peek q =
+    match q.first with
+    | Nil -> raise Empty
+    | Cons { content; _ } -> content
+  ;;
+
+  let peek_opt q =
+    match q.first with
+    | Nil -> None
+    | Cons { content; _ } -> Some content
+  ;;
+
+  let top = peek
+
+  let take q =
+    match q.first with
+    | Nil -> raise Empty
+    | Cons { content; next = Nil } ->
+      clear q;
+      content
+    | Cons { content; next } ->
+      q.length <- q.length - 1;
+      q.first <- next;
+      content
+  ;;
+
+  let take_opt q =
+    match q.first with
+    | Nil -> None
+    | Cons { content; next = Nil } ->
+      clear q;
+      Some content
+    | Cons { content; next } ->
+      q.length <- q.length - 1;
+      q.first <- next;
+      Some content
+  ;;
+
+  let pop = take
+
+  let drop q =
+    match q.first with
+    | Nil -> raise Empty
+    | Cons { content = _; next = Nil } -> clear q
+    | Cons { content = _; next } ->
+      q.length <- q.length - 1;
+      q.first <- next
+  ;;
+
+  let copy =
+    let rec copy q_res prev cell =
+      match cell with
+      | Nil ->
+        q_res.last <- prev;
+        q_res
+      | Cons { content; next } ->
+        let res = Cons { content; next = Nil } in
+        (match prev with
+         | Nil -> q_res.first <- res
+         | Cons p -> p.next <- res);
+        copy q_res res next
+    in
+    fun q -> copy { length = q.length; first = Nil; last = Nil } Nil q.first
+  ;;
+
+  let is_empty q = q.length = 0
+  let length q = q.length
+
+  let iter =
+    let rec iter f cell =
+      match cell with
+      | Nil -> ()
+      | Cons { content; next } ->
+        f content;
+        iter f next
+    in
+    fun f q -> iter f q.first
+  ;;
+
+  let fold =
+    let rec fold f accu cell =
+      match cell with
+      | Nil -> accu
+      | Cons { content; next } ->
+        let accu = f accu content in
+        fold f accu next
+    in
+    fun f accu q -> fold f accu q.first
+  ;;
+
+  let transfer q1 q2 =
+    if q1.length > 0
+    then (
+      match q2.last with
+      | Nil ->
+        q2.length <- q1.length;
+        q2.first <- q1.first;
+        q2.last <- q1.last;
+        clear q1
+      | Cons last ->
+        q2.length <- q2.length + q1.length;
+        last.next <- q1.first;
+        q2.last <- q1.last;
+        clear q1)
+  ;;
+
+  (** {1 Iterators} *)
+
+  let to_seq q =
+    let rec aux c () =
+      match c with
+      | Nil -> Seq.Nil
+      | Cons { content = x; next } -> Seq.Cons (x, aux next)
+    in
+    aux q.first
+  ;;
+
+  let add_seq q i = Seq.iter (fun x -> push x q) i
+
+  let of_seq g =
+    let q = create () in
+    add_seq q g;
+    q
+  ;;
+
+  let to_iter v f = iter f v
+
+  let last q =
+    match q.last with
+    | Nil -> None
+    | Cons { content; _ } -> Some content
+  ;;
 end
 
 (* We present our priority queues as a functor

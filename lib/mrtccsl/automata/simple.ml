@@ -190,7 +190,7 @@ struct
   module Trace = struct
     type t = solution Iter.t
 
-    let persist t = t |> Iter.to_array |> Iter.of_array
+    let persist t = t |> Iter.to_dynarray |> Iter.of_dynarray
     let of_seq t = t |> Iter.of_seq
     let to_iter = Fun.id
     let to_seq seq = Iter.to_seq_persistent seq
@@ -1325,7 +1325,7 @@ module Export = struct
           done
         in
         let _ = Format.fprintf ch "+\n" in
-        let serialize_record (tasks, clocks) (l, n) =
+        let[@inline hint] serialize_record (tasks, clocks) (l, n) =
           let new_tasks =
             Array.map
               (fun ((name, r, s, f, d), executes, constrains) ->
