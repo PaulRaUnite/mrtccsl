@@ -66,9 +66,9 @@ let priority_strategy priorities general_strategy =
 ;; *)
 
 let random_strat =
-  S.Solution.avoid_empty
-  @@ S.Solution.random_label
-       (S.Num.random_leap
+  ST.Solution.avoid_empty
+  @@ ST.Solution.random_label
+       (ST.Num.random_leap
           ~upper_bound:(of_int 1000)
           ~ceil:(round_up step)
           ~floor:(round_down step)
@@ -112,11 +112,11 @@ let parallel_reaction_times
   let start, finish = chain_start_finish_clocks func_chain_spec in
   let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
   let body _ =
-    let _, _, full_chains, partial_chains =
+    let session, _, _, full_chains, partial_chains =
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times [ start, finish ] (List.to_seq full_chains)
+      FnCh.reaction_times session [ start, finish ] (List.to_seq full_chains)
     in
     if with_partial
     then
@@ -124,11 +124,15 @@ let parallel_reaction_times
       |> List.to_seq
       |> Seq.map (fun (t : partial_chain) ->
         ( t.misses
+          |> A.CMap.to_seq
+          |> Seq.map (fun (k, v) -> S.Session.of_offset session k, v)
+          |> Hashtbl.of_seq
         , [ start, finish ]
           |> List.to_seq
           |> Seq.map (fun (source, target) ->
             ( (source, target)
-            , CMap.value ~default:horizon target t.trace - CMap.find source t.trace ))
+            , CMap.value ~default:horizon (S.Session.to_offset session target) t.trace
+              - CMap.find (S.Session.to_offset session source) t.trace ))
           |> Hashtbl.of_seq ))
     else full_reaction_times
   in
@@ -153,11 +157,11 @@ let rec create_dir fn =
 
 let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_spec i =
   let _ = Random.init 2174367364 in
-  let strategy candidates = (S.Solution.refuse_empty random_strat) candidates in
+  let strategy = ST.Solution.refuse_empty random_strat in
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
   and points_of_interest = points_of_interest func_chain_spec in
-  let trace, _, chains, _ =
+  let session, trace, _, chains, _ =
     FnCh.functional_chains
       ~sem
       (strategy, steps, horizon)
@@ -168,14 +172,14 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
   let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
   let _ =
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
-    A.trace_to_vertical_svgbob ~numbers:false ~tasks clocks trace_file trace;
+    Export.trace_to_vertical_svgbob ~numbers:false ~tasks session clocks trace_file trace;
     close_out trace_file
   in
   let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
   (*TODO: decide on better *)
-  let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
+  let _ = Printf.fprintf trace_file "%s" (Export.trace_to_csl session trace) in
   let _ = close_out trace_file in
-  let reactions = FnCh.reaction_times points_of_interest (List.to_seq chains) in
+  let reactions = FnCh.reaction_times session points_of_interest (List.to_seq chains) in
   reactions
 ;;
 

@@ -9,6 +9,7 @@ type 'c chain =
   { first : 'c
   ; rest : (relation * 'c) list
   }
+[@@deriving map]
 
 type instruction =
   [ relation
@@ -59,14 +60,17 @@ let categorization_points chain =
 ;;
 
 module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
-  module A = Automata.Simple.Make (C) (N)
-  module S = Automata.Simple.Strategy(A)
-  module CMap = Map.Make (C)
+  module S = Automata.Simple.Hashed.WithSession (C) (N)
+  module A = S.Inner
+  module ST = Automata.Simple.Strategy (A)
+  module CMap = Map.Make (A.C)
+  open S.Session
 
   type chain_instance =
     { trace : N.t CMap.t
     ; misses : int CMap.t
     }
+  [@@deriving map]
 
   type partial_chain =
     { trace : N.t CMap.t
@@ -74,12 +78,12 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     ; misses : int CMap.t
     }
 
-  let partial_chain_to_string chain =
+  let partial_chain_to_string session chain =
     Printf.sprintf
       "trace: %s targets: %s misses: %s"
-      (CMap.to_string C.to_string N.to_string chain.trace)
-      (CMap.to_string C.to_string Int.to_string chain.targets)
-      (CMap.to_string C.to_string Int.to_string chain.misses)
+      (CMap.to_string (of_offset session >> C.to_string) N.to_string chain.trace)
+      (CMap.to_string (of_offset session >> C.to_string) Int.to_string chain.targets)
+      (CMap.to_string (of_offset session >> C.to_string) Int.to_string chain.misses)
   ;;
 
   type semantics =
@@ -99,14 +103,15 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     let targets_from i =
       let chain_target = Array.get counters i in
       let targets, _ =
-        Seq.fold_lefti
-          (fun (targets, met_sampling) j (c, instr) ->
-             match met_sampling, instr with
-             | false, `Causality when j > i -> CMap.add c chain_target targets, false
-             | _, `Sampling when j > i -> targets, true
-             | _ -> targets, met_sampling)
-          (CMap.empty, false)
-          (Array.to_seq instructions)
+        instructions
+        |> Iter.of_array
+        |> Iter.foldi
+             (fun (targets, met_sampling) j (c, instr) ->
+                match met_sampling, instr with
+                | false, `Causality when j > i -> CMap.add c chain_target targets, false
+                | _, `Sampling when j > i -> targets, true
+                | _ -> targets, met_sampling)
+             (CMap.empty, false)
       in
       targets
     in
@@ -233,37 +238,46 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   let functional_chains
         ?(sem = All)
         (s, n, time)
-        (dist : _ Automata.Simple.dist list)
+        (dist : _ Automata.Simple.dist_binding list)
         (system_spec : _ Rtccsl.specification)
         (chain : C.t chain)
     =
-    let env = A.of_spec system_spec in
+    let session = create () in
+    let env = A.of_spec (with_spec session system_spec) in
     let trace, deadlock =
-      A.gen_trace (S.Var.use_dist dist) s env
+      A.gen_trace (ST.Var.use_dist (List.map (with_dist session) dist)) s env
       |> A.Trace.take ~steps:n
       |> A.Trace.until ~horizon:time
     in
-    let trace = (A.Trace.persist trace) in
-    let full_chains, dangling_chains = trace_to_chain sem chain (A.Trace.to_seq trace) in
+    let trace = A.Trace.persist trace in
+    let session_chain = map_chain (to_offset session) chain in
+    let full_chains, dangling_chains =
+      trace_to_chain sem session_chain (A.Trace.to_seq trace)
+    in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    trace, deadlock, full_chains, dangling_chains
+    session, trace, !deadlock, full_chains, dangling_chains
   ;;
 
-  let reaction_times pairs_to_compare chains =
+  let reaction_times session pairs_to_compare chains =
     chains
     |> Seq.map (fun (t : chain_instance) ->
       ( t.misses
+        |> CMap.to_seq
+        |> Seq.map (fun (k, v) -> of_offset session k, v)
+        |> Hashtbl.of_seq
       , pairs_to_compare
         |> List.to_seq
         |> Seq.map
              N.(
                fun (source, target) ->
-                 (source, target), CMap.find target t.trace - CMap.find source t.trace)
+                 ( (source, target)
+                 , CMap.find (to_offset session target) t.trace
+                   - CMap.find (to_offset session source) t.trace ))
         |> Hashtbl.of_seq ))
   ;;
 
@@ -281,10 +295,10 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     |> IMap.to_seq
   ;;
 
-  let print_statistics category chains =
+  let print_statistics session category chains =
     let stats = statistics category chains in
     let total = Seq.fold_left (fun total (_, x) -> total + x) 0 stats |> Float.of_int in
-    Printf.printf "%s | %f\n" (C.to_string category) total;
+    Printf.printf "%s | %f\n" (C.to_string (of_offset session category)) total;
     print_endline
       (Seq.to_string
          ~sep:"\n"
@@ -328,7 +342,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
                 Fun.id
                 (List.map
                    (fun h ->
-                      let v = Option.value ~default:0 (CMap.find_opt h misses) in
+                      let v = Option.value ~default:0 (Hashtbl.find_opt misses h) in
                       Int.to_string v)
                    categories
                  @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
@@ -336,4 +350,35 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     in
     Buffer.contents buf
   ;;
+
+  module Export = struct
+    module Set = Set.Make (String)
+    module Inner = Automata.Simple.Export.Make (String) (N) (Set)
+
+    let convert_trace session trace =
+      Iter.map
+        (fun (l, n) -> l |> A.L.to_iter |> Iter.map (of_offset session) |> Set.of_iter, n)
+        trace
+    ;;
+
+    let trace_to_svgbob ?numbers ?precision ~tasks session clocks trace =
+      Inner.trace_to_svgbob
+        ?numbers
+        ?precision
+        ~tasks
+        clocks
+        (convert_trace session trace)
+    ;;
+
+    let trace_to_vertical_svgbob ?numbers ~tasks session clocks channel trace =
+      Inner.trace_to_vertical_svgbob
+        ?numbers
+        ~tasks
+        clocks
+        channel
+        (convert_trace session trace)
+    ;;
+
+    let trace_to_csl session trace = Inner.trace_to_csl (convert_trace session trace)
+  end
 end

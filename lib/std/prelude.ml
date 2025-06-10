@@ -462,6 +462,7 @@ module Tuple = struct
   let map2 f (x, y) = f x, f y
   let map3 f (x, y, z) = f x, f y, f z
   let map4 f (x, y, z, w) = f x, f y, f z, f w
+  let map5 f (x, y, z, w, v) = f x, f y, f z, f w, f v
   let fn2 f (x, y) = f x y
   let compare2 c1 c2 (x1, y1) (x2, y2) = if c1 x1 x2 = 0 then c2 y1 y2 else c1 x1 x2
 
@@ -541,7 +542,14 @@ module Map = struct
     let value ~default k map = Option.value ~default (find_opt k map)
   end
 end
-
+module Set = struct
+include Set
+module Make (K : OrderedType) = struct
+include Make(K)
+let to_iter s f = iter f s
+let of_iter iter = let acc = ref empty in iter (fun e -> acc:= add e !acc); !acc
+end
+end
 (**[fixpoint init eq f start] returns a value [v] such that [f(v) = v] by starting from [v].*)
 let rec fixpoint eq f v =
   let next = f v in

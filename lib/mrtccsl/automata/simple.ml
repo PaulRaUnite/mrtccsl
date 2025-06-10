@@ -22,7 +22,7 @@ let truncated_guassian_rvs ~a ~b ~mu ~sigma =
 ;;
 
 (**Specifies the distribution of the time variable. *)
-type ('v, 't) dist = 'v * 't distribution [@@deriving map]
+type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
 
 module type ID = sig
   open Interface
@@ -59,6 +59,9 @@ module type Label = sig
   val to_seq : t -> elt Seq.t
   val of_seq : elt Seq.t -> t
   val is_empty : t -> bool
+  val iter : (elt -> unit) -> t -> unit
+  val to_iter : t -> (elt -> unit) -> unit
+  val of_iter : ((elt -> unit) -> unit) -> t
 end
 
 module type Strategy = sig
@@ -75,7 +78,7 @@ module type Strategy = sig
     type t = var -> I.t -> I.t
 
     val none : t
-    val use_dist : (var, num) dist list -> t
+    val use_dist : (var, num) dist_binding list -> t
   end
 
   module Num : sig
@@ -102,6 +105,20 @@ module type Strategy = sig
   end
 end
 
+module type Trace = sig
+  type t
+  type solution
+  type num
+
+  val persist : t -> t
+  val to_iter : t -> solution Iter.t
+  val to_seq : t -> solution Seq.t
+  val of_seq : solution Seq.t -> t
+  val is_empty : t -> bool
+  val until : horizon:num -> t -> t * bool ref
+  val take : steps:int -> t -> t
+end
+
 module type S = sig
   module C : ID
 
@@ -111,23 +128,10 @@ module type S = sig
 
   module N : Num
   module I : Interval.I with type num = N.t
-  module L : Label with type elt = clock
+  module L : Label with type elt := clock
 
   type guard = (L.t * I.t) Iter.t
   type solution = L.t * N.t
-
-  module Trace : sig
-    type t
-
-    val persist : t -> t
-    val to_iter : t -> solution Iter.t
-    val to_seq : t -> solution Seq.t
-    val of_seq : solution Seq.t -> t
-    val is_empty : t -> bool
-    val until : horizon:N.t -> t -> t * bool ref
-    val take : steps:int -> t -> t
-  end
-
   type var_strategy = var -> I.t -> I.t
   type sol_strategy = guard -> solution option
 
@@ -140,42 +144,23 @@ module type S = sig
   type limits = var -> I.t
   type sim
 
+  module Trace : Trace with type solution := solution and type num := N.t
+
   val empty_sim : sim
   val of_spec : (clock, param, var, N.t) Rtccsl.specification -> sim
   val gen_trace : var_strategy -> sol_strategy -> sim -> Trace.t
   val bisimulate : var_strategy -> sol_strategy -> sim -> sim -> Trace.t
   val accept_trace : sim -> N.t -> Trace.t -> N.t option
-
-  val trace_to_svgbob
-    :  ?numbers:bool
-    -> ?tasks:(var * var * var * var * var) list
-    -> ?precision:int
-    -> clock list
-    -> Trace.t
-    -> string
-
-  val trace_to_vertical_svgbob
-    :  ?numbers:bool
-    -> ?tasks:(var * var * var * var * var) list
-    -> clock list
-    -> out_channel
-    -> Trace.t
-    -> unit
-
-  val trace_to_csl : Trace.t -> string
 end
 
-(*TODO: replace clocks with integers *)
-(*TODO: specialize the bitvectorset *)
-(*TODO: and generalize bitvector set to use any bijection *)
 (*TODO: replace seq with iter in simulation *)
-(*TODO: make reaction chain extraction streamable and add index to avade N^2 complexity *)
+(*TODO: make reaction chain extraction streamable and add index to avoid N^2 complexity *)
 (*TODO: add size hints for trace collection to avoid reallocation *)
 module MakeWithBijection
     (C : ID)
     (N : Num)
-    (B : BitvectorSet.BijectionToInt.S with type elt = C.t) :
-  S with module C = C and module N = N = struct
+    (B : BitvectorSet.BijectionToInt.S with type elt = C.t) =
+struct
   module C = C
 
   type clock = C.t
@@ -188,9 +173,7 @@ module MakeWithBijection
     include BitvectorSet.Make (B)
 
     let to_string label =
-      match to_list label with
-      | [] -> "∅"
-      | l -> List.to_string C.to_string l
+      if is_empty label then "∅" else Iter.to_string ~sep:"," C.to_string (to_iter label)
     ;;
   end
 
@@ -261,6 +244,7 @@ module MakeWithBijection
     { limits = (fun _ -> failwith "not implemented")
     ; automata = noop_guard, noop_transition, L.empty
     }
+  ;;
 
   let variant_to_string (label, cond) =
     Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
@@ -875,314 +859,9 @@ module MakeWithBijection
 
   let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = Iter.filter (fun (l, _) -> not (L.is_empty l)) trace
-
-  (*TODO: translate into a printer. *)
-  let trace_to_svgbob ?(numbers = false) ?(tasks = []) ?precision clocks trace =
-    if List.is_empty clocks
-    then ""
-    else (
-      let clocks =
-        clocks
-        |> List.to_seq
-        |> Seq.filter (fun c ->
-          not
-            (List.exists (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d) tasks))
-        |> Array.of_seq
-      in
-      let clock_strs = Array.map C.to_string clocks in
-      let len = Array.length clocks in
-      let biggest_clock =
-        clock_strs |> Array.to_seq |> Seq.map String.length |> Seq.fold_left Int.max 0
-      in
-      let biggest_task_name =
-        tasks
-        |> List.map (fun (name, _, _, _, _) -> String.length (C.to_string name))
-        |> List.fold_left Int.max 0
-      in
-      let graph_prefix = Int.max biggest_task_name biggest_clock in
-      let buffers =
-        Array.init len (fun i ->
-          let c = Array.get clock_strs i in
-          let b = Buffer.create (graph_prefix + 32) in
-          let symbol = if i = 0 then '+' else '|' in
-          Printf.bprintf b "%*s %c-" graph_prefix c symbol;
-          b)
-      and footer = Buffer.create (graph_prefix + 32)
-      and history = Buffer.create (graph_prefix + 32) in
-      let _ =
-        Buffer.add_chars footer graph_prefix ' ';
-        Buffer.add_string footer " +-";
-        Buffer.add_chars history (graph_prefix + 3) ' '
-      in
-      let clock_counters = Array.make len 0 in
-      let counter i =
-        let c = clock_counters.(i) in
-        let _ = Array.set clock_counters i (c + 1) in
-        c + 1
-      in
-      let marker i =
-        if numbers
-        then Int.to_string (counter i)
-        else (
-          match Int.rem i 6 with
-          | 0 -> "*"
-          | 1 -> "o"
-          | 2 -> "◆"
-          | 3 -> ">"
-          | 4 -> "O"
-          | 5 -> "^"
-          | 6 -> "#"
-          | _ -> failwith "unreachable")
-      in
-      let module TMap =
-        Map.Make (struct
-          type t = C.t * C.t * C.t * C.t
-
-          let compare = Tuple.compare_same4 C.compare
-        end)
-      in
-      let serialize_label task_state (l, n') =
-        (* let delta = N.(n' - n) in *)
-        let time_label = N.to_string n' in
-        let time_label =
-          match precision with
-          | Some precision ->
-            let dot_index = String.index time_label '.' in
-            let right_bound =
-              Int.min (String.length time_label) (dot_index + precision + 1)
-            in
-            String.sub time_label 0 right_bound
-          | None -> time_label
-        in
-        let step_len = String.length time_label + 1 in
-        let print_task ((name, r, s, f, d), (buf, executes)) =
-          let ready = L.mem r l
-          and start = L.mem s l
-          and finish = L.mem f l
-          and deadline = L.mem d l in
-          let executes = (executes || start) && not finish in
-          let symbol =
-            match ready, deadline with
-            | true, true -> "╳"
-            | true, false -> "("
-            | false, true -> ")"
-            | false, false -> if start || finish || executes then "#" else "-"
-          in
-          Buffer.add_string buf symbol;
-          if executes
-          then Buffer.add_chars buf (step_len - 1) '#'
-          else Buffer.add_chars buf (step_len - 1) '-';
-          (name, r, s, f, d), (buf, executes)
-        in
-        let task_state = List.map print_task task_state in
-        let print_clock placed i c =
-          let buf = Array.get buffers i in
-          let symbol, placed =
-            if L.mem c l then marker i, true else if placed then "|", true else "-", false
-          in
-          Buffer.add_string buf symbol;
-          Buffer.add_chars buf (step_len - String.grapheme_length symbol) '-';
-          (*FIXME: numbers can have non-1 width, will crash when number is bigger than window length*)
-          placed
-        in
-        let placed = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
-        Buffer.add_string footer (if placed then "┴" else "+");
-        Buffer.add_chars footer (step_len - 1) '-';
-        Printf.bprintf history "%s " time_label;
-        task_state
-      in
-      let task_state =
-        Iter.fold
-          serialize_label
-          (List.map (fun t -> t, (Buffer.create 32, false)) tasks)
-          trace
-      in
-      let total = Buffer.create 1024 in
-      let _ =
-        List.iter
-          (fun ((name, _, _, _, _), (buf, _)) ->
-             Printf.bprintf total "%*s |-" graph_prefix (C.to_string name);
-             Buffer.add_buffer total buf;
-             Buffer.add_char total '\n';
-             Buffer.add_chars total graph_prefix ' ';
-             Buffer.add_string total " |\n")
-          task_state;
-        Array.iter
-          (fun b ->
-             Buffer.add_buffer total b;
-             Buffer.add_char total '\n')
-          buffers;
-        Buffer.add_buffer total footer;
-        Buffer.add_string total ">\n";
-        Buffer.add_buffer total history;
-        Buffer.add_string total "seconds"
-      in
-      Buffer.contents total)
-  ;;
-
-  (*TODO: translate into a printer https://ocaml.org/manual/5.3/api/Printf.html *)
-  let trace_to_csl trace =
-    let serialize (l, _) = List.to_string ~sep:"," C.to_string (L.to_list l) in
-    Iter.to_string ~sep:",STEP," serialize trace
-  ;;
-
-  let trace_to_vertical_svgbob
-        ?(numbers = false)
-        ?(tasks = [])
-        clocks
-        (ch : out_channel)
-        trace
-    =
-    if List.is_empty clocks
-    then ()
-    else (
-      let marker =
-        if numbers
-        then fun _ j -> Int.to_string j
-        else
-          fun i _ ->
-            match Int.rem i 9 with
-            | 0 -> "*"
-            | 1 -> "o"
-            | 2 -> "◆"
-            | 3 -> ">"
-            | 4 -> "O"
-            | 5 -> "^"
-            | 6 -> "#"
-            | 7 -> "<"
-            | 8 -> "v"
-            | _ -> failwith "unreachable"
-      in
-      let clocks =
-        clocks
-        |> List.filter (fun c ->
-          not
-            (List.exists (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d) tasks))
-        |> Array.of_list
-      in
-      let width =
-        List.fold_left
-          (fun off (name, _, _, _, _) ->
-             let s = C.to_string name in
-             Printf.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
-             off + 8)
-          0
-          tasks
-      in
-      let width =
-        Array.fold_left
-          (fun off clock ->
-             let s = C.to_string clock in
-             Printf.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
-             off + 2)
-          width
-          clocks
-      in
-      let _ =
-        for _ = 1 to List.length tasks do
-          Printf.fprintf ch "-+---+--"
-        done
-      in
-      let _ =
-        for _ = 1 to Array.length clocks do
-          Printf.fprintf ch "+-"
-        done
-      in
-      let _ = Printf.fprintf ch "+\n" in
-      let serialize_record (tasks, clocks) (l, n) =
-        let new_tasks =
-          Array.map
-            (fun ((name, r, s, f, d), executes, constrains) ->
-               let ready = L.mem r l
-               and start = L.mem s l
-               and finish = L.mem f l
-               and deadline = L.mem d l in
-               let now_executes = (executes || start) && not finish
-               and now_constrains = (constrains || ready) && not deadline in
-               let _ =
-                 match executes, now_executes with
-                 | false, true -> Printf.fprintf ch ".+."
-                 | true, true ->
-                   Printf.fprintf
-                     ch
-                     (if start then if finish then "###" else ".-." else "| |")
-                 | false, false ->
-                   Printf.fprintf ch (if start && finish then "###" else " | ")
-                 | true, false -> Printf.fprintf ch "'+'"
-               in
-               Printf.fprintf ch " ";
-               let _ =
-                 match constrains, now_constrains with
-                 | false, true -> Printf.fprintf ch ".+."
-                 | true, true ->
-                   Printf.fprintf
-                     ch
-                     (if ready then if deadline then ":=:" else ".-." else ": :")
-                 | false, false ->
-                   Printf.fprintf ch (if ready && deadline then ".+." else " | ")
-                 | true, false -> Printf.fprintf ch "'+'"
-               in
-               Printf.fprintf ch " ";
-               (name, r, s, f, d), now_executes, now_constrains)
-            tasks
-        in
-        let horizontal = ref false in
-        let new_clocks =
-          Array.mapi
-            (fun i (clock, count) ->
-               let count =
-                 if L.mem clock l
-                 then (
-                   horizontal := true;
-                   Printf.fprintf ch "%s" (marker i count);
-                   count + 1)
-                 else (
-                   Printf.fprintf ch "+";
-                   count)
-               in
-               Printf.fprintf ch (if !horizontal then "-" else " ");
-               clock, count)
-            clocks
-        in
-        let time_label = N.to_string n in
-        Printf.fprintf ch "+ %s\n" time_label;
-        Array.iter
-          (fun ((_, r, _, _, d), executes, constrains) ->
-             let ready = L.mem r l
-             and deadline = L.mem d l in
-             Printf.fprintf ch (if executes then "| | " else " |  ");
-             Printf.fprintf
-               ch
-               (if constrains
-                then ": : "
-                else if ready && deadline
-                then "'+' "
-                else " |  "))
-          new_tasks;
-        Array.iter (fun _ -> Printf.fprintf ch "| ") new_clocks;
-        Printf.fprintf ch "|\n";
-        new_tasks, new_clocks
-      in
-      let task_states =
-        tasks |> List.map (fun task -> task, false, false) |> Array.of_list
-      in
-      let clock_states = Array.map (fun clock -> clock, 0) clocks in
-      let _ = Iter.fold serialize_record (task_states, clock_states) trace in
-      let _ =
-        for _ = 0 to width do
-          Printf.fprintf ch " "
-        done
-      in
-      Printf.fprintf ch "v")
-  ;;
 end
 
-module Strategy (A : S) :
-  Strategy
-  with type var = A.var
-   and type num = A.N.t
-   and module I = A.I
-   and module L = A.L = struct
+module Strategy (A : S) = struct
   open A
   module CMap = Map.Make (A.C)
 
@@ -1330,11 +1009,9 @@ module Hashed = struct
     include MakeWithBijection (C) (N) (BitvectorSet.BijectionToInt.Hashed (C))
   end
 
-  (* module TraceLevel (C : ID) (N : Num) : S with module C = C and module N = N = struct
+  module WithSession (C : ID) (N : Num) = struct
     module Inner =
       MakeWithBijection (Number.Integer) (N) (BitvectorSet.BijectionToInt.Int)
-
-    module C = C
 
     module Session = struct
       module H = Hashtbl.Make (C)
@@ -1352,85 +1029,386 @@ module Hashed = struct
 
       let save (mapping, inverse) k =
         match H.find_opt mapping k with
-        | Some _ -> ()
+        | Some x -> x
         | None ->
           let x = Dynarray.length inverse in
           H.add mapping k x;
-          Dynarray.add_last inverse k
+          Dynarray.add_last inverse k;
+          x
+      ;;
+
+      let with_spec session spec =
+        let f k = save session k in
+        Rtccsl.map_specification f f f Fun.id spec
+      ;;
+
+      let with_dist session dist =
+        let f = save session in
+        map_dist_binding f Fun.id dist
       ;;
     end
-
-    type clock = C.t
-    type param = C.t
-    type var = C.t
-
-    module N = Inner.N
-    module I = Inner.I
 
     module L = struct
-      include Set.Make (C)
-
-      let to_string label =
-        match to_list label with
-        | [] -> "∅"
-        | l -> List.to_string C.to_string l
-      ;;
-
-      let from_inner s label =
-        label |> Inner.L.to_seq |> Seq.map (Session.of_offset s) |> of_seq
-      ;;
-
-      let to_inner s label =
-        label |> to_seq |> Seq.map (Session.to_offset s) |> Inner.L.of_seq
-      ;;
+      let to_iter s l = l |> Inner.L.to_iter |> Iter.map (Session.of_offset s)
+      let to_seq s l = l |> Inner.L.to_seq |> Seq.map (Session.of_offset s)
     end
 
-    type num_cond = I.t
-    type guard = (L.t * num_cond) Iter.t
-    type solution = L.t * N.t
-
-  type var_strategy = var -> I.t -> I.t
-  type sol_strategy = guard -> solution option
     module Trace = struct
-      type t = Session.t * Inner.Trace.t
-
-      let to_seq s trace =
-        trace |> Inner.Trace.to_seq |> Seq.map (fun (l, n) -> L.from_inner s l, n)
+      let to_iter s t =
+        t |> Inner.Trace.to_iter |> Iter.map (fun (l, n) -> L.to_iter s l, n)
       ;;
 
-      let of_seq s trace =
-        trace |> Seq.map (fun (l, n) -> L.to_inner s l, n) |> Inner.Trace.of_seq
-      ;;
+      let to_seq s t = t |> Inner.Trace.to_seq |> Seq.map (fun (l, n) -> L.to_seq s l, n)
     end
-
-    type vars =
-      { current : var -> I.t
-      ; consume : var -> unit
-      }
-
-    type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
-    type limits = var -> I.t
-    type sim = Session.t * Inner.sim
-
-    let of_spec spec =
-      let session = Session.create () in
-      let f () k = Session.save session k in
-      let _ = Rtccsl.fold_specification f f f (fun () _ -> ()) () spec in
-      let f = Session.to_offset session in
-      let spec = Rtccsl.map_specification f f f Fun.id spec in
-      session, Inner.of_spec spec
-    ;;
-
-    let gen_trace var_strat sol_strat (session, sim) =
-      session, Inner.gen_trace var_strat sol_strat sim
-    ;;
-
-    let bisimulate vs ss s1 s2 =
-      Inner.bisimulate
-  end *)
+  end
 end
 
 module Make = Hashed.BijectionLevel
+module Trace () = struct end
+
+module Export = struct
+  (* module type S = sig
+    type trace
+    type clock
+
+    val trace_to_svgbob
+      :  ?numbers:bool
+      -> ?tasks:(clock * clock * clock * clock * clock) list
+      -> ?precision:int
+      -> clock list
+      -> trace
+      -> string
+
+    val trace_to_vertical_svgbob
+      :  ?numbers:bool
+      -> ?tasks:(clock * clock * clock * clock * clock) list
+      -> clock list
+      -> out_channel
+      -> trace
+      -> unit
+
+    val trace_to_csl : trace -> string
+  end *)
+
+  module Make
+      (C : sig
+         include Interface.Stringable
+         include Interface.OrderedType with type t := t
+       end)
+      (N : Num)
+      (L : sig
+             type t
+             type elt
+
+             val mem : elt -> t -> bool
+             val to_iter : t -> (elt -> unit) -> unit
+           end
+           with type elt = C.t) =
+  struct
+    (*TODO: translate into a printer. *)
+    let trace_to_svgbob ?(numbers = false) ?precision ~tasks clocks trace =
+      if List.is_empty clocks
+      then ""
+      else (
+        let clocks =
+          clocks
+          |> List.to_seq
+          |> Seq.filter (fun c ->
+            not
+              (List.exists
+                 (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d)
+                 tasks))
+          |> Array.of_seq
+        in
+        let clock_strs = Array.map C.to_string clocks in
+        let len = Array.length clocks in
+        let biggest_clock =
+          clock_strs |> Array.to_seq |> Seq.map String.length |> Seq.fold_left Int.max 0
+        in
+        let biggest_task_name =
+          tasks
+          |> List.map (fun (name, _, _, _, _) -> String.length (C.to_string name))
+          |> List.fold_left Int.max 0
+        in
+        let graph_prefix = Int.max biggest_task_name biggest_clock in
+        let buffers =
+          Array.init len (fun i ->
+            let c = Array.get clock_strs i in
+            let b = Buffer.create (graph_prefix + 32) in
+            let symbol = if i = 0 then '+' else '|' in
+            Printf.bprintf b "%*s %c-" graph_prefix c symbol;
+            b)
+        and footer = Buffer.create (graph_prefix + 32)
+        and history = Buffer.create (graph_prefix + 32) in
+        let _ =
+          Buffer.add_chars footer graph_prefix ' ';
+          Buffer.add_string footer " +-";
+          Buffer.add_chars history (graph_prefix + 3) ' '
+        in
+        let clock_counters = Array.make len 0 in
+        let counter i =
+          let c = clock_counters.(i) in
+          let _ = Array.set clock_counters i (c + 1) in
+          c + 1
+        in
+        let marker i =
+          if numbers
+          then Int.to_string (counter i)
+          else (
+            match Int.rem i 6 with
+            | 0 -> "*"
+            | 1 -> "o"
+            | 2 -> "◆"
+            | 3 -> ">"
+            | 4 -> "O"
+            | 5 -> "^"
+            | 6 -> "#"
+            | _ -> failwith "unreachable")
+        in
+        let module TMap =
+          Map.Make (struct
+            type t = C.t * C.t * C.t * C.t
+
+            let compare = Tuple.compare_same4 C.compare
+          end)
+        in
+        let serialize_label task_state (l, n') =
+          (* let delta = N.(n' - n) in *)
+          let time_label = N.to_string n' in
+          let time_label =
+            match precision with
+            | Some precision ->
+              let dot_index = String.index time_label '.' in
+              let right_bound =
+                Int.min (String.length time_label) (dot_index + precision + 1)
+              in
+              String.sub time_label 0 right_bound
+            | None -> time_label
+          in
+          let step_len = String.length time_label + 1 in
+          let print_task ((name, r, s, f, d), (buf, executes)) =
+            let ready = L.mem r l
+            and start = L.mem s l
+            and finish = L.mem f l
+            and deadline = L.mem d l in
+            let executes = (executes || start) && not finish in
+            let symbol =
+              match ready, deadline with
+              | true, true -> "╳"
+              | true, false -> "("
+              | false, true -> ")"
+              | false, false -> if start || finish || executes then "#" else "-"
+            in
+            Buffer.add_string buf symbol;
+            if executes
+            then Buffer.add_chars buf (step_len - 1) '#'
+            else Buffer.add_chars buf (step_len - 1) '-';
+            (name, r, s, f, d), (buf, executes)
+          in
+          let task_state = List.map print_task task_state in
+          let print_clock placed i c =
+            let buf = Array.get buffers i in
+            let symbol, placed =
+              if L.mem c l
+              then marker i, true
+              else if placed
+              then "|", true
+              else "-", false
+            in
+            Buffer.add_string buf symbol;
+            Buffer.add_chars buf (step_len - String.grapheme_length symbol) '-';
+            (*FIXME: numbers can have non-1 width, will crash when number is bigger than window length*)
+            placed
+          in
+          let placed = Seq.fold_lefti print_clock false (Array.to_seq clocks) in
+          Buffer.add_string footer (if placed then "┴" else "+");
+          Buffer.add_chars footer (step_len - 1) '-';
+          Printf.bprintf history "%s " time_label;
+          task_state
+        in
+        let task_state =
+          Iter.fold
+            serialize_label
+            (List.map (fun t -> t, (Buffer.create 32, false)) tasks)
+            trace
+        in
+        let total = Buffer.create 1024 in
+        let _ =
+          List.iter
+            (fun ((name, _, _, _, _), (buf, _)) ->
+               Printf.bprintf total "%*s |-" graph_prefix (C.to_string name);
+               Buffer.add_buffer total buf;
+               Buffer.add_char total '\n';
+               Buffer.add_chars total graph_prefix ' ';
+               Buffer.add_string total " |\n")
+            task_state;
+          Array.iter
+            (fun b ->
+               Buffer.add_buffer total b;
+               Buffer.add_char total '\n')
+            buffers;
+          Buffer.add_buffer total footer;
+          Buffer.add_string total ">\n";
+          Buffer.add_buffer total history;
+          Buffer.add_string total "seconds"
+        in
+        Buffer.contents total)
+    ;;
+
+    (*TODO: translate into a printer https://ocaml.org/manual/5.3/api/Printf.html *)
+    let trace_to_csl trace =
+      let serialize (l, _) = Iter.to_string ~sep:"," C.to_string (L.to_iter l) in
+      Iter.to_string ~sep:",STEP," serialize trace
+    ;;
+
+    let trace_to_vertical_svgbob ?(numbers = false) ~tasks clocks (ch : out_channel) trace
+      =
+      if List.is_empty clocks
+      then ()
+      else (
+        let marker =
+          if numbers
+          then fun _ j -> Int.to_string j
+          else
+            fun i _ ->
+              match Int.rem i 9 with
+              | 0 -> "*"
+              | 1 -> "o"
+              | 2 -> "◆"
+              | 3 -> ">"
+              | 4 -> "O"
+              | 5 -> "^"
+              | 6 -> "#"
+              | 7 -> "<"
+              | 8 -> "v"
+              | _ -> failwith "unreachable"
+        in
+        let clocks =
+          clocks
+          |> List.filter (fun c ->
+            not
+              (List.exists
+                 (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d)
+                 tasks))
+          |> Array.of_list
+        in
+        let width =
+          List.fold_left
+            (fun off (name, _, _, _, _) ->
+               let s = C.to_string name in
+               Printf.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
+               off + 8)
+            0
+            tasks
+        in
+        let width =
+          Array.fold_left
+            (fun off clock ->
+               let s = C.to_string clock in
+               Printf.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
+               off + 2)
+            width
+            clocks
+        in
+        let _ =
+          for _ = 1 to List.length tasks do
+            Printf.fprintf ch "-+---+--"
+          done
+        in
+        let _ =
+          for _ = 1 to Array.length clocks do
+            Printf.fprintf ch "+-"
+          done
+        in
+        let _ = Printf.fprintf ch "+\n" in
+        let serialize_record (tasks, clocks) (l, n) =
+          let new_tasks =
+            Array.map
+              (fun ((name, r, s, f, d), executes, constrains) ->
+                 let ready = L.mem r l
+                 and start = L.mem s l
+                 and finish = L.mem f l
+                 and deadline = L.mem d l in
+                 let now_executes = (executes || start) && not finish
+                 and now_constrains = (constrains || ready) && not deadline in
+                 let _ =
+                   match executes, now_executes with
+                   | false, true -> Printf.fprintf ch ".+."
+                   | true, true ->
+                     Printf.fprintf
+                       ch
+                       (if start then if finish then "###" else ".-." else "| |")
+                   | false, false ->
+                     Printf.fprintf ch (if start && finish then "###" else " | ")
+                   | true, false -> Printf.fprintf ch "'+'"
+                 in
+                 Printf.fprintf ch " ";
+                 let _ =
+                   match constrains, now_constrains with
+                   | false, true -> Printf.fprintf ch ".+."
+                   | true, true ->
+                     Printf.fprintf
+                       ch
+                       (if ready then if deadline then ":=:" else ".-." else ": :")
+                   | false, false ->
+                     Printf.fprintf ch (if ready && deadline then ".+." else " | ")
+                   | true, false -> Printf.fprintf ch "'+'"
+                 in
+                 Printf.fprintf ch " ";
+                 (name, r, s, f, d), now_executes, now_constrains)
+              tasks
+          in
+          let horizontal = ref false in
+          let new_clocks =
+            Array.mapi
+              (fun i (clock, count) ->
+                 let count =
+                   if L.mem clock l
+                   then (
+                     horizontal := true;
+                     Printf.fprintf ch "%s" (marker i count);
+                     count + 1)
+                   else (
+                     Printf.fprintf ch "+";
+                     count)
+                 in
+                 Printf.fprintf ch (if !horizontal then "-" else " ");
+                 clock, count)
+              clocks
+          in
+          let time_label = N.to_string n in
+          Printf.fprintf ch "+ %s\n" time_label;
+          Array.iter
+            (fun ((_, r, _, _, d), executes, constrains) ->
+               let ready = L.mem r l
+               and deadline = L.mem d l in
+               Printf.fprintf ch (if executes then "| | " else " |  ");
+               Printf.fprintf
+                 ch
+                 (if constrains
+                  then ": : "
+                  else if ready && deadline
+                  then "'+' "
+                  else " |  "))
+            new_tasks;
+          Array.iter (fun _ -> Printf.fprintf ch "| ") new_clocks;
+          Printf.fprintf ch "|\n";
+          new_tasks, new_clocks
+        in
+        let task_states =
+          tasks |> List.map (fun task -> task, false, false) |> Array.of_list
+        in
+        let clock_states = Array.map (fun clock -> clock, 0) clocks in
+        let _ = Iter.fold serialize_record (task_states, clock_states) trace in
+        let _ =
+          for _ = 0 to width do
+            Printf.fprintf ch " "
+          done
+        in
+        Printf.fprintf ch "v")
+    ;;
+  end
+end
 
 let%test_module _ =
   (module struct

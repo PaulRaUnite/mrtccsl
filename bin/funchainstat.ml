@@ -3,8 +3,9 @@ open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
-module S = FnCh.S
+module S = FnCh.ST
 open Number.Rational
+open FnCh.S.Session
 
 let step = of_int 1 / of_int 1000
 
@@ -117,11 +118,11 @@ let parallel_reaction_times
   let _, _, horizon = params in
   let start, finish = chain_start_finish_clocks func_chain_spec in
   let body _ =
-    let _, _, full_chains, partial_chains =
+    let s, _, _, full_chains, partial_chains =
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times [ start, finish ] (List.to_seq full_chains)
+      FnCh.reaction_times s [ start, finish ] (List.to_seq full_chains)
     in
     if with_partial
     then
@@ -129,11 +130,15 @@ let parallel_reaction_times
       |> List.to_seq
       |> Seq.map (fun (t : partial_chain) ->
         ( t.misses
+          |> A.CMap.to_seq
+          |> Seq.map (fun (k, v) -> S.Session.of_offset s k, v)
+          |> Hashtbl.of_seq
         , [ start, finish ]
           |> List.to_seq
           |> Seq.map (fun (source, target) ->
             ( (source, target)
-            , CMap.value ~default:horizon target t.trace - CMap.find source t.trace ))
+            , CMap.value ~default:horizon (S.Session.to_offset s target) t.trace
+              - CMap.find (S.Session.to_offset s source) t.trace ))
           |> Hashtbl.of_seq ))
     else full_reaction_times
   in
@@ -188,7 +193,7 @@ let process name spec =
         func_chain_spec
         simulations
     else (
-      let trace, deadlock, chains, partial_chains =
+      let s, trace, deadlock, chains, partial_chains =
         FnCh.functional_chains
           ~sem
           (strategy, steps, horizon)
@@ -197,13 +202,14 @@ let process name spec =
           func_chain_spec
       in
       let chains = List.to_seq chains in
-      let reactions = FnCh.reaction_times points_of_interest chains in
-      let _ = Printf.printf "deadlock: %b\n" !deadlock in
+      let reactions = FnCh.reaction_times s points_of_interest chains in
+      let _ = Printf.printf "deadlock: %b\n" deadlock in
       let svgbob_str =
-        A.trace_to_svgbob
+        Export.trace_to_svgbob
           ~numbers:true
           ~precision:2
           ~tasks:Rtccsl.Examples.Macro.[ task_names "s"; task_names "c"; task_names "a" ]
+          s
           (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
           trace
       in
@@ -218,17 +224,17 @@ let process name spec =
           (Seq.to_string
              ~sep:"\n"
              (fun (t : chain_instance) ->
-                FnCh.CMap.to_string String.to_string to_string t.trace)
+                FnCh.CMap.to_string (of_offset s >> String.to_string) to_string t.trace)
              chains);
         Printf.printf
           "partial chains:\n%s\n"
-          (List.to_string ~sep:"\n" partial_chain_to_string partial_chains);
+          (List.to_string ~sep:"\n" (partial_chain_to_string s) partial_chains);
         Printf.printf
           "reaction times: %s"
           (FnCh.reaction_times_to_string ~sep:"\n" reactions)
       in
       let trace_file = open_out "./cadp_trace.txt" in
-      let _ = Printf.fprintf trace_file "%s" (A.trace_to_csl trace) in
+      let _ = Printf.fprintf trace_file "%s" (Export.trace_to_csl s trace) in
       let _ = close_out trace_file in
       reactions)
   in
