@@ -1106,10 +1106,9 @@ module Export = struct
            end
            with type elt = C.t) =
   struct
-    (*TODO: translate into a printer. *)
-    let trace_to_svgbob ?(numbers = false) ?precision ~tasks clocks trace =
+    let trace_to_svgbob ?(numbers = false) ?precision ~tasks clocks formatter trace =
       if List.is_empty clocks
-      then ""
+      then ()
       else (
         let clocks =
           clocks
@@ -1253,17 +1252,21 @@ module Export = struct
           Buffer.add_buffer total history;
           Buffer.add_string total "seconds"
         in
-        Buffer.contents total)
+        Format.fprintf formatter "%s" (Buffer.contents total))
     ;;
 
-    (*TODO: translate into a printer https://ocaml.org/manual/5.3/api/Printf.html *)
-    let trace_to_csl trace =
-      let serialize (l, _) = Iter.to_string ~sep:"," C.to_string (L.to_iter l) in
-      Iter.to_string ~sep:",STEP," serialize trace
+    let print_csl formatter trace =
+      let serialize f (l, _) =
+        Iter.pp_seq
+          ~sep:","
+          (fun f v -> Format.fprintf f "%s" (C.to_string v))
+          f
+          (L.to_iter l)
+      in
+      Iter.pp_seq ~sep:",STEP," serialize formatter trace
     ;;
 
-    let trace_to_vertical_svgbob ?(numbers = false) ~tasks clocks (ch : out_channel) trace
-      =
+    let trace_to_vertical_svgbob ?(numbers = false) ~tasks clocks ch trace =
       if List.is_empty clocks
       then ()
       else (
@@ -1297,7 +1300,7 @@ module Export = struct
           List.fold_left
             (fun off (name, _, _, _, _) ->
                let s = C.to_string name in
-               Printf.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
+               Format.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
                off + 8)
             0
             tasks
@@ -1306,22 +1309,22 @@ module Export = struct
           Array.fold_left
             (fun off clock ->
                let s = C.to_string clock in
-               Printf.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
+               Format.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
                off + 2)
             width
             clocks
         in
         let _ =
           for _ = 1 to List.length tasks do
-            Printf.fprintf ch "-+---+--"
+            Format.fprintf ch "-+---+--"
           done
         in
         let _ =
           for _ = 1 to Array.length clocks do
-            Printf.fprintf ch "+-"
+            Format.fprintf ch "+-"
           done
         in
-        let _ = Printf.fprintf ch "+\n" in
+        let _ = Format.fprintf ch "+\n" in
         let serialize_record (tasks, clocks) (l, n) =
           let new_tasks =
             Array.map
@@ -1334,28 +1337,28 @@ module Export = struct
                  and now_constrains = (constrains || ready) && not deadline in
                  let _ =
                    match executes, now_executes with
-                   | false, true -> Printf.fprintf ch ".+."
+                   | false, true -> Format.fprintf ch ".+."
                    | true, true ->
-                     Printf.fprintf
+                     Format.fprintf
                        ch
                        (if start then if finish then "###" else ".-." else "| |")
                    | false, false ->
-                     Printf.fprintf ch (if start && finish then "###" else " | ")
-                   | true, false -> Printf.fprintf ch "'+'"
+                     Format.fprintf ch (if start && finish then "###" else " | ")
+                   | true, false -> Format.fprintf ch "'+'"
                  in
-                 Printf.fprintf ch " ";
+                 Format.fprintf ch " ";
                  let _ =
                    match constrains, now_constrains with
-                   | false, true -> Printf.fprintf ch ".+."
+                   | false, true -> Format.fprintf ch ".+."
                    | true, true ->
-                     Printf.fprintf
+                     Format.fprintf
                        ch
                        (if ready then if deadline then ":=:" else ".-." else ": :")
                    | false, false ->
-                     Printf.fprintf ch (if ready && deadline then ".+." else " | ")
-                   | true, false -> Printf.fprintf ch "'+'"
+                     Format.fprintf ch (if ready && deadline then ".+." else " | ")
+                   | true, false -> Format.fprintf ch "'+'"
                  in
-                 Printf.fprintf ch " ";
+                 Format.fprintf ch " ";
                  (name, r, s, f, d), now_executes, now_constrains)
               tasks
           in
@@ -1367,24 +1370,24 @@ module Export = struct
                    if L.mem clock l
                    then (
                      horizontal := true;
-                     Printf.fprintf ch "%s" (marker i count);
+                     Format.fprintf ch "%s" (marker i count);
                      count + 1)
                    else (
-                     Printf.fprintf ch "+";
+                     Format.fprintf ch "+";
                      count)
                  in
-                 Printf.fprintf ch (if !horizontal then "-" else " ");
+                 Format.fprintf ch (if !horizontal then "-" else " ");
                  clock, count)
               clocks
           in
           let time_label = N.to_string n in
-          Printf.fprintf ch "+ %s\n" time_label;
+          Format.fprintf ch "+ %s\n" time_label;
           Array.iter
             (fun ((_, r, _, _, d), executes, constrains) ->
                let ready = L.mem r l
                and deadline = L.mem d l in
-               Printf.fprintf ch (if executes then "| | " else " |  ");
-               Printf.fprintf
+               Format.fprintf ch (if executes then "| | " else " |  ");
+               Format.fprintf
                  ch
                  (if constrains
                   then ": : "
@@ -1392,8 +1395,8 @@ module Export = struct
                   then "'+' "
                   else " |  "))
             new_tasks;
-          Array.iter (fun _ -> Printf.fprintf ch "| ") new_clocks;
-          Printf.fprintf ch "|\n";
+          Array.iter (fun _ -> Format.fprintf ch "| ") new_clocks;
+          Format.fprintf ch "|\n";
           new_tasks, new_clocks
         in
         let task_states =
@@ -1403,10 +1406,10 @@ module Export = struct
         let _ = Iter.fold serialize_record (task_states, clock_states) trace in
         let _ =
           for _ = 0 to width do
-            Printf.fprintf ch " "
+            Format.fprintf ch " "
           done
         in
-        Printf.fprintf ch "v")
+        Format.fprintf ch "v")
     ;;
   end
 end

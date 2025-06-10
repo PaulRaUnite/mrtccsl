@@ -172,12 +172,19 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
   let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
   let _ =
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
-    Export.trace_to_vertical_svgbob ~numbers:false ~tasks session clocks trace_file trace;
+    Export.trace_to_vertical_svgbob
+      ~numbers:false
+      ~tasks
+      session
+      clocks
+      (Format.formatter_of_out_channel trace_file)
+      trace;
     close_out trace_file
   in
   let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
-  (*TODO: decide on better *)
-  let _ = Printf.fprintf trace_file "%s" (Export.trace_to_csl session trace) in
+  let _ =
+    Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace
+  in
   let _ = close_out trace_file in
   let reactions = FnCh.reaction_times session points_of_interest (List.to_seq chains) in
   reactions

@@ -361,12 +361,13 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         trace
     ;;
 
-    let trace_to_svgbob ?numbers ?precision ~tasks session clocks trace =
+    let trace_to_svgbob ?numbers ?precision ~tasks session clocks ch trace =
       Inner.trace_to_svgbob
         ?numbers
         ?precision
         ~tasks
         clocks
+        ch
         (convert_trace session trace)
     ;;
 
@@ -379,6 +380,6 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         (convert_trace session trace)
     ;;
 
-    let trace_to_csl session trace = Inner.trace_to_csl (convert_trace session trace)
+    let trace_to_csl session ch trace = Inner.print_csl ch (convert_trace session trace)
   end
 end

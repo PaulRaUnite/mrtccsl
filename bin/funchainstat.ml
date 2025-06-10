@@ -204,18 +204,16 @@ let process name spec =
       let chains = List.to_seq chains in
       let reactions = FnCh.reaction_times s points_of_interest chains in
       let _ = Printf.printf "deadlock: %b\n" deadlock in
-      let svgbob_str =
+      let _ =
+        let trace_file = open_out (Printf.sprintf "./%s_trace.txt" name) in
         Export.trace_to_svgbob
           ~numbers:true
           ~precision:2
           ~tasks:Rtccsl.Examples.Macro.[ task_names "s"; task_names "c"; task_names "a" ]
           s
           (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
-          trace
-      in
-      let _ =
-        let trace_file = open_out (Printf.sprintf "./%s_trace.txt" name) in
-        output_string trace_file svgbob_str;
+          (Format.formatter_of_out_channel trace_file)
+          trace;
         close_out trace_file
       in
       let _ =
@@ -234,7 +232,7 @@ let process name spec =
           (FnCh.reaction_times_to_string ~sep:"\n" reactions)
       in
       let trace_file = open_out "./cadp_trace.txt" in
-      let _ = Printf.fprintf trace_file "%s" (Export.trace_to_csl s trace) in
+      let _ = Export.trace_to_csl s (Format.formatter_of_out_channel trace_file) trace in
       let _ = close_out trace_file in
       reactions)
   in
