@@ -322,14 +322,15 @@ struct
     let c = ref 0 in
     let l1 = List.map L.of_list (List.powerset [ c1; c2 ]) in
     let l2 =
-      List.filter
-        (fun x ->
-           if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
-        l1
+      l1
+      |> List.filter (fun x ->
+        if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
+      |> Array.of_list
     in
+    let l1 = Array.of_list l1 in
     let g now =
       let l = if !c = 0 then l2 else l1 in
-      lo_guard (Array.of_list l) now
+      lo_guard l now
     in
     ( g
     , fun _ _ (l, _) ->
@@ -603,30 +604,30 @@ struct
         g, t
       | Allow { from; until; args } | Forbid { from; until; args } ->
         let phase = ref false in
+        let allow_l1 =
+          label_array
+          @@ List.flat_cartesian [ []; [ from; until ]; [ until ] ] (List.powerset args)
+        and allow_l2 =
+          label_array
+          @@ ([] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args))
+        in
         let g_allow n =
-          let labels =
-            if !phase
-            then
-              List.flat_cartesian [ []; [ from; until ]; [ until ] ] (List.powerset args)
-            else
-              [] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args)
-          in
-          let labels = label_array labels in
+          let labels = if !phase then allow_l1 else allow_l2 in
           lo_guard labels n
         in
-        let g_forbid n =
-          let labels =
-            if !phase
-            then
-              []
+        let forbid_l1 =
+          label_array
+          @@ ([]
               :: [ from ]
-              :: List.flat_cartesian [ [ until ]; [ from; until ] ] (List.powerset args)
-            else
-              List.flat_cartesian
-                [ []; [ from ]; [ from; until ]; [ until ] ]
-                (List.powerset args)
-          in
-          let labels = label_array labels in
+              :: List.flat_cartesian [ [ until ]; [ from; until ] ] (List.powerset args))
+        and forbid_l2 =
+          label_array
+          @@ List.flat_cartesian
+               [ []; [ from ]; [ from; until ]; [ until ] ]
+               (List.powerset args)
+        in
+        let g_forbid n =
+          let labels = if !phase then forbid_l1 else forbid_l2 in
           lo_guard labels n
         in
         let g =
