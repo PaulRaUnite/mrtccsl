@@ -199,7 +199,7 @@ struct
     let until ~horizon trace =
       let was_cut = ref false in
       ( Iter.take_while
-          (fun (_, n) ->
+          (fun [@inline hint] (_, n) ->
              if N.less n horizon
              then true
              else (
@@ -260,9 +260,10 @@ struct
     let g, t, clocks = a in
     let t vars n (l, n') =
       let possible = g vars n in
-      let proj = L.inter clocks l in
       let present =
-        Iter.exists (fun (l', cond) -> L.equal proj l' && I.contains cond n') possible
+        Iter.exists
+          (fun (l', cond) -> L.equal_modulo ~modulo:clocks l l' && I.contains cond n')
+          possible
       in
       present && t vars n (l, n')
     in
@@ -288,9 +289,9 @@ struct
       if I.is_empty res then None else Some res
     in
     let[@inline always] guard_solver ((l, c), (l', c')) =
-      let* l = sat_solver l l'
-      and* c = linear_solver c c' in
-      Some (l, c)
+      match sat_solver l l', linear_solver c c' with
+      | Some l, Some c -> Some (l, c)
+      | _ -> None
     in
     let g vars now =
       (* let _ = Printf.printf "sync--- at %s\n" (N.to_string now) in *)
@@ -301,7 +302,7 @@ struct
       let pot_solutions = Iter.product g1 g2 in
       let solutions = Iter.filter_map guard_solver pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
-      Iter.of_array (Iter.to_array solutions)
+      Trace.persist solutions
     in
     let t vars n l = t1 vars n l && t2 vars n l in
     g, t, c
@@ -711,15 +712,16 @@ struct
           let free_now = n - List.length !resources in
           let to_free_variants = List.powerset (List.sort_uniq C.compare !resources) in
           to_free_variants
-          |> List.to_seq
-          |> Seq.flat_map (fun to_free ->
+          |> Iter.of_list
+          |> Iter.flat_map (fun to_free ->
             let available = free_now + List.length to_free in
             List.powerset locks
-            |> List.filter_map (fun l ->
-              if List.length l > available then None else Some (to_free @ l))
-            |> List.to_seq)
-          |> Seq.map (fun l -> L.of_list l, I.pinf_strict now)
-          |> Array.of_seq
+            |> Iter.of_list
+            |> Iter.filter_map (fun l ->
+              if List.length l > available then None else Some (to_free @ l)))
+          |> Iter.map (fun l -> L.of_list l, I.pinf_strict now)
+          |> Iter.to_dynarray
+          |> Dynarray.to_array
         in
         let t _ _ (l, _) =
           (* let _ = Printf.printf "---Transition---\n" in *)
@@ -1476,7 +1478,7 @@ let%test_module _ =
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Seq.length (A.Trace.to_seq trace) = steps
+      Iter.length trace = steps
     ;;
 
     let%test _ =
@@ -1496,7 +1498,7 @@ let%test_module _ =
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Seq.length (A.Trace.to_seq trace) = steps
+      Iter.length trace = steps
     ;;
 
     let%test _ =
@@ -1507,7 +1509,7 @@ let%test_module _ =
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
-      Seq.length (A.Trace.to_seq trace) = 10
+      Iter.length trace = 10
     ;;
   end)
 ;;

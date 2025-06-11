@@ -31,19 +31,19 @@ module ExpOrder = struct
     let compare = M.compare
 
     (**[less x y] is [x < y]*)
-    let less x y = M.compare x y < 0
+    let[@inline always] less x y = M.compare x y < 0
 
     (**[more x y] is [x > y]*)
-    let more x y = M.compare x y > 0
+    let[@inline always] more x y = M.compare x y > 0
 
     (**[equal x y] is [x == y]*)
-    let equal x y = M.compare x y = 0
+    let[@inline always] equal x y = M.compare x y = 0
 
     (**[less_eq x y] is [x <= y]*)
-    let less_eq x y = M.compare x y <= 0
+    let[@inline always] less_eq x y = M.compare x y <= 0
 
     (**[more_eq x y] is [x >= y]*)
-    let more_eq x y = M.compare x y >= 0
+    let[@inline always] more_eq x y = M.compare x y >= 0
 
     let[@inline always] min x y = if less_eq x y then x else y
     let[@inline always] max x y = if more_eq x y then x else y

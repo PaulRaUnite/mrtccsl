@@ -162,6 +162,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         | `Sampling ->
           let targets = targets_from index in
           let candidates = partial_chains.(index - 1) in
+          add_missed (index - 1) c;
           if not (Queue.is_empty candidates)
           then (
             let to_sample =
@@ -185,8 +186,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
             in
             let next = partial_chains.(index) in
             Queue.add_seq next to_sample;
-            Queue.clear candidates;
-            add_missed index c))
+            Queue.clear candidates))
     in
     let _ = Array.iteri execute_instruction instructions in
     let new_full f a =
@@ -199,7 +199,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     full_chains, partial_chains, counters
   ;;
 
-  let trace_to_chain sem chain trace =
+  let[@inline always] trace_to_chain sem chain trace =
     let instructions = Array.of_list (instructions chain) in
     let len_instr = Array.length instructions in
     let full_chains, dangling_chains, _ =
@@ -211,7 +211,6 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         trace
     in
     full_chains, dangling_chains
-  [@@inline]
   ;;
 
   let functional_chains
@@ -244,7 +243,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
 
   let reaction_times session pairs_to_compare chains =
     chains
-    |> Seq.map (fun (t : chain_instance) ->
+    |> Iter.map (fun (t : chain_instance) ->
       ( t.misses
         |> CMap.to_seq
         |> Seq.map (fun (k, v) -> of_offset session k, v)
@@ -263,7 +262,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   let statistics category chains =
     let module IMap = Map.Make (Int) in
     chains
-    |> Seq.fold_left
+    |> Iter.fold
          (fun acc ({ misses; _ } : chain_instance) ->
             IMap.entry
               (Int.add 1)
@@ -271,32 +270,33 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
               (Option.value ~default:0 (CMap.find_opt category misses))
               acc)
          IMap.empty
-    |> IMap.to_seq
+    |> IMap.to_iter
   ;;
 
-  let print_statistics session category chains =
+  let print_statistics session category formatter chains =
     let stats = statistics category chains in
-    let total = Seq.fold_left (fun total (_, x) -> total + x) 0 stats |> Float.of_int in
-    Printf.printf "%s | %f\n" (C.to_string (of_offset session category)) total;
-    print_endline
-      (Seq.to_string
-         ~sep:"\n"
-         (fun (c, x) -> Printf.sprintf "%i | %f" c (Float.of_int x /. total))
-         stats)
+    let total = Iter.fold (fun total (_, x) -> total + x) 0 stats |> Float.of_int in
+    Format.fprintf formatter "%s | %f\n" (C.to_string (of_offset session category)) total;
+    Format.fprintf
+      formatter
+      "%a"
+      (Iter.pp_seq ~sep:"\n" (fun formatter (c, x) ->
+         Format.fprintf formatter "%i | %f" c (Float.of_int x /. total)))
+      stats
   ;;
 
-  let reaction_times_to_string ~sep seq =
-    Seq.to_string
+  let reaction_times_to_string ~sep iter =
+    Iter.to_string
       ~sep
       (fun (_, t) ->
          t
          |> Hashtbl.to_seq
          |> Seq.to_string (fun ((s, f), v) ->
            Printf.sprintf "(%s, %s) -> %s" (C.to_string s) (C.to_string f) (N.to_string v)))
-      seq
+      iter
   ;;
 
-  let reaction_times_to_csv categories pairs_to_print ch seq =
+  let reaction_times_to_csv categories pairs_to_print ch iter =
     Printf.fprintf
       ch
       "%s\n"
@@ -307,7 +307,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
           @ List.map
               (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
               pairs_to_print));
-    Seq.iter
+    Iter.iter
       (fun (misses, times) ->
          Printf.fprintf
            ch
@@ -321,7 +321,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
                     Int.to_string v)
                  categories
                @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
-      seq
+      iter
   ;;
 
   module Export = struct

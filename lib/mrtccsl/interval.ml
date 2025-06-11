@@ -87,7 +87,7 @@ module Make (N : Num) : I with type num = N.t = struct
   module LeftBound = Interface.ExpOrder.Make (struct
       type t = Bound.t
 
-      let compare x y =
+      let[@inline always] compare x y =
         match x, y with
         | Exclude x, Exclude y | Include x, Include y -> N.compare x y
         | Exclude x, Include y ->
@@ -105,7 +105,7 @@ module Make (N : Num) : I with type num = N.t = struct
   module RightBound = Interface.ExpOrder.Make (struct
       type t = Bound.t
 
-      let compare x y =
+      let[@inline always] compare x y =
         match x, y with
         | Exclude x, Exclude y | Include x, Include y -> N.compare x y
         | Exclude x, Include y ->
@@ -168,7 +168,7 @@ module Make (N : Num) : I with type num = N.t = struct
   ;;
 
   (**[subset x y] returns true when [y] contains [x].*)
-  let subset x y =
+  let[@inline always] subset x y =
     match x, y with
     | Bound (a, b), Bound (c, d) -> LeftBound.more_eq a c && RightBound.less_eq b d
     | Empty, _ -> true
@@ -191,7 +191,7 @@ module Make (N : Num) : I with type num = N.t = struct
   ;;
 
   (**[contains i n] returns either element [n] is in interval [i].*)
-  let contains i n = subset (return n) i
+  let[@inline always] contains i n = subset (return n) i
 
   let shift_by i n =
     match i with

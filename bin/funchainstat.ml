@@ -122,14 +122,14 @@ let parallel_reaction_times
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times s [ start, finish ] (Dynarray.to_seq full_chains)
+      FnCh.reaction_times s [ start, finish ] (Iter.of_dynarray full_chains)
     in
     if with_partial
     then
       partial_chains
-      |> Array.to_seq
-      |> Seq.flat_map Queue.to_seq
-      |> Seq.map (fun (t : partial_chain) ->
+      |> Iter.of_array
+      |> Iter.flat_map Queue.to_iter
+      |> Iter.map (fun (t : partial_chain) ->
         ( t.misses
           |> A.CMap.to_seq
           |> Seq.map (fun (k, v) -> S.Session.of_offset s k, v)
@@ -151,8 +151,8 @@ let parallel_reaction_times
       ~finish:runs
       ~body
       pool
-      Seq.append
-      Seq.empty)
+      Iter.append
+      Iter.empty)
 ;;
 
 let dist = []
@@ -202,7 +202,7 @@ let process name spec =
           system_spec
           func_chain_spec
       in
-      let chains = Dynarray.to_seq chains in
+      let chains = Iter.of_dynarray chains in
       let reactions = FnCh.reaction_times s points_of_interest chains in
       let _ = Printf.printf "deadlock: %b\n" deadlock in
       let _ =
@@ -220,7 +220,7 @@ let process name spec =
       let _ =
         Printf.printf
           "full chains:\n%s\n"
-          (Seq.to_string
+          (Iter.to_string
              ~sep:"\n"
              (fun (t : chain_instance) ->
                 FnCh.CMap.to_string (of_offset s >> String.to_string) to_string t.trace)

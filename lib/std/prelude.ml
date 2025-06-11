@@ -379,6 +379,24 @@ module List = struct
   let%test_unit _ =
     [%test_eq: int list list] (zip_list [ [ 1; 2 ]; [ 3; 4 ] ]) [ [ 1; 3 ]; [ 2; 4 ] ]
   ;;
+
+  let rec pair_apply f = function
+    | [] -> []
+    | x :: [] -> [ x ]
+    | x :: y :: tail -> f x y :: pair_apply f tail
+  ;;
+
+  let rec fold_merge f = function
+    | [] -> failwith "fold_merge: cannot merge empty list"
+    | x :: [] -> x
+    | l -> fold_merge f (pair_apply f l)
+  ;;
+
+  let%test_unit _ =
+    [%test_eq: string]
+      (fold_merge (fun x y -> Printf.sprintf "(%s %s)" x y) [ "a"; "b"; "c"; "d"; "e" ])
+      "(((a b) (c d)) e)"
+  ;;
 end
 
 module String = struct
@@ -540,6 +558,7 @@ module Map = struct
     ;;
 
     let value ~default k map = Option.value ~default (find_opt k map)
+    let to_iter m f = iter (fun k v -> f (k, v)) m
   end
 end
 
@@ -622,6 +641,14 @@ module Dynarray = struct
       a;
     b
   ;;
+
+  let of_iter iter =
+    let a = create () in
+    iter (fun el -> add_last a el);
+    a
+  ;;
+
+  let to_iter a f = iter f a
 end
 
 module Iter = struct
@@ -637,13 +664,8 @@ module Iter = struct
       iter
   ;;
 
-  let to_dynarray iter =
-    let a = Dynarray.create () in
-    iter (fun el -> Dynarray.add_last a el);
-    a
-  ;;
-
-  let of_dynarray a f = Dynarray.iter f a
+  let to_dynarray = Dynarray.of_iter
+  let of_dynarray = Dynarray.to_iter
 end
 
 module Queue = struct

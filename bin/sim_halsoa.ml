@@ -116,14 +116,14 @@ let parallel_reaction_times
       FnCh.functional_chains ~sem params dist system_spec func_chain_spec
     in
     let full_reaction_times =
-      FnCh.reaction_times session [ start, finish ] (Dynarray.to_seq full_chains)
+      FnCh.reaction_times session [ start, finish ] (Iter.of_dynarray full_chains)
     in
     if with_partial
     then
       partial_chains
-      |> Array.to_seq
-      |> Seq.flat_map Queue.to_seq
-      |> Seq.map (fun (t : partial_chain) ->
+      |> Iter.of_array
+      |> Iter.flat_map Queue.to_iter
+      |> Iter.map (fun (t : partial_chain) ->
         ( t.misses
           |> A.CMap.to_seq
           |> Seq.map (fun (k, v) -> S.Session.of_offset session k, v)
@@ -144,8 +144,8 @@ let parallel_reaction_times
       ~finish:runs
       ~body
       pool
-      Seq.append
-      Seq.empty)
+      Iter.append
+      Iter.empty)
 ;;
 
 let rec create_dir fn =
@@ -188,14 +188,14 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
   in
   let _ = close_out trace_file in
   let reactions =
-    FnCh.reaction_times session points_of_interest (Dynarray.to_seq chains)
+    FnCh.reaction_times session points_of_interest (Iter.of_dynarray chains)
   in
   reactions
 ;;
 
 let parallel = false
 
-let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
+let process_config ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
@@ -211,7 +211,7 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
          spec)
   in
   let reaction_times =
-    if parallel
+    (* if parallel
     then
       Domainslib.Task.run pool (fun _ ->
         Domainslib.Task.parallel_for_reduce
@@ -220,12 +220,12 @@ let process_config ~pool ~directory ~traces ~horizon ~steps (name, dist, spec, t
           ~finish:traces
           ~body:(generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
           pool
-          Seq.append
-          Seq.empty)
-    else
-      Seq.int_seq_inclusive (0, traces)
-      |> Seq.map (generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
-      |> Seq.fold_left Seq.append Seq.empty
+          Iter.append
+          Iter.empty)
+    else *)
+      Iter.int_range ~start:0 ~stop:traces
+      |> Iter.map (generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
+      |> Iter.fold Iter.append Iter.empty
   in
   let points_of_interest = points_of_interest C.icteri_chain in
   let categories = categorization_points C.icteri_chain in
@@ -252,10 +252,9 @@ let () =
   in
   let directory = ref None in
   let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
-  let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in
+  (* let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in *)
   List.iter
     (process_config
-       ~pool
        ~traces:!traces
        ~directory:(Option.get !directory)
        ~steps:!steps
