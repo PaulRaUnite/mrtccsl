@@ -194,8 +194,9 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
 ;;
 
 let parallel = false
-
+module Opt = Mrtccsl.Optimization.Order.Make(String)
 let process_config ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
+  (* let spec = Opt.optimize spec in *)
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in

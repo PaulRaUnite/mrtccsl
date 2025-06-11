@@ -121,6 +121,8 @@ end
 module List = struct
   include List
 
+  let return x = [ x ]
+
   let is_empty = function
     | [] -> true
     | _ -> false
@@ -575,6 +577,8 @@ module Set = struct
       iter (fun e -> acc := add e !acc);
       !acc
     ;;
+
+    let equal_modulo ~modulo a b = equal (inter a modulo) (inter b modulo)
   end
 end
 
