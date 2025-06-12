@@ -156,7 +156,18 @@ let rec create_dir fn =
     Sys.mkdir fn 0o755)
 ;;
 
-let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_spec i =
+let generate_trace
+      ~print_svgbob
+      ~print_trace
+      ~steps
+      ~horizon
+      directory
+      dist
+      system_spec
+      tasks
+      func_chain_spec
+      i
+  =
   let _ = Random.init 2174367364 in
   let strategy = ST.Solution.refuse_empty random_strat in
   let basename = Printf.sprintf "%s/%i" directory i in
@@ -170,8 +181,9 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
       system_spec
       func_chain_spec
   in
-  let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
-  let _ =
+  if print_svgbob
+  then (
+    let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
     Export.trace_to_vertical_svgbob
       ~numbers:false
@@ -180,13 +192,12 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
       clocks
       (Format.formatter_of_out_channel trace_file)
       trace;
-    close_out trace_file
-  in
-  let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
-  let _ =
-    Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace
-  in
-  let _ = close_out trace_file in
+    close_out trace_file);
+  if print_trace
+  then (
+    let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
+    Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace;
+    close_out trace_file);
   let reactions =
     FnCh.reaction_times session points_of_interest (Iter.of_dynarray chains)
   in
@@ -197,7 +208,15 @@ let parallel = false
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let process_config ~directory ~processor ~horizon ~steps (name, dist, spec, tasks) =
+let process_config
+      ~print_svgbob
+      ~print_trace
+      ~directory
+      ~processor
+      ~horizon
+      ~steps
+      (name, dist, spec, tasks)
+  =
   (let open Rtccsl in
    let len = List.length spec.constraints in
    let spec = Opt.optimize spec in
@@ -217,7 +236,17 @@ let process_config ~directory ~processor ~horizon ~steps (name, dist, spec, task
          spec)
   in
   let reaction_times =
-    processor @@ generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain
+    processor
+    @@ generate_trace
+         ~print_svgbob
+         ~print_trace
+         ~steps
+         ~horizon
+         prefix
+         dist
+         spec
+         tasks
+         C.icteri_chain
   in
   let points_of_interest = points_of_interest C.icteri_chain in
   let categories = categorization_points C.icteri_chain in
@@ -229,23 +258,31 @@ let process_config ~directory ~processor ~horizon ~steps (name, dist, spec, task
 ;;
 
 let () =
-  (*TODO: add some argument checking*)
-  let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] <dir>" in
+  let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] [-bob] [-cadp] <dir>" in
   let traces = ref 0
-  and cores = ref @@ Stdlib.Domain.recommended_domain_count ()
+  and cores = ref 1
   and steps = ref 1000
-  and horizon = ref 10_000.0 in
+  and horizon = ref 10_000.0
+  and print_svgbob = ref false
+  and print_trace = ref false in
   let speclist =
     [ "-t", Arg.Set_int traces, "Number of traces to generate"
     ; "-c", Arg.Set_int cores, "Number of cores to use"
     ; "-h", Arg.Set_float horizon, "Max time of simulation"
     ; "-s", Arg.Set_int steps, "Max steps of simulation"
+    ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
+    ; "-cadp", Arg.Set print_trace, "Print CADP trace"
     ]
   in
+  let recommended_cores = Stdlib.Domain.recommended_domain_count () in
+  assert (0 < !traces);
+  assert (0 < !cores && !cores <= recommended_cores);
+  assert (0 < !steps);
+  assert (0.0 < !horizon);
   let directory = ref None in
   let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
   let processor =
-    if !cores = 1
+    if !cores <> 1
     then (
       let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in
       fun f ->
@@ -267,6 +304,8 @@ let () =
   List.iter
     (process_config
        ~processor
+       ~print_svgbob:!print_svgbob
+       ~print_trace:!print_trace
        ~directory:(Option.get !directory)
        ~steps:!steps
        ~horizon:(of_float !horizon))
