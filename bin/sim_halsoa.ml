@@ -246,10 +246,10 @@ let process_config
          dist
          spec
          tasks
-         C.icteri_chain
+         C.aebsimple_chain
   in
-  let points_of_interest = points_of_interest C.icteri_chain in
-  let categories = categorization_points C.icteri_chain in
+  let points_of_interest = points_of_interest C.aebsimple_chain in
+  let categories = categorization_points C.aebsimple_chain in
   let data_file = open_out (Printf.sprintf "%s/reaction_times.csv" prefix) in
   let _ =
     FnCh.reaction_times_to_csv categories points_of_interest data_file reaction_times
@@ -258,7 +258,9 @@ let process_config
 ;;
 
 let () =
-  let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] [-bob] [-cadp] <dir>" in
+  let usage_msg =
+    "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] [-bob] [-cadp] <dir>"
+  in
   let traces = ref 0
   and cores = ref 1
   and steps = ref 1000
@@ -274,13 +276,13 @@ let () =
     ; "-cadp", Arg.Set print_trace, "Print CADP trace"
     ]
   in
+  let directory = ref None in
+  let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
   let recommended_cores = Stdlib.Domain.recommended_domain_count () in
   assert (0 < !traces);
   assert (0 < !cores && !cores <= recommended_cores);
   assert (0 < !steps);
   assert (0.0 < !horizon);
-  let directory = ref None in
-  let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
   let processor =
     if !cores <> 1
     then (
@@ -309,5 +311,5 @@ let () =
        ~directory:(Option.get !directory)
        ~steps:!steps
        ~horizon:(of_float !horizon))
-    C.icteri_configs
+    C.aebsimple_variants
 ;;
