@@ -194,9 +194,14 @@ let generate_trace ~steps ~horizon directory dist system_spec tasks func_chain_s
 ;;
 
 let parallel = false
-module Opt = Mrtccsl.Optimization.Order.Make(String)
-let process_config ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) =
-  (* let spec = Opt.optimize spec in *)
+
+module Opt = Mrtccsl.Optimization.Order.Make (String)
+
+let process_config ~directory ~processor ~horizon ~steps (name, dist, spec, tasks) =
+  (let open Rtccsl in
+   let len = List.length spec.constraints in
+   let spec = Opt.optimize spec in
+   assert (len = List.length spec.constraints));
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
@@ -212,21 +217,7 @@ let process_config ~directory ~traces ~horizon ~steps (name, dist, spec, tasks) 
          spec)
   in
   let reaction_times =
-    (* if parallel
-    then
-      Domainslib.Task.run pool (fun _ ->
-        Domainslib.Task.parallel_for_reduce
-          ~chunk_size:1
-          ~start:0
-          ~finish:traces
-          ~body:(generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
-          pool
-          Iter.append
-          Iter.empty)
-    else *)
-      Iter.int_range ~start:0 ~stop:traces
-      |> Iter.map (generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain)
-      |> Iter.fold Iter.append Iter.empty
+    processor @@ generate_trace ~steps ~horizon prefix dist spec tasks C.icteri_chain
   in
   let points_of_interest = points_of_interest C.icteri_chain in
   let categories = categorization_points C.icteri_chain in
@@ -241,7 +232,7 @@ let () =
   (*TODO: add some argument checking*)
   let usage_msg = "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] <dir>" in
   let traces = ref 0
-  and cores = ref 1
+  and cores = ref @@ Stdlib.Domain.recommended_domain_count ()
   and steps = ref 1000
   and horizon = ref 10_000.0 in
   let speclist =
@@ -253,10 +244,29 @@ let () =
   in
   let directory = ref None in
   let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
-  (* let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in *)
+  let processor =
+    if !cores = 1
+    then (
+      let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in
+      fun f ->
+        Domainslib.Task.run pool (fun _ ->
+          Domainslib.Task.parallel_for_reduce
+            ~chunk_size:1
+            ~start:0
+            ~finish:!traces
+            ~body:f
+            pool
+            Iter.append
+            Iter.empty))
+    else
+      fun f ->
+        Iter.int_range ~start:0 ~stop:!traces
+        |> Iter.map f
+        |> Iter.fold Iter.append Iter.empty
+  in
   List.iter
     (process_config
-       ~traces:!traces
+       ~processor
        ~directory:(Option.get !directory)
        ~steps:!steps
        ~horizon:(of_float !horizon))

@@ -153,7 +153,6 @@ module type S = sig
   val accept_trace : sim -> N.t -> Trace.t -> N.t option
 end
 
-(*TODO: replace seq with iter in simulation *)
 (*TODO: make reaction chain extraction streamable and add index to avoid N^2 complexity *)
 (*TODO: add size hints for trace collection to avoid reallocation *)
 module MakeWithBijection
