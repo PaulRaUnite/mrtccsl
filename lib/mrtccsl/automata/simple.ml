@@ -110,7 +110,7 @@ module type Trace = sig
   type solution
   type num
 
-  val persist : t -> t
+  val persist : ?size_hint:int -> t -> t
   val to_iter : t -> solution Iter.t
   val to_seq : t -> solution Seq.t
   val of_seq : solution Seq.t -> t
@@ -153,8 +153,6 @@ module type S = sig
   val accept_trace : sim -> N.t -> Trace.t -> N.t option
 end
 
-(*TODO: make reaction chain extraction streamable and add index to avoid N^2 complexity *)
-(*TODO: add size hints for trace collection to avoid reallocation *)
 module MakeWithBijection
     (C : ID)
     (N : Num)
@@ -189,7 +187,7 @@ struct
   module Trace = struct
     type t = solution Iter.t
 
-    let persist t = t |> Iter.to_dynarray |> Iter.of_dynarray
+    let persist ?size_hint t = t |> Iter.to_dynarray ?size_hint |> Iter.of_dynarray
     let of_seq t = t |> Iter.of_seq
     let to_iter = Fun.id
     let to_seq seq = Iter.to_seq_persistent seq

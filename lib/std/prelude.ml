@@ -646,8 +646,9 @@ module Dynarray = struct
     b
   ;;
 
-  let of_iter iter =
+  let of_iter ?(size_hint = 16) iter =
     let a = create () in
+    ensure_capacity a size_hint;
     iter (fun el -> add_last a el);
     a
   ;;

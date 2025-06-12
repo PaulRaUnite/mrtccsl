@@ -227,7 +227,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       |> A.Trace.take ~steps:n
       |> A.Trace.until ~horizon:time
     in
-    let trace = A.Trace.persist trace in
+    let trace = A.Trace.persist ~size_hint:n trace in
     let session_chain = map_chain (to_offset session) chain in
     let full_chains, dangling_chains =
       trace_to_chain sem session_chain (A.Trace.to_iter trace)
