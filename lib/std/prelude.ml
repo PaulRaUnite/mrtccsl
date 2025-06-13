@@ -1,3 +1,6 @@
+open Sexplib0.Sexp_conv
+open Ppx_compare_lib.Builtin
+
 (** Function composition, [f << g] if the same as f(g(x)).*)
 let ( << ) f g x = f (g x)
 
@@ -41,7 +44,7 @@ module Seq = struct
   include Seq
 
   (** [int_seq n] returns sequence [0...n] (not included).*)
-  let int_seq n = take n (ints 0)
+  let int_seq ?(step = 1) n = ints 0 |> take (n / step) |> map (Int.mul step)
 
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
 
@@ -85,7 +88,7 @@ module Seq = struct
     left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
   ;;
 
-  let return2 x y = cons x (return y)
+  let return2 x y = cons y (return x)
 
   let to_string ?(sep = ", ") ets seq =
     let buf = Buffer.create 32 in
@@ -116,6 +119,60 @@ module Seq = struct
   ;;
 
   let append_list l = List.fold_left append empty l
+
+  (**[reduce_left] is similar to [fold_left], except it uses first element as as its init.*)
+  let reduce_left f acc (seq : 'a t) : 'a t =
+    match seq () with
+    | Nil -> invalid_arg "empty seq"
+    | Cons (x, xs) -> fold_left f (acc x) xs
+  ;;
+
+  let of_pair (x, y) = return2 x y
+
+  let product_seq (seq : 'a t t) : 'a t t =
+    reduce_left
+      (fun acc seq -> product acc seq |> map (fun (f, s) -> cons s f))
+      (map return)
+      seq
+  ;;
+
+  let%test_unit _ =
+    [%test_eq: int list list]
+      (return2 (int_seq 2) (int_seq 2) |> product_seq |> map List.of_seq |> List.of_seq)
+      [ [ 0; 0 ]; [ 0; 1 ]; [ 1; 0 ]; [ 1; 1 ] ]
+  ;;
+
+  let uncons_exn seq = Option.get @@ uncons seq
+
+  let to_tuple2 seq =
+    let x, seq = uncons_exn seq in
+    let y, _ = uncons_exn seq in
+    x, y
+  ;;
+
+  let to_tuple3 seq =
+    let x, seq = uncons_exn seq in
+    let y, seq = uncons_exn seq in
+    let z, _ = uncons_exn seq in
+    x, y, z
+  ;;
+
+  let to_tuple4 seq =
+    let x, seq = uncons_exn seq in
+    let y, seq = uncons_exn seq in
+    let z, seq = uncons_exn seq in
+    let v, _ = uncons_exn seq in
+    x, y, z, v
+  ;;
+
+  let to_tuple5 seq =
+    let x, seq = uncons_exn seq in
+    let y, seq = uncons_exn seq in
+    let z, seq = uncons_exn seq in
+    let v, seq = uncons_exn seq in
+    let w, _ = uncons_exn seq in
+    x, y, z, v, w
+  ;;
 end
 
 module List = struct
@@ -228,9 +285,6 @@ module List = struct
       map (fun (part, other) -> part, x :: other) ps
       @ map (fun (part, other) -> x :: part, other) ps
   ;;
-
-  open Sexplib0.Sexp_conv
-  open Ppx_compare_lib.Builtin
 
   let%test_unit _ =
     [%test_eq: (int list * int list) list]
@@ -399,6 +453,11 @@ module List = struct
       (fold_merge (fun x y -> Printf.sprintf "(%s %s)" x y) [ "a"; "b"; "c"; "d"; "e" ])
       "(((a b) (c d)) e)"
   ;;
+
+  let uncons = function
+    | [] -> failwith "uncons: empty list"
+    | x :: xs -> x, xs
+  ;;
 end
 
 module String = struct
@@ -522,7 +581,7 @@ module Hashtbl = struct
 
   module Collect = struct
     let count ?(size = 64) seq =
-      let tbl = Hashtbl.create size in
+      let tbl = create size in
       Seq.fold_left
         (fun tbl v ->
            entry (Int.add 1) 0 v tbl;
@@ -530,9 +589,41 @@ module Hashtbl = struct
         tbl
         seq
     ;;
+
+    let by_tags ?(size = 64) seq =
+      let tbl = create size in
+      Seq.iter (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) [] k tbl) kl) seq;
+      tbl
+    ;;
   end
 
   let map kf vf tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> kf k, vf v) |> of_seq
+
+  module Make (H : HashedType) = struct
+    include Make (H)
+
+  let entry f default key tbl =
+    let v = find_opt tbl key |> Option.value ~default in
+    replace tbl key (f v)
+  ;;
+    module Collect = struct
+      let count ?(size = 64) seq =
+        let tbl = create size in
+        Seq.fold_left
+          (fun tbl v ->
+             entry (Int.add 1) 0 v tbl;
+             tbl)
+          tbl
+          seq
+      ;;
+
+      let by_tags ?(size = 64) seq =
+        let tbl = create size in
+        Seq.iter (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) [] k tbl) kl) seq;
+        tbl
+      ;;
+    end
+  end
 end
 
 module Map = struct
@@ -624,6 +715,12 @@ module Array = struct
     done;
     !r
   ;;
+
+  let to_tuple2 a = a.(0), a.(1)
+  let to_tuple3 a = a.(0), a.(1), a.(2)
+  let to_tuple4 a = a.(0), a.(1), a.(2), a.(3)
+  let to_tuple5 a = a.(0), a.(1), a.(2), a.(3), a.(4)
+  let to_tuple6 a = a.(0), a.(1), a.(2), a.(3), a.(4), a.(5)
 end
 
 module Dynarray = struct
