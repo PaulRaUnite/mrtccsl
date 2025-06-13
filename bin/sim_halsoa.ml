@@ -215,7 +215,7 @@ let process_config
       ~processor
       ~horizon
       ~steps
-      (name, dist, spec, tasks)
+      (name, dist, spec, tasks, chain)
   =
   (let open Rtccsl in
    let len = List.length spec.constraints in
@@ -246,10 +246,10 @@ let process_config
          dist
          spec
          tasks
-         C.aebsimple_chain
+         chain
   in
-  let points_of_interest = points_of_interest C.aebsimple_chain in
-  let categories = categorization_points C.aebsimple_chain in
+  let points_of_interest = points_of_interest chain in
+  let categories = categorization_points chain in
   let data_file = open_out (Printf.sprintf "%s/reaction_times.csv" prefix) in
   let _ =
     FnCh.reaction_times_to_csv categories points_of_interest data_file reaction_times

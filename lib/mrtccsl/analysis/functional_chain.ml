@@ -4,17 +4,19 @@ type relation =
   [ `Causality
   | `Sampling
   ]
+[@@deriving show, sexp]
 
 type 'c chain =
   { first : 'c
   ; rest : (relation * 'c) list
   }
-[@@deriving map]
+[@@deriving map, show]
 
 type instruction =
   [ relation
   | `New
   ]
+[@@deriving show, sexp]
 
 let last_clock { first; rest } =
   Option.value ~default:first (List.last (List.map (fun (_, x) -> x) rest))
@@ -31,6 +33,13 @@ let chain_start_finish_clocks chain =
   , Option.value
       ~default:chain.first
       (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
+;;
+
+let pp_instructions pp f =
+  Format.fprintf f "[@[%a@]]"
+  @@ Format.pp_print_list
+       ~pp_sep:(fun f () -> Format.fprintf f "@;")
+       (fun f (s, i) -> Format.fprintf f "%a, %a" pp s pp_instruction i)
 ;;
 
 let points_of_interest chain =

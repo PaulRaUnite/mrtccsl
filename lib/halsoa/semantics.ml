@@ -1,5 +1,5 @@
 open Prelude
-open Domain
+open Definition
 
 let start = Printf.sprintf "%s.s"
 let finish = Printf.sprintf "%s.f"
@@ -204,4 +204,64 @@ let system_tasks (components, hal) =
   [ signal_exec_tasks; component_tasks; signal_comm_tasks ]
   |> Seq.append_list
   |> List.of_seq
+;;
+
+(** Extract functional chains from signal paths. *)
+let signals_to_chain (components, hal) signal_path =
+  let open Mrtccsl.Analysis.FunctionalChain in
+  let module H = Hashtbl.Make (String) in
+  let policy_to_relation = function
+    | `AbsoluteTimer _ | `CumulativeTimer _ -> `Sampling
+    | `Signal _ -> `Causality
+  in
+  let actuator_consumers =
+    hal
+    |> Hashtbl.to_seq
+    |> Seq.filter_map (fun (signal, sig_type) ->
+      match sig_type with
+      | Sensor _ -> None
+      | Actuator { policy; _ } ->
+        Some ([ signal ], (policy_to_relation policy, signal_task signal, [])))
+  in
+  let component_consumers =
+    components
+    |> List.to_seq
+    |> Seq.flat_map (fun c -> List.to_seq c.services)
+    |> Seq.map (fun s -> s.inputs, (policy_to_relation s.policy, s.name, s.outputs))
+  in
+  let consumers =
+    Seq.append actuator_consumers component_consumers |> H.Collect.by_tags
+  in
+  let get_sensor signal =
+    (*TODO: maybe replace by using producers map so that I can support functional chains without hal? *)
+    let st = signal_task signal in
+    [ { first = start st; rest = [ `Causality, finish st ] }, [ signal ] ]
+  in
+  let candidates =
+    List.fold_left
+      (fun producers to_consume ->
+         let producers =
+           List.filter
+             (fun (_, outputs) -> List.exists (String.equal to_consume) outputs)
+             producers
+         in
+         let consumers = H.find consumers to_consume in
+         List.map_cartesian
+           (fun (chain, _) (instruction, task, outputs) ->
+              let chain_fragment =
+                [ `Causality, signal_emit to_consume
+                ; `Causality, signal_receive to_consume
+                ; instruction, start task
+                ; `Causality, finish task
+                ]
+              in
+              { chain with rest = List.append chain.rest chain_fragment }, outputs)
+           producers
+           consumers)
+      (get_sensor @@ List.hd signal_path)
+      signal_path
+  in
+  assert (List.length candidates = 1);
+  let chain, _ = List.hd candidates in
+  chain
 ;;

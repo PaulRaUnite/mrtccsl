@@ -8,6 +8,8 @@ type 'a loc =
 let location_of_lex lex : location = Lexing.lexeme_start_p lex, Lexing.lexeme_end_p lex
 let locate lex node = { node; metadata = location_of_lex lex }
 
+(*TODO: split RTCCSL-only parser and embed it into MRTCCSL *)
+
 type id = string Loc.t
 type path = id list
 
