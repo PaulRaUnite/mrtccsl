@@ -22,25 +22,25 @@ bug-reports: "https://github.com/PaulRaUnite/mrtccsl/issues"
 depends: [
   "ocaml" {>= "5.3.0"}
   "dune" {>= "3.13" & with-build}
-  "menhir"
+  "menhir" {= "20240715"}
   "camllib"
   "apron" {>= "0.9.15"}
   "bddapron"
-  "ppx_sexp_conv"
+  "ppx_sexp_conv" {>= "0.17.0" & < "0.18.0"}
   "uuseg" {>= "16.0.0"}
   "uutf" {>= "1.0.3"}
-  "ppx_assert"
-  "ppx_inline_test" {>= "0.17.0"}
-  "ppx_compare"
+  "ppx_assert" {>= "0.17.0" & < "0.18.0"}
+  "ppx_inline_test" {>= "0.17.0" & < "0.18.0"}
+  "ppx_compare" {>= "0.17.0" & < "0.18.0"}
   "mlgmpidl"
   "vpl-core"
-  "ocamlgraph"
+  "ocamlgraph" {= "2.2.0"}
   "ocolor" {>= "1.3.1"}
-  "containers"
+  "containers" {>= "3.0.0"}
   "alcotest" {with-test}
   "domainslib" {>= "0.5"}
-  "sexplib0" {>= "0.17"}
-  "ppx_deriving" {>= "6.1.0"}
+  "sexplib0" {>= "0.17" & < "0.18.0"}
+  "ppx_deriving" {>= "6.0.3"}
   "owl" {>= "1.2"}
   "bitvectorset"
   "odoc" {with-doc}

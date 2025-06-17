@@ -28,33 +28,49 @@
   (ocaml
    (>= 5.3.0))
   (dune :with-build)
-  menhir
+  (menhir
+   (= 20240715))
   camllib
   (apron
    (>= 0.9.15))
   bddapron
-  ppx_sexp_conv
+  (ppx_sexp_conv
+   (and
+    (>= 0.17.0)
+    (< 0.18.0)))
   (uuseg
    (>= 16.0.0))
   (uutf
    (>= 1.0.3))
-  ppx_assert
+  (ppx_assert
+   (and
+    (>= 0.17.0)
+    (< 0.18.0)))
   (ppx_inline_test
-   (>= 0.17.0))
-  ppx_compare
+   (and
+    (>= 0.17.0)
+    (< 0.18.0)))
+  (ppx_compare
+   (and
+    (>= 0.17.0)
+    (< 0.18.0)))
   mlgmpidl
   vpl-core
-  ocamlgraph
+  (ocamlgraph
+   (= 2.2.0))
   (ocolor
    (>= 1.3.1))
-  containers
+  (containers
+   (>= 3.0.0))
   (alcotest :with-test)
   (domainslib
    (>= 0.5))
   (sexplib0
-   (>= 0.17))
+   (and
+    (>= 0.17)
+    (< 0.18.0)))
   (ppx_deriving
-   (>= 6.1.0))
+   (>= 6.0.3))
   (owl
    (>= 1.2))
   bitvectorset)
