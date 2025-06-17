@@ -26,12 +26,12 @@ depends: [
   "camllib"
   "apron" {>= "0.9.15"}
   "bddapron"
-  "ppx_sexp_conv" {>= "0.17.0" & < "0.18.0"}
+  "ppx_sexp_conv" {>= "v0.17.0" & < "v0.18.0"}
   "uuseg" {>= "16.0.0"}
   "uutf" {>= "1.0.3"}
-  "ppx_assert" {>= "0.17.0" & < "0.18.0"}
-  "ppx_inline_test" {>= "0.17.0" & < "0.18.0"}
-  "ppx_compare" {>= "0.17.0" & < "0.18.0"}
+  "ppx_assert" {>= "v0.17.0" & < "v0.18.0"}
+  "ppx_inline_test" {>= "v0.17.0" & < "v0.18.0"}
+  "ppx_compare" {>= "v0.17.0" & < "v0.18.0"}
   "mlgmpidl"
   "vpl-core"
   "ocamlgraph" {= "2.2.0"}
@@ -39,7 +39,7 @@ depends: [
   "containers" {>= "3.0.0"}
   "alcotest" {with-test}
   "domainslib" {>= "0.5"}
-  "sexplib0" {>= "0.17" & < "0.18.0"}
+  "sexplib0" {>= "v0.17" & < "v0.18.0"}
   "ppx_deriving" {>= "6.0.3"}
   "owl" {>= "1.2"}
   "bitvectorset"
