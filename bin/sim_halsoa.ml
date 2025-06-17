@@ -261,7 +261,7 @@ let () =
   let usage_msg =
     "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] [-bob] [-cadp] <dir>"
   in
-  let traces = ref 0
+  let traces = ref 1
   and cores = ref 1
   and steps = ref 1000
   and horizon = ref 10_000.0
@@ -279,27 +279,29 @@ let () =
   let directory = ref None in
   let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
   let recommended_cores = Stdlib.Domain.recommended_domain_count () in
-  assert (0 < !traces);
-  assert (0 < !cores && !cores <= recommended_cores);
-  assert (0 < !steps);
-  assert (0.0 < !horizon);
+  if !traces < 1 then invalid_arg "number of traces should be positive";
+  if !cores < 1 then invalid_arg "number of cores should be positive";
+  if !steps < 1 then invalid_arg "number of steps should be positive";
+  if !horizon <= 0.0 then invalid_arg "horizon should be positive";
   let processor =
     if !cores <> 1
     then (
-      let pool = Domainslib.Task.setup_pool ~num_domains:!cores () in
+      let pool =
+        Domainslib.Task.setup_pool ~num_domains:(Int.min !cores recommended_cores) ()
+      in
       fun f ->
         Domainslib.Task.run pool (fun _ ->
           Domainslib.Task.parallel_for_reduce
             ~chunk_size:1
             ~start:0
-            ~finish:!traces
+            ~finish:(Int.pred !traces)
             ~body:f
             pool
             Iter.append
             Iter.empty))
     else
       fun f ->
-        Iter.int_range ~start:0 ~stop:!traces
+        Iter.int_range ~start:0 ~stop:(Int.pred !traces)
         |> Iter.map f
         |> Iter.fold Iter.append Iter.empty
   in
