@@ -280,18 +280,25 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
               acc)
          IMap.empty
     |> IMap.to_iter
+    |> Iter.persistent
   ;;
 
   let print_statistics session category formatter chains =
     let stats = statistics category chains in
-    let total = Iter.fold (fun total (_, x) -> total + x) 0 stats |> Float.of_int in
-    Format.fprintf formatter "%s | %f\n" (C.to_string (of_offset session category)) total;
+    let total = Iter.fold (fun total (_, x) -> total + x) 0 stats in
+    Format.fprintf
+      formatter
+      "%s | total: %i\n"
+      (C.to_string (of_offset session category))
+      total;
+    let total = Float.of_int total in
     Format.fprintf
       formatter
       "%a"
-      (Iter.pp_seq ~sep:"\n" (fun formatter (c, x) ->
-         Format.fprintf formatter "%i | %f" c (Float.of_int x /. total)))
-      stats
+      (Iter.pp_seq ~sep:"" (fun formatter (c, x) ->
+         Format.fprintf formatter "%i | %f\n" c (Float.of_int x /. total)))
+      stats;
+    Format.pp_print_flush formatter ()
   ;;
 
   let reaction_times_to_string ~sep iter =

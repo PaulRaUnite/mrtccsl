@@ -49,17 +49,18 @@ let process input output chain =
          | End_of_file -> None)
       lines
   in
-  let _ = Printf.printf "chain computation for %s\n" input in
+  let _ = Format.printf "chain computation for %s\n" input in
   let trace = Iter.of_list trace in
   let chains, _ = trace_to_chain Randomized (map_chain to_inner chain) trace in
-  let _ =
-    FnCh.print_statistics
-      session
-      (to_inner "a.s")
-      Format.std_formatter
-      (Iter.of_dynarray chains)
-  in
-  let _ = print_endline "reaction computation" in
+  List.iter
+    (fun point ->
+       FnCh.print_statistics
+         session
+         (to_inner point)
+         Format.std_formatter
+         (Iter.of_dynarray chains))
+    (categorization_points chain);
+  let _ = Format.print_string "reaction computation\n" in
   let interest = points_of_interest chain in
   let reactions = FnCh.reaction_times session interest (Iter.of_dynarray chains) in
   let data_file = open_out output in
