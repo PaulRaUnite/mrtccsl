@@ -43,9 +43,9 @@ module Make (N : Num) = struct
     if absolute
     then (
       let l, r = range in
-      let period = (r - l) / of_int 2 in
-      let jitter = l - period, r - period in
-      `AbsoluteTimer (period, range_to_bound_dist ~n_sigma jitter, offset))
+      let jitter = (r - l) / of_int 2 in
+      let period = l + jitter in
+      `AbsoluteTimer (period, range_to_bound_dist ~n_sigma (N.neg jitter, jitter), offset))
     else `CumulativeTimer (range_to_bound_dist ~n_sigma range, offset)
   ;;
 
@@ -141,9 +141,7 @@ module Make (N : Num) = struct
     let c = map_aebsimple_config of_int c in
     let { name; n_sigma; relaxed_sched; delayed_comm; cores; _ } = c in
     let sys = aebsimple_template c in
-    let chain =
-      Semantics.signals_to_chain sys [ "radar"; "brake" ]
-    in
+    let chain = Semantics.signals_to_chain sys [ "radar"; "brake" ] in
     let dist, spec, tasks =
       of_sys ?cores ~n_sigma ?delayed_comm ~relaxed_sched sys chain
     in
