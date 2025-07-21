@@ -1,13 +1,18 @@
 (include_subdirs qualified)
 
 (library
+ (public_name mrtccsl.std)
  (name std)
- (package mrtccsl)
  (inline_tests)
  (wrapped false)
  (libraries containers uuseg sexplib0 gmp iter)
  (preprocess
-  (pps ppx_inline_test ppx_assert ppx_sexp_conv ppx_compare ppx_deriving.show)))
+  (pps
+   ppx_inline_test
+   ppx_assert
+   ppx_sexp_conv
+   ppx_compare
+   ppx_deriving.show)))
 
 (env
  (dev

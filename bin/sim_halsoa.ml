@@ -305,13 +305,41 @@ let () =
         |> Iter.map f
         |> Iter.fold Iter.append Iter.empty
   in
+  let directory = Option.get !directory in
   List.iter
     (process_config
        ~processor
        ~print_svgbob:!print_svgbob
        ~print_trace:!print_trace
-       ~directory:(Option.get !directory)
+       ~directory:(Filename.concat directory "absolute")
        ~steps:!steps
        ~horizon:(of_float !horizon))
-    C.aebsimple_variants
+    (C.aebsimple_variants true);
+  List.iter
+    (process_config
+       ~processor
+       ~print_svgbob:!print_svgbob
+       ~print_trace:!print_trace
+       ~directory:(Filename.concat directory "cumulative")
+       ~steps:!steps
+       ~horizon:(of_float !horizon))
+    (C.aebsimple_variants false);
+  List.iter
+    (process_config
+       ~processor
+       ~print_svgbob:!print_svgbob
+       ~print_trace:!print_trace
+       ~directory:(Filename.concat directory "absolute")
+       ~steps:!steps
+       ~horizon:(of_float !horizon))
+    (C.aebsfull_variants true);
+  List.iter
+    (process_config
+       ~processor
+       ~print_svgbob:!print_svgbob
+       ~print_trace:!print_trace
+       ~directory:(Filename.concat directory "cumulative")
+       ~steps:!steps
+       ~horizon:(of_float !horizon))
+    (C.aebsfull_variants false)
 ;;

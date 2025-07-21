@@ -148,10 +148,10 @@ module Make (N : Num) = struct
     name, dist, spec, tasks, chain
   ;;
 
-  let aebsimple_variants =
+  let aebsimple_variants absolute =
     [ { name = "c1"
       ; n_sigma = 2
-      ; absolute = false
+      ; absolute
       ; sensor_sampling_period = 15, 15
       ; sensor_latency = 2, 2
       ; sensor_offset = 0
@@ -165,7 +165,7 @@ module Make (N : Num) = struct
       }
     ; { name = "c2"
       ; n_sigma = 2
-      ; absolute = false
+      ; absolute
       ; sensor_sampling_period = 14, 16
       ; sensor_latency = 1, 3
       ; sensor_offset = 0
@@ -179,7 +179,7 @@ module Make (N : Num) = struct
       }
     ; { name = "c3"
       ; n_sigma = 2
-      ; absolute = false
+      ; absolute
       ; sensor_sampling_period = 14, 16
       ; sensor_latency = 1, 3
       ; sensor_offset = 0
@@ -193,21 +193,7 @@ module Make (N : Num) = struct
       }
     ; { name = "c4"
       ; n_sigma = 2
-      ; absolute = false
-      ; sensor_sampling_period = 4, 6
-      ; sensor_latency = 1, 3
-      ; sensor_offset = 0
-      ; controller_exec_time = 2, 8
-      ; actuator_sampling_period = 4, 6
-      ; actuator_latency = 1, 3
-      ; actuator_offset = 0
-      ; relaxed_sched = false
-      ; delayed_comm = None
-      ; cores = None
-      }
-    ; { name = "c5"
-      ; n_sigma = 2
-      ; absolute = false
+      ; absolute
       ; sensor_sampling_period = 14, 16
       ; sensor_latency = 1, 3
       ; sensor_offset = 0
@@ -219,12 +205,41 @@ module Make (N : Num) = struct
       ; delayed_comm = None
       ; cores = None
       }
+    ; { name = "c5"
+      ; n_sigma = 2
+      ; absolute
+      ; sensor_sampling_period = 4, 6
+      ; sensor_latency = 1, 3
+      ; sensor_offset = 0
+      ; controller_exec_time = 2, 8
+      ; actuator_sampling_period = 4, 6
+      ; actuator_latency = 1, 3
+      ; actuator_offset = 0
+      ; relaxed_sched = false
+      ; delayed_comm = None
+      ; cores = None
+      }
+    ; { name = "c6"
+      ; n_sigma = 2
+      ; absolute
+      ; sensor_sampling_period = 14, 16
+      ; sensor_latency = 1, 3
+      ; sensor_offset = 0
+      ; controller_exec_time = 2, 4
+      ; actuator_sampling_period = 14, 16
+      ; actuator_latency = 1, 3
+      ; actuator_offset = 0
+      ; relaxed_sched = false
+      ; delayed_comm = None
+      ; cores = None
+      }
     ]
     |> List.map of_aebsimple_config
   ;;
 
   type 'n aebs_config =
-    { n_sigma : int
+    { absolute : bool
+    ; n_sigma : int
     ; camera_offset : 'n
     ; lidar_offset : 'n
     ; radar_offset : 'n
@@ -237,7 +252,8 @@ module Make (N : Num) = struct
   [@@deriving map]
 
   let aebsfull_template
-        { n_sigma : int
+        { absolute
+        ; n_sigma : int
         ; camera_offset
         ; lidar_offset
         ; radar_offset
@@ -262,7 +278,6 @@ module Make (N : Num) = struct
     let controller_ex_time = 6, 10 in
     let actuator_ex_time = 1, 3 in
     let brake_period = 4, 6 in
-    let absolute = true in
     let components =
       [ { services =
             [ { name = "aebs.fusion"
@@ -338,7 +353,7 @@ module Make (N : Num) = struct
     name, dist, spec, tasks, chain
   ;;
 
-  let aebsfull_variants =
+  let aebsfull_variants absolute =
     let step = 3 in
     [ Seq.int_seq ~step 15
     ; Seq.int_seq ~step 15
@@ -352,7 +367,8 @@ module Make (N : Num) = struct
     |> Seq.map
          (fun (camera_offset, lidar_offset, radar_offset, fusion_offset, brake_offset) ->
             aebsfull_template
-              { n_sigma = 3
+              { absolute
+              ; n_sigma = 3
               ; camera_offset
               ; lidar_offset
               ; radar_offset
