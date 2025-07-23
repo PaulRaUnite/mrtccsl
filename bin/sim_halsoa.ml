@@ -159,6 +159,7 @@ let rec create_dir fn =
 let generate_trace
       ~print_svgbob
       ~print_trace
+      ?(debug = false)
       ~steps
       ~horizon
       directory
@@ -173,8 +174,9 @@ let generate_trace
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
   and points_of_interest = points_of_interest func_chain_spec in
-  let session, trace, _, chains, _ =
+  let session, trace, deadlock, chains, _ =
     FnCh.functional_chains
+      ~debug
       ~sem
       (strategy, steps, horizon)
       dist
@@ -204,11 +206,10 @@ let generate_trace
   reactions
 ;;
 
-let parallel = false
-
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
 let process_config
+      ~debug
       ~print_svgbob
       ~print_trace
       ~directory
@@ -238,6 +239,7 @@ let process_config
   let reaction_times =
     processor
     @@ generate_trace
+         ~debug
          ~print_svgbob
          ~print_trace
          ~steps
@@ -266,7 +268,8 @@ let () =
   and steps = ref 1000
   and horizon = ref 10_000.0
   and print_svgbob = ref false
-  and print_trace = ref false in
+  and print_trace = ref false
+  and inspect_deadlock = ref false in
   let speclist =
     [ "-t", Arg.Set_int traces, "Number of traces to generate"
     ; "-c", Arg.Set_int cores, "Number of cores to use"
@@ -274,6 +277,9 @@ let () =
     ; "-s", Arg.Set_int steps, "Max steps of simulation"
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
     ; "-cadp", Arg.Set print_trace, "Print CADP trace"
+    ; ( "-inspect"
+      , Arg.Set inspect_deadlock
+      , "Collect and print debug information for deadlocked traces" )
     ]
   in
   let directory = ref None in
@@ -309,6 +315,7 @@ let () =
   List.iter
     (process_config
        ~processor
+       ~debug:!inspect_deadlock
        ~print_svgbob:!print_svgbob
        ~print_trace:!print_trace
        ~directory:(Filename.concat directory "absolute")
@@ -318,6 +325,7 @@ let () =
   List.iter
     (process_config
        ~processor
+       ~debug:!inspect_deadlock
        ~print_svgbob:!print_svgbob
        ~print_trace:!print_trace
        ~directory:(Filename.concat directory "cumulative")
@@ -327,6 +335,7 @@ let () =
   List.iter
     (process_config
        ~processor
+       ~debug:!inspect_deadlock
        ~print_svgbob:!print_svgbob
        ~print_trace:!print_trace
        ~directory:(Filename.concat directory "absolute")
@@ -336,6 +345,7 @@ let () =
   List.iter
     (process_config
        ~processor
+       ~debug:!inspect_deadlock
        ~print_svgbob:!print_svgbob
        ~print_trace:!print_trace
        ~directory:(Filename.concat directory "cumulative")

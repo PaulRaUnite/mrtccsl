@@ -147,7 +147,7 @@ module type S = sig
   module Trace : Trace with type solution := solution and type num := N.t
 
   val empty_sim : sim
-  val of_spec : (clock, param, var, N.t) Rtccsl.specification -> sim
+  val of_spec : ?debug:bool -> (clock, param, var, N.t) Rtccsl.specification -> sim
   val gen_trace : var_strategy -> sol_strategy -> sim -> Trace.t
   val bisimulate : var_strategy -> sol_strategy -> sim -> sim -> Trace.t
   val accept_trace : sim -> N.t -> Trace.t -> N.t option
@@ -415,10 +415,9 @@ struct
         let g vars _ =
           let next =
             match !last with
-            | None -> offset
-            | Some v -> N.(v + period)
+            | None -> I.return offset
+            | Some v -> I.shift_by (vars.current error) N.(v + period)
           in
-          let next = I.shift_by (vars.current error) next in
           [| L.singleton out, next; L.empty, Option.get (I.complement_left next) |]
         in
         let t vars _ (l, _) =
@@ -769,7 +768,9 @@ struct
     | _ -> failwith "not implemented"
   ;;
 
-  let of_spec spec : sim =
+  let debug_automata (g, t, clocks) = debug_g "all" g, t, clocks
+
+  let of_spec ?(debug = false) spec : sim =
     let constraints =
       List.fold_left sync empty (List.map of_constr Rtccsl.(spec.constraints))
     and relations =
@@ -778,7 +779,7 @@ struct
       |> List.fold_left (CMap.union (fun _ x y -> Some (I.inter x y))) CMap.empty
     in
     { limits = (fun v -> Option.value ~default:I.inf (CMap.find_opt v relations))
-    ; automata = constraints
+    ; automata = (if debug then debug_automata constraints else constraints)
     }
   ;;
 
@@ -809,9 +810,14 @@ struct
           match CMap.find_opt k !storage with
           | Some x -> x
           | None ->
-            let new_v = strat k (var2cond k) in
+            let cond = var2cond k in
+            let new_v = strat k cond in
             storage := CMap.add k new_v !storage;
-            (* Printf.printf "generate %s with %s\n" (C.to_string k) (I.to_string new_v); *)
+            (* Printf.printf
+              "generate %s with %s in %s\n"
+              (C.to_string k)
+              (I.to_string new_v)
+              (I.to_string cond); *)
             new_v)
     ; consume =
         (fun k ->

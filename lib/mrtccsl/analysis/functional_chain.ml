@@ -223,6 +223,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   ;;
 
   let functional_chains
+        ?(debug = false)
         ?(sem = All)
         (s, n, time)
         (dist : _ Automata.Simple.dist_binding list)
@@ -230,7 +231,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         (chain : C.t chain)
     =
     let session = create () in
-    let env = A.of_spec (with_spec session system_spec) in
+    let env = A.of_spec ~debug (with_spec session system_spec) in
     let trace, deadlock =
       A.gen_trace (ST.Var.use_dist (List.map (with_dist session) dist)) s env
       |> A.Trace.take ~steps:n
