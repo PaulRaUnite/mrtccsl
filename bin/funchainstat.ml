@@ -110,7 +110,6 @@ let parallel_reaction_times
       ~sem
       ?(with_partial = false)
       params
-      dist
       system_spec
       func_chain_spec
       runs
@@ -119,7 +118,7 @@ let parallel_reaction_times
   let start, finish = chain_start_finish_clocks func_chain_spec in
   let body _ =
     let s, _, _, full_chains, partial_chains =
-      FnCh.functional_chains ~sem params dist system_spec func_chain_spec
+      FnCh.functional_chains ~sem params system_spec func_chain_spec
     in
     let full_reaction_times =
       FnCh.reaction_times s [ start, finish ] (Iter.of_dynarray full_chains)
@@ -171,9 +170,17 @@ let func_chain_spec =
 ;;
 
 let process name spec =
+  let spec = Language.Specification.Builder.of_decl spec in
   let _ = Random.init 82763452 in
   let system_spec =
-    Rtccsl.map_specification Fun.id Fun.id Fun.id Number.Rational.of_int spec
+    Language.Specification.map
+      Fun.id
+      Fun.id
+      Fun.id
+      Fun.id
+      Fun.id
+      Number.Rational.of_int
+      spec
   in
   let strategy candidates = random_strat candidates in
   let steps = 1_000 in
@@ -189,18 +196,12 @@ let process name spec =
         ~sem
         ~with_partial:false
         (strategy, steps, horizon)
-        dist
         system_spec
         func_chain_spec
         simulations
     else (
       let s, trace, deadlock, chains, partial_chains =
-        FnCh.functional_chains
-          ~sem
-          (strategy, steps, horizon)
-          dist
-          system_spec
-          func_chain_spec
+        FnCh.functional_chains ~sem (strategy, steps, horizon) system_spec func_chain_spec
       in
       let chains = Iter.of_dynarray chains in
       let reactions = FnCh.reaction_times s points_of_interest chains in
@@ -210,9 +211,9 @@ let process name spec =
         Export.trace_to_svgbob
           ~numbers:true
           ~precision:2
-          ~tasks:Rtccsl.Examples.Macro.[ task_names "s"; task_names "c"; task_names "a" ]
+          ~tasks:Examples.Macro.[ task_names "s"; task_names "c"; task_names "a" ]
           s
-          (List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec))
+          (List.sort_uniq String.compare (Ccsl.Language.Specification.clocks system_spec))
           (Format.formatter_of_out_channel trace_file)
           trace;
         close_out trace_file
@@ -241,9 +242,7 @@ let process name spec =
       reactions)
   in
   let data_file = open_out (Printf.sprintf "./plots/data/%s_reaction_times.csv" name) in
-  let _ =
-      (FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest data_file reactions)
-  in
+  let _ = FnCh.reaction_times_to_csv [ "a.s" ] points_of_interest data_file reactions in
   close_out data_file
 ;;
 
@@ -251,14 +250,14 @@ let () =
   let use_cases =
     [ (* "certain1", Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid_certain 15 2 5 5 2; *)
       ( "c2"
-      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid
+      , Ccsl.Examples.SimpleControl.no_resource_constraint_rigid
           (14, 16)
           (1, 3)
           (2, 8)
           (4, 6)
           (1, 3) )
     ; ( "c3"
-      , Rtccsl.Examples.SimpleControl.no_resource_constraint_rigid
+      , Ccsl.Examples.SimpleControl.no_resource_constraint_rigid
           (14, 16)
           (1, 3)
           (2, 8)

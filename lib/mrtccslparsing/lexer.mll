@@ -53,11 +53,10 @@ rule read =
   | "@" { AT }
   | "#" { SHARP }
   | "%" { PERCENT }
-  | ":=" { COLONEQ }
+  | "~" { SIM }
   (* keywords *)
-  | "allow" { ALLOW }
-  | "forbid" { FORBID }
-  | "in" { IN }
+  | "integer" {INTEGER}
+  | "duration" {DURATION}
   | "next" { NEXT }
   | "fastest" { FASTEST }
   | "slowest" { SLOWEST }
@@ -67,37 +66,26 @@ rule read =
   | "on" { ON }
   | "alternates" { ALTERNATES }
   | "delay" { DELAY }
-  | "interface" { INTERFACE }
-  | "upper" { UPPER }
-  | "lower" { LOWER }
-  | "where" { WHERE }
   | "and" { AND }
   | "or" { OR }
   | "xor" { XOR }
   | "by" { BY }
-  | "is" { IS }
   | "skip" { SKIP }
   | "every" { EVERY }
-  | "of" { OF }
-  | "find" { FIND }
-  | "mod" { MOD }
   | "periodic" { PERIODIC }
-  | "rel.error" { RELATIVE_ERROR }
-  | "abs.error" { ABSOLUTE_ERROR }
+  | "jitter" { JITTER }
+  | "drift" { DRIFT }
   | "offset" { OFFSET }
   | "mutex" { MUTEX }
   | "pool" { POOL }
-  | "method" { METHOD }
   | "sporadic" { SPORADIC }
-  | "non-strict" { STRICT(false) }
-  | "strict" { STRICT(true) }
   | "subclocks" { SUBCLOCKS }
-  | "first-sampled" { FIRSTSAMPLED }
-  | "last-sampled" { LASTSAMPLED }
   | "causes" {CAUSES}
   | "precedes" {PRECEDES}
   | "except" {EXCEPT}
-  | "when" {WHEN}
+  | "discrete" {DISCRETE}
+  | "continuous" {CONTINUOUS}
+  | "process" {PROCESS}
   (* time scales and units *)
   | "year" { SECOND(365*24*60*60, 1) }
   | "month" { SECOND(30*24*60*60, 1) }
@@ -110,21 +98,6 @@ rule read =
   | ("m" | "u" | "n"| "p"| "k"| "M" | "G" | "T" as prefix) "s" { let nom,denom = parse_prefix prefix in SECOND(nom,denom) }
   | ("m" | "u" | "n"| "p"| "k"| "M" | "G" | "T" as prefix) "Hz" { let nom,denom = parse_prefix prefix in HERTZ(nom,denom) }
   | "ppm" {PPM}
-   (* types *)
-  | "integer" {TYPE_INT }
-  | "rational" {TYPE_RATIONAL}
-  | "interval" {TYPE_INTERVAL}
-  | "frequency" {TYPE_FREQUENCY}
-  | "time" {TYPE_TIME}
-  | "clock" {TYPE_CLOCK}
-  | "block" {TYPE_BLOCK}
-  (* Properties *)
-  | "schedulable" {SCHEDULABLE}
-  | "live" {LIVE(false)}
-  | "weak live" {LIVE(true)}
-  | "safe" {FINITENESS}
-  | "finite" {FINITENESS}
-  | "exists" {EXISTS}
   (* Else *)
   | id { ID (Lexing.lexeme lexbuf) }
   | int { INT (int_of_string (Lexing.lexeme lexbuf)) }

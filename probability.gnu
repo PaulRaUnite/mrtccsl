@@ -28,12 +28,14 @@ set ylabel "probability"
 print(filename)
 stats filename using 1 name "D" nooutput;
 
+set nokey
+
 do for [j=2:D_columns] {
-    set title filename noenhanced ;
-    set xlabel sprintf("reaction time %s", D_column_header[j]);
+    # set title filename noenhanced ;
+    # set xlabel sprintf("reaction time %s", D_column_header[j]);
+    set xlabel sprintf("reaction time");
     plot filename using (($1<=3)?rounded(column(j)):NaN):(1.0/D_records) smooth frequency with boxes title "missed 3" , \
         '' using (($1<=2)?rounded(column(j)):NaN):(1.0/D_records) smooth frequency with boxes title "missed 2" , \
         '' using (($1<=1)?rounded(column(j)):NaN):(1.0/D_records) smooth frequency with boxes title "missed 1" , \
-        '' using (($1<=0)?rounded(column(j)):NaN):(1.0/D_records) smooth frequency with boxes title "missed 0" , \
-        '' using (rounded(column(j))):(0.1/D_records) smooth kdensity bandwidth 1 lw 2 lc rgb "black" title "distribution";
+        '' using (($1<=0)?rounded(column(j)):NaN):(1.0/D_records) smooth frequency with boxes title "missed 0" ;
 }

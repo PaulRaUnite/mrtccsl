@@ -1,4 +1,5 @@
 open Prelude
+open Language
 
 type relation =
   [ `Causality
@@ -133,7 +134,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     let add_missed i k =
       for j = 0 to pred i do
         Queue.iter
-          (fun c -> c.misses <- CMap.entry (fun v -> v + 1) 0 k c.misses)
+          (fun c -> c.misses <- CMap.entry (fun v -> v + 1) ~default:0 k c.misses)
           partial_chains.(j)
       done
     in
@@ -226,16 +227,13 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         ?(debug = false)
         ?(sem = All)
         (s, n, time)
-        (dist : _ Automata.Simple.dist_binding list)
-        (system_spec : _ Rtccsl.specification)
+        (system_spec : _ Specification.t)
         (chain : C.t chain)
     =
     let session = create () in
     let env = A.of_spec ~debug (with_spec session system_spec) in
     let trace, deadlock =
-      A.gen_trace (ST.Var.use_dist (List.map (with_dist session) dist)) s env
-      |> A.Trace.take ~steps:n
-      |> A.Trace.until ~horizon:time
+      A.gen_trace s env |> A.Trace.take ~steps:n |> A.Trace.until ~horizon:time
     in
     let trace = A.Trace.persist ~size_hint:n trace in
     let session_chain = map_chain (to_offset session) chain in
@@ -275,8 +273,8 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     |> Iter.fold
          (fun acc ({ misses; _ } : chain_instance) ->
             IMap.entry
+              ~default:0
               (Int.add 1)
-              0
               (Option.value ~default:0 (CMap.find_opt category misses))
               acc)
          IMap.empty

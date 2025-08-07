@@ -1,6 +1,6 @@
 open Prelude
 open Definition
-open Mrtccsl.Automata.Simple
+open Mrtccsl.Language
 
 module type Num = sig
   include Mrtccsl.Simple.Num
@@ -14,10 +14,10 @@ module Make (N : Num) = struct
   open N
 
   let sigma n (l, r) =
-    let dev = (r - l) / of_int (Int.mul 2 n) in
+    let deviation = (r - l) / of_int (Int.mul 2 n) in
     let mean = l + ((r - l) / of_int 2) in
     (* Printf.printf "mean: %s dev:%s\n" (N.to_string mean) (N.to_string dev); *)
-    Normal { mean; dev }
+    Normal { mean; deviation }
   ;;
 
   let range_to_bound_dist ~n_sigma bounds = { bounds; dist = sigma n_sigma bounds }
@@ -40,13 +40,11 @@ module Make (N : Num) = struct
   [@@deriving map]
 
   let make_periodic_policy ~absolute ~n_sigma range offset =
-    if absolute
-    then (
-      let l, r = range in
-      let jitter = (r - l) / of_int 2 in
-      let period = l + jitter in
-      `AbsoluteTimer (period, range_to_bound_dist ~n_sigma (N.neg jitter, jitter), offset))
-    else `CumulativeTimer (range_to_bound_dist ~n_sigma range, offset)
+    let l, r = range in
+    let jitter = (r - l) / of_int 2 in
+    let period = l + jitter in
+    let params = period, range_to_bound_dist ~n_sigma (N.neg jitter, jitter), offset in
+    if absolute then `AbsoluteTimer params else `CumulativeTimer params
   ;;
 
   let aebsimple_template
@@ -103,38 +101,33 @@ module Make (N : Num) = struct
     components, hal
   ;;
 
-  let useless_def_spec chain =
+  let useless_def_spec chain builder =
     let open Mrtccsl.Analysis.FunctionalChain in
-    let open Mrtccsl.Rtccsl in
-    let constraints, _ =
-      List.fold_left
-        (fun (spec, prev) -> function
-           | `Sampling, c ->
-             let useful = Printf.sprintf "%s++" c
-             and useless = Printf.sprintf "%s--" c in
-             ( List.append
-                 [ Sample { out = useful; arg = prev; base = c }
-                 ; Minus { out = useless; arg = c; except = [ useful ] }
-                 ]
-                 spec
-             , c )
-           | `Causality, c -> spec, c)
-        ([], chain.first)
-        chain.rest
-    in
-    Mrtccsl.Rtccsl.constraints_only constraints
+    let open Mrtccsl.Language.Specification.Builder in
+    ignore
+    @@ List.fold_left
+         (fun prev -> function
+            | `Sampling, c ->
+              let useful = Printf.sprintf "%s++" c
+              and useless = Printf.sprintf "%s--" c in
+              logical builder @@ Sample { out = useful; arg = prev; base = c };
+              logical builder @@ Minus { out = useless; arg = c; except = [ useful ] };
+              c
+            | `Causality, c -> c)
+         chain.first
+         chain.rest
   ;;
 
-  let of_sys ?cores ?delayed_comm ~n_sigma ~relaxed_sched sys chain =
-    let dist, spec =
-      Semantics.of_system
-        ~relaxed_sched
-        ?delayed_comm:(Option.map (range_to_bound_dist ~n_sigma) delayed_comm)
-        ?cores
-        sys
-    in
+  let of_sys ?cores ?delayed_comm ~n_sigma ~relaxed_sched sys chain builder =
+    Semantics.of_system
+      ~relaxed_sched
+      ?delayed_comm:(Option.map (range_to_bound_dist ~n_sigma) delayed_comm)
+      ?cores
+      sys
+      builder;
     let tasks = Semantics.system_tasks sys in
-    dist, Mrtccsl.Rtccsl.merge spec (useless_def_spec chain), tasks
+    useless_def_spec chain builder;
+    tasks
   ;;
 
   let of_aebsimple_config c =
@@ -142,10 +135,11 @@ module Make (N : Num) = struct
     let { name; n_sigma; relaxed_sched; delayed_comm; cores; _ } = c in
     let sys = aebsimple_template c in
     let chain = Semantics.signals_to_chain sys [ "radar"; "brake" ] in
-    let dist, spec, tasks =
-      of_sys ?cores ~n_sigma ?delayed_comm ~relaxed_sched sys chain
+    let spec, tasks =
+      Specification.Builder.of_decl_with_output
+        (of_sys ?cores ~n_sigma ?delayed_comm ~relaxed_sched sys chain)
     in
-    name, dist, spec, tasks, chain
+    name, spec, tasks, chain
   ;;
 
   let aebsimple_variants absolute =
@@ -341,16 +335,17 @@ module Make (N : Num) = struct
     let chain =
       Semantics.signals_to_chain (components, hal) [ "radar"; "fused_map"; "brake" ]
     in
-    let dist, spec, tasks =
-      of_sys
-        ?cores
-        ~n_sigma
-        ?delayed_comm:(Option.map of_range delayed_comm)
-        ~relaxed_sched
-        (components, hal)
-        chain
+    let spec, tasks =
+      Specification.Builder.of_decl_with_output
+        (of_sys
+           ?cores
+           ~n_sigma
+           ?delayed_comm:(Option.map of_range delayed_comm)
+           ~relaxed_sched
+           (components, hal)
+           chain)
     in
-    name, dist, spec, tasks, chain
+    name, spec, tasks, chain
   ;;
 
   let aebsfull_variants absolute =

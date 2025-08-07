@@ -1,5 +1,5 @@
 open Prelude
-open Rtccsl
+open Language
 
 module Make (C : Set.OrderedType) = struct
   module L = Set.Make (C)
@@ -54,9 +54,9 @@ module Make (C : Set.OrderedType) = struct
   let squish = function
     | Causality { cause; conseq } | Precedence { cause; conseq } ->
       List.powerset [ cause; conseq ]
-    | Exclusion clocks -> [] :: List.map List.return clocks
+    | Exclusion (clocks,_) -> [] :: List.map List.return clocks
     | Coincidence clocks -> [ []; clocks ]
-    | Subclocking { sub; super } -> [ []; [ sub; super ]; [ super ] ]
+    | Subclocking { sub; super; _ } -> [ []; [ sub; super ]; [ super ] ]
     | Minus { out; arg; except } ->
       [ []; [ out; arg ] ]
       @ List.powerset_nz except
@@ -66,7 +66,7 @@ module Make (C : Set.OrderedType) = struct
        | Some base ->
          [ []; [ out; base ]; [ out; arg; base ]; [ arg ]; [ arg; base ]; [ base ] ]
        | None -> [ []; [ out; arg ]; [ arg ] ])
-    | Fastest { out; left; right } | Slowest { out; left; right } ->
+    | Fastest { out; args = [ left; right ] } | Slowest { out; args = [ left; right ] } ->
       [ []; [ out; left; right ]; [ out; left ]; [ out; right ]; [ left ]; [ right ] ]
     | Intersection { out; args } ->
       let labels = List.powerset args in
@@ -97,8 +97,8 @@ module Make (C : Set.OrderedType) = struct
     |> Seq.length
   ;;
 
-  let optimize (spec : _ specification) =
-    let constr = Array.of_list spec.constraints in
+  let optimize (spec : _ Specification.t) =
+    let constr = Array.of_list spec.logical in
     let vertices =
       Array.mapi
         (fun i c ->
@@ -127,6 +127,6 @@ module Make (C : Set.OrderedType) = struct
     let constraints =
       List.map (fun v -> constr.((G.V.label v).constr)) (optimize graph (seed graph))
     in
-    { constraints; var_relations = spec.var_relations }
+    { spec with logical = constraints }
   ;;
 end

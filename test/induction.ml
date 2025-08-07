@@ -1,232 +1,216 @@
 open Mrtccsl
 open Prelude
-open Rtccsl
+open Language
+open Specification.Builder
 open Analysis
 
 let time_const_interval = Tuple.map2 (fun v -> Const v)
 
 (**brake-by-wire: static check*)
 let example1 d1 d2 =
-  ( constraints_only []
-  , { constraints =
-        [ RTdelay { out = "l"; arg = "in"; delay = "del1" }
-        ; RTdelay { out = "r"; arg = "in"; delay = "del2" }
-        ]
-    ; var_relations =
-        [ TimeVarRelation ("del1", Eq, Const d1); TimeVarRelation ("del2", Eq, Const d2) ]
-    }
-  , constraints_only [ Precedence { cause = "l"; conseq = "r" } ] )
+  Module.make
+    []
+    (fun b ->
+       logical b @@ RTdelay { out = "l"; arg = "in"; delay = Var "del1" };
+       logical b @@ RTdelay { out = "r"; arg = "in"; delay = Var "del2" };
+       duration b @@ NumRelation ("del1", `Eq, Const d1);
+       duration b @@ NumRelation ("del2", `Eq, Const d2))
+    []
 ;;
 
 (**Sampling on relatively periodic clock*)
 let example2 =
-  ( { constraints = [ CumulPeriodic { out = "b"; period = "period"; offset = Const 5 } ]
-    ; var_relations =
-        [ TimeVarRelation ("period", LessEq, Const 52)
-        ; TimeVarRelation ("period", MoreEq, Const 48)
-        ]
-    }
-  , { constraints =
-        [ RTdelay { out = "d"; arg = "e"; delay = "del" }
-        ; Sample { out = "s"; arg = "d"; base = "b" }
-        ]
-    ; var_relations = [ TimeVarRelation ("del", Eq, Const 1) ]
-    }
-  , empty )
+  Module.make
+    [ (fun b ->
+        logical b
+        @@ CumulPeriodic { out = "b"; period = 50; error = Var "error"; offset = Const 5 };
+        duration b @@ NumRelation ("error", `LessEq, Const (2));
+        duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
+    ]
+    (fun b ->
+       logical b @@ RTdelay { out = "d"; arg = "e"; delay = Var "del" };
+       logical b @@ Sample { out = "s"; arg = "d"; base = "b" };
+       duration b @@ NumRelation ("del", `Eq, Const 1))
+    []
 ;;
 
 (**brake-by-wire: main idea*)
 let example3 d1 d2 t =
-  ( empty
-  , { constraints =
-        [ RTdelay { out = "l"; arg = "in"; delay = "del1" }
-        ; RTdelay { out = "r"; arg = "in"; delay = "del2" }
-        ; Fastest { out = "f"; left = "l"; right = "r" }
-        ; Slowest { out = "s"; left = "l"; right = "r" }
-        ; RTdelay { out = "d"; arg = "f"; delay = "del3" }
-        ]
-    ; var_relations =
-        (let d11, d12 = d1 in
-         let d21, d22 = d2 in
-         let t1, t2 = t in
-         [ TimeVarRelation ("del1", LessEq, Const d12)
-         ; TimeVarRelation ("del1", MoreEq, Const d11)
-         ; TimeVarRelation ("del2", LessEq, Const d22)
-         ; TimeVarRelation ("del2", MoreEq, Const d21)
-         ; TimeVarRelation ("del3", LessEq, Const t2)
-         ; TimeVarRelation ("del3", MoreEq, Const t1)
-         ])
-    }
-  , constraints_only [ Precedence { cause = "s"; conseq = "d" } ] )
+  Module.make
+    []
+    (fun b ->
+       logical b @@ RTdelay { out = "l"; arg = "in"; delay = var "del1" };
+       logical b @@ RTdelay { out = "r"; arg = "in"; delay = var "del2" };
+       logical b @@ Fastest { out = "f"; args = [ "l"; "r" ] };
+       logical b @@ Slowest { out = "s"; args = [ "l"; "r" ] };
+       logical b @@ RTdelay { out = "d"; arg = "f"; delay = var "del3" };
+       let d11, d12 = d1 in
+       let d21, d22 = d2 in
+       let t1, t2 = t in
+       duration b @@ NumRelation ("del1", `LessEq, Const d12);
+       duration b @@ NumRelation ("del1", `MoreEq, Const d11);
+       duration b @@ NumRelation ("del2", `LessEq, Const d22);
+       duration b @@ NumRelation ("del2", `MoreEq, Const d21);
+       duration b @@ NumRelation ("del3", `LessEq, Const t2);
+       duration b @@ NumRelation ("del3", `MoreEq, Const t1))
+    [ (fun b -> logical b @@ Precedence { cause = "s"; conseq = "d" }) ]
 ;;
 
 let example4 d1 d2 n t =
-  ( { constraints =
-        [ CumulPeriodic
-            { out = "base"
-            ; period = "period"
-            ; offset =
-                (let x, y = d1 in
-                 Const (Int.max x y + 3))
-            }
-        ]
-    ; var_relations =
-        [ TimeVarRelation ("period", LessEq, Const 52)
-        ; TimeVarRelation ("period", MoreEq, Const 48)
-        ]
-    }
-  , { constraints =
-        [ RTdelay { out = "b"; arg = "a"; delay = "del1" }
-        ; Delay { out = "d"; arg = "b"; delay = Const n, Const n; base = Some "base" }
-        ; RTdelay { out = "e"; arg = "d"; delay = "del2" }
-        ; FirstSampled { out = "fb"; arg = "b"; base = "base" }
-        ; RTdelay { out = "fb"; arg = "fa"; delay = "del3" }
-          (* ; Causality { cause = "fa"; conseq = "fb" } *)
-        ; Subclocking { sub = "fa"; super = "a" }
-        ; RTdelay { out = "fad"; arg = "fa"; delay = "del4" }
-        ]
-    ; var_relations =
-        (let d11, d12 = d1 in
-         let d21, d22 = d2 in
-         [ TimeVarRelation ("del1", LessEq, Const d12)
-         ; TimeVarRelation ("del1", MoreEq, Const d11)
-         ; TimeVarRelation ("del2", LessEq, Const d22)
-         ; TimeVarRelation ("del2", MoreEq, Const d21)
-         ; TimeVarRelation ("del3", LessEq, Const d12)
-         ; TimeVarRelation ("del3", MoreEq, Const d11)
-         ; TimeVarRelation ("del4", Eq, Const t)
-         ])
-    }
-  , constraints_only [ Precedence { cause = "e"; conseq = "fad" } ] )
+  Module.make
+    [ (fun b ->
+        logical b
+        @@ CumulPeriodic
+             { out = "base"
+             ; period = 50
+             ; error = var "error"
+             ; offset =
+                 (let x, y = d1 in
+                  Const (Int.max x y + 3))
+             };
+        duration b @@ NumRelation ("error", `LessEq, Const 2);
+        duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
+    ]
+    (fun b ->
+       logical b @@ RTdelay { out = "b"; arg = "a"; delay = var "del1" };
+       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" };
+       logical b @@ RTdelay { out = "e"; arg = "d"; delay = var "del2" };
+       logical b @@ FirstSampled { out = "fb"; arg = "b"; base = "base" };
+       logical b @@ RTdelay { out = "fb"; arg = "fa"; delay = var "del3" }
+       (* ; Causality { cause = "fa"; conseq = "fb" } *);
+       logical b @@ Subclocking { sub = "fa"; super = "a"; dist = None };
+       logical b @@ RTdelay { out = "fad"; arg = "fa"; delay = var "del4" };
+       let d11, d12 = d1 in
+       let d21, d22 = d2 in
+       duration b @@ NumRelation ("del1", `LessEq, Const d12);
+       duration b @@ NumRelation ("del1", `MoreEq, Const d11);
+       duration b @@ NumRelation ("del2", `LessEq, Const d22);
+       duration b @@ NumRelation ("del2", `MoreEq, Const d21);
+       duration b @@ NumRelation ("del3", `LessEq, Const d12);
+       duration b @@ NumRelation ("del3", `MoreEq, Const d11);
+       duration b @@ NumRelation ("del4", `Eq, Const t))
+    [ (fun b -> logical b @@ Precedence { cause = "e"; conseq = "fad" }) ]
 ;;
 
 let example5 =
-  ( empty
-  , { constraints =
-        [ RTdelay { out = "l"; arg = "in"; delay = "del1" }
-        ; RTdelay { out = "r"; arg = "in"; delay = "del2" }
-        ]
-    ; var_relations =
-        [ TimeVarRelation ("del1", LessEq, Const 2)
-        ; TimeVarRelation ("del1", MoreEq, Const 1)
-        ; TimeVarRelation ("del2", LessEq, Const 4)
-        ; TimeVarRelation ("del2", MoreEq, Const 3)
-        ]
-    }
-  , constraints_only
-      [ Fastest { out = "f"; left = "l"; right = "r" }
-      ; Precedence { cause = "f"; conseq = "r" }
-      ] )
+  Module.make
+    []
+    (fun b ->
+       logical b @@ RTdelay { out = "l"; arg = "in"; delay = var "del1" };
+       logical b @@ RTdelay { out = "r"; arg = "in"; delay = var "del2" };
+       duration b @@ NumRelation ("del1", `LessEq, Const 2);
+       duration b @@ NumRelation ("del1", `MoreEq, Const 1);
+       duration b @@ NumRelation ("del2", `LessEq, Const 4);
+       duration b @@ NumRelation ("del2", `MoreEq, Const 3))
+    [ (fun b ->
+        logical b @@ Fastest { out = "f"; args = [ "l"; "r" ] };
+        logical b @@ Precedence { cause = "f"; conseq = "r" })
+    ]
 ;;
 
-let trivial = empty, empty, empty
+let trivial = Module.empty
 
 let example6 n =
-  ( empty
-  , constraints_only
-      [ Sample { out = "c"; arg = "b"; base = "base" }
-      ; Delay { out = "d"; arg = "c"; delay = Const n, Const n; base = Some "base" }
-      ]
-  , constraints_only
-      [ Delay { out = "d"; arg = "b"; delay = Const n, Const n; base = Some "base" } ] )
+  Module.
+    { assumptions = []
+    ; structure =
+        constraints_only
+          [ Sample { out = "c"; arg = "b"; base = "base" }
+          ; Delay { out = "d"; arg = "c"; delay = Const n; base = Some "base" }
+          ]
+    ; assertions =
+        [ constraints_only
+            [ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" } ]
+        ]
+    }
 ;;
 
 let example7 period n1 n2 d =
-  ( { constraints = [ CumulPeriodic { out = "base"; period = "period"; offset = Const 10 } ]
-    ; var_relations =
-        [ TimeVarRelation ("period", LessEq, Const (period + 2))
-        ; TimeVarRelation ("period", MoreEq, Const (period - 2))
-        ]
-    }
-  , { constraints =
-        [ Delay { out = "b"; arg = "a"; delay = Const n1, Const n1; base = Some "base" }
-        ; RTdelay { out = "c"; arg = "b"; delay = "del" }
-        ; Delay
-            { out = "dbase"
-            ; arg = "base"
-            ; delay = Const (n1 + 1), Const (n1 + 1)
-            ; base = None
-            }
-        ; Delay { out = "d"; arg = "c"; delay = Const n2, Const n2; base = Some "dbase" }
-        ]
-    ; var_relations = [ TimeVarRelation ("del", Eq, Const d) ]
-    }
-  , empty )
+  Module.make
+    [ (fun b ->
+        logical b
+        @@ CumulPeriodic { out = "base"; period; error = var "error"; offset = Const 10 };
+        duration b @@ NumRelation ("error", `LessEq, Const 2);
+        duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
+    ]
+    (fun b ->
+       logical b @@ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" };
+       logical b @@ RTdelay { out = "c"; arg = "b"; delay = var "del" };
+       logical b
+       @@ Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = None };
+       logical b @@ Delay { out = "d"; arg = "c"; delay = Const n2; base = Some "dbase" };
+       duration b @@ NumRelation ("del", `Eq, Const d))
+    []
 ;;
 
 let example8 n1 n2 =
-  ( []
-  , [ Delay { out = "b"; arg = "a"; delay = Const n1, Const n1; base = Some "base" }
-    ; Delay { out = "c"; arg = "b"; delay = Const n2, Const n2; base = Some "base" }
-    ]
-  , [] )
+  Module.
+    { assertions = []
+    ; structure =
+        constraints_only
+          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" }
+          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = Some "base" }
+          ]
+    ; assumptions = []
+    }
 ;;
 
 let example9 n1 n2 =
-  ( empty
-  , constraints_only
-      [ Delay { out = "b"; arg = "a"; delay = Const n1, Const n1; base = Some "base" }
-      ; Delay
-          { out = "dbase"
-          ; arg = "base"
-          ; delay = Const (n1 + 1), Const (n1 + 1)
-          ; base = None
-          }
-      ; Delay { out = "c"; arg = "b"; delay = Const n2, Const n2; base = Some "dbase" }
-      ]
-  , empty )
+  Module.
+    { assertions = []
+    ; structure =
+        constraints_only
+          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" }
+          ; Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = None }
+          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = Some "dbase" }
+          ]
+    ; assumptions = []
+    }
 ;;
 
 let param1 d1 d2 n t1 t2 =
-  ( { constraints =
-        [ CumulPeriodic
-            { out = "base"
-            ; period = "period"
-            ; offset =
-                (let x, y = d1 in
-                 Const (Int.max x y + 3))
-            }
-        ]
-    ; var_relations =
-        [ TimeVarRelation ("period", LessEq, Const 52)
-        ; TimeVarRelation ("period", MoreEq, Const 48)
-        ]
-    }
-  , { constraints =
-        [ RTdelay { out = "b"; arg = "a"; delay = "del1" }
-        ; Delay { out = "d"; arg = "b"; delay = Const n, Const n; base = Some "base" }
-        ; RTdelay { out = "e"; arg = "d"; delay = "del2" }
-        ; FirstSampled { out = "b"; arg = "b"; base = "base" }
-        ]
-    ; var_relations =
-        (let d11, d12 = d1 in
-         let d21, d22 = d2 in
-         [ TimeVarRelation ("del1", LessEq, Const d12)
-         ; TimeVarRelation ("del1", MoreEq, Const d11)
-         ; TimeVarRelation ("del2", LessEq, Const d22)
-         ; TimeVarRelation ("del2", MoreEq, Const d21)
-         ])
-    }
-  , { constraints =
-        [ RTdelay { out = "e"; arg = "a"; delay = "t" }
-        ]
-    ; var_relations =
-        [ TimeVarRelation ("t", LessEq, Const t2)
-        ; TimeVarRelation ("t", MoreEq, Const t1)
-        ]
-    } )
+  Module.make
+    [ (fun b ->
+        logical b
+        @@ CumulPeriodic
+             { out = "base"
+             ; period = 50
+             ; error = var "error"
+             ; offset =
+                 (let x, y = d1 in
+                  Const (Int.max x y + 3))
+             };
+        duration b @@ NumRelation ("error", `LessEq, Const 2);
+        duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
+    ]
+    (fun b ->
+       logical b @@ RTdelay { out = "b"; arg = "a"; delay = var "del1" };
+       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" };
+       logical b @@ RTdelay { out = "e"; arg = "d"; delay = var "del2" };
+       logical b @@ FirstSampled { out = "b"; arg = "b"; base = "base" };
+       let d11, d12 = d1 in
+       let d21, d22 = d2 in
+       duration b @@ NumRelation ("del1", `LessEq, Const d12);
+       duration b @@ NumRelation ("del1", `MoreEq, Const d11);
+       duration b @@ NumRelation ("del2", `LessEq, Const d22);
+       duration b @@ NumRelation ("del2", `MoreEq, Const d21))
+    [ (fun b ->
+        logical b @@ RTdelay { out = "e"; arg = "a"; delay = var "t" };
+        duration b @@ NumRelation ("t", `LessEq, Const t2);
+        duration b @@ NumRelation ("t", `MoreEq, Const t1))
+    ]
 ;;
 
 let inclusion (a, b) (c, d) =
-  ( empty
-  , { constraints = []
-    ; var_relations =
-        [ TimeVarRelation ("x", MoreEq, Const a); TimeVarRelation ("x", LessEq, Const b) ]
-    }
-  , { constraints = []
-    ; var_relations =
-        [ TimeVarRelation ("x", MoreEq, Const c); TimeVarRelation ("x", LessEq, Const d) ]
-    } )
+  Module.make
+    []
+    (fun builder ->
+       duration builder @@ NumRelation ("x", `MoreEq, Const a);
+       duration builder @@ NumRelation ("x", `LessEq, Const b))
+    [ (fun builder ->
+        duration builder @@ NumRelation ("x", `MoreEq, Const c);
+        duration builder @@ NumRelation ("x", `LessEq, Const d))
+    ]
 ;;
 
 module D = Domain.VPL (String) (Number.Integer)
@@ -247,17 +231,17 @@ type expectation =
   | UnsatAssumption
   | UnsatAssertion
 
-let to_alcotest (name, module_triple, expected) =
+let to_alcotest (name, module_instance, expected) =
   let test () =
     match expected with
     | Result expected ->
-      let solution = I.Module.solve module_triple in
+      let solution = I.Module.solve module_instance in
       (* let _ = Option.iter I.Simulation.print_solution_graph solution.structure_in_property in *)
       let result = I.Module.is_correct solution in
       if not result then I.Module.print solution;
       Alcotest.(check bool) "same result" expected result
     | Crash exp ->
-      Alcotest.check_raises "" exp (fun () -> ignore (I.Module.solve module_triple))
+      Alcotest.check_raises "" exp (fun () -> ignore (I.Module.solve module_instance))
     | UnsatAssertion | UnsatAssumption -> failwith "not implemented"
   in
   Alcotest.(test_case name `Quick) test
@@ -290,9 +274,8 @@ let _ =
     ; "example9", cases [ "", example9 2 3, Crash I.ProductLoop ]
     ; ( "param1"
       , cases
-          [ 
-            (* "t=[246,1000]", param1 (3, 3) (3, 3) 4 246 1000, Result true ; FIXME: no idea what is the problem, but the reason is somewhere in this commit changes.  *)
-          "t=[100,245]", param1 (3, 3) (3, 3) 4 100 245, Result false
+          [ (* "t=[246,1000]", param1 (3, 3) (3, 3) 4 246 1000, Result true ; FIXME: no idea what is the problem, but the reason is somewhere in this commit changes.  *)
+            "t=[100,245]", param1 (3, 3) (3, 3) 4 100 245, Result false
             (*LIMITATION: parameter is NOT common to all parts, i.e. allowed parameters can be different in different parts, breaking induction. *)
             (* ; "t=[100,300]", param1 (3, 3) (3, 3) 4 100 300, Result true *)
           ] )

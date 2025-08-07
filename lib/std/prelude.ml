@@ -34,10 +34,40 @@ module Option = struct
     | None -> f ()
   ;;
 
+  let bind_else x f =
+    match x with
+    | Some x -> x
+    | None -> f ()
+  ;;
+
   let split2 = function
     | Some (x, y) -> Some x, Some y
     | None -> None, None
   ;;
+
+  let map_or ~default f = function
+    | Some x -> f x
+    | None -> default
+  ;;
+
+  let unwrap ~expect = function
+    | Some x -> x
+    | None -> failwith @@ Printf.sprintf "expected: %s" expect
+  ;;
+end
+
+module Result = struct
+  include Result
+
+  module Syntax = struct
+    let ( let* ) = Result.bind
+
+    let ( and* ) x y =
+      let* x = x in
+      let* y = y in
+      Ok (x, y)
+    ;;
+  end
 end
 
 module Seq = struct
@@ -396,13 +426,29 @@ module List = struct
          drop, x :: tail)
   ;;
 
-  (** Modifies first element encountered*)
+  (** Modifies first element encountered when [f x = Some _], returns [_, true] if happened. *)
+  let rec map_inplace_once_indicate f = function
+    | [] -> [], false
+    | x :: tail ->
+      (match f x with
+       | Some y -> y :: tail, true
+       | None ->
+         let tail, happened = map_inplace_once_indicate f tail in
+         x :: tail, happened)
+  ;;
+
+  (** Modifies first element encountered when [f x = Some _]*)
   let[@tail_mod_cons] rec map_inplace_once f = function
     | [] -> []
     | x :: tail ->
       (match f x with
        | Some y -> y :: tail
        | None -> x :: map_inplace_once f tail)
+  ;;
+
+  let map_inplace_once_or f g list =
+    let list, happened = map_inplace_once_indicate f list in
+    if not happened then g list else list
   ;;
 
   let[@tail_mod_cons] rec filter_mapi f i = function
@@ -457,6 +503,21 @@ module List = struct
   let uncons = function
     | [] -> failwith "uncons: empty list"
     | x :: xs -> x, xs
+  ;;
+
+  let rec fold_lefti f acc i = function
+    | [] -> acc
+    | x :: tail -> fold_lefti f (f acc i x) (i + 1) tail
+  ;;
+
+  let fold_lefti f acc = fold_lefti f acc 0
+
+  let fold_left_mapr f accu l =
+    let rec aux accu l_accu = function
+      | [] -> Ok (accu, rev l_accu)
+      | x :: l -> Result.bind (f accu x) (fun (accu, x) -> aux accu (x :: l_accu) l)
+    in
+    aux accu [] l
   ;;
 end
 
@@ -579,6 +640,15 @@ module Hashtbl = struct
 
   let value default key tbl = Hashtbl.find_opt tbl key |> Option.value ~default
 
+  let[@inline] value_mut ~default key tbl =
+    match Hashtbl.find_opt tbl key with
+    | Some v -> v
+    | None ->
+      let v = default () in
+      Hashtbl.add tbl key v;
+      v
+  ;;
+
   module Collect = struct
     let count ?(size = 64) seq =
       let tbl = create size in
@@ -602,10 +672,11 @@ module Hashtbl = struct
   module Make (H : HashedType) = struct
     include Make (H)
 
-  let entry f default key tbl =
-    let v = find_opt tbl key |> Option.value ~default in
-    replace tbl key (f v)
-  ;;
+    let entry f default key tbl =
+      let v = find_opt tbl key |> Option.value ~default in
+      replace tbl key (f v)
+    ;;
+
     module Collect = struct
       let count ?(size = 64) seq =
         let tbl = create size in
@@ -633,11 +704,25 @@ module Map = struct
     include Make (K)
 
     (**[entry update default key map]*)
-    let entry f default k m =
+    let entry ~default f k m =
       update
         k
         (fun x ->
            let acc = Option.value x ~default in
+           Some (f acc))
+        m
+    ;;
+
+    (**[entry update default key map]*)
+    let entry_mut ~default f k m =
+      update
+        k
+        (fun x ->
+           let acc =
+             match x with
+             | Some x -> x
+             | None -> default ()
+           in
            Some (f acc))
         m
     ;;
@@ -651,6 +736,16 @@ module Map = struct
     ;;
 
     let value ~default k map = Option.value ~default (find_opt k map)
+
+    let value_mut ~default k map =
+      match find_opt k map with
+      | Some v -> map, v
+      | None ->
+        let v = default () in
+        let map = add k v map in
+        map, v
+    ;;
+
     let to_iter m f = iter (fun k v -> f (k, v)) m
   end
 end
@@ -751,6 +846,7 @@ module Dynarray = struct
   ;;
 
   let to_iter a f = iter f a
+  let map_inplace f a = iteri (fun i v -> Dynarray.set a i (f v)) a
 end
 
 module Iter = struct
@@ -952,6 +1048,9 @@ module Heap (Elem : Map.OrderedType) : sig
   val add : t -> Elem.t -> unit
   val pop_min : t -> Elem.t option
   val peek : t -> Elem.t option
+  val map : (Elem.t -> Elem.t) -> t -> unit
+  val exists : (Elem.t -> bool) -> t -> bool
+  val length : t -> int
 end = struct
   (* Our priority queues are implemented using the standard "min heap"
      data structure, a dynamic array representing a binary tree. *)
@@ -998,8 +1097,9 @@ end = struct
       then (
         swap h i parent;
         heap_up h parent))
+  ;;
 
-  and heap_down h ~len i =
+  let rec heap_down h ~len i =
     let left, right = left_child i, right_child i in
     if left >= len
     then ()
@@ -1041,4 +1141,8 @@ end = struct
       heap_down h ~len:last 0;
       Some best)
   ;;
+
+  let map f h = Dynarray.map_inplace f h
+  let exists = Dynarray.exists
+  let length = Dynarray.length
 end

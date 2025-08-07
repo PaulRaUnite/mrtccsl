@@ -1,5 +1,5 @@
 open Prelude
-open Mrtccsl.Automata.Simple
+open Mrtccsl.Language
 
 type 'n bounded_distribution =
   { bounds : 'n * 'n
@@ -11,7 +11,7 @@ type id = string
 
 type 'n trig_policy =
   [ `AbsoluteTimer of 'n * 'n bounded_distribution * 'n
-  | `CumulativeTimer of 'n bounded_distribution * 'n
+  | `CumulativeTimer of 'n * 'n bounded_distribution * 'n
   | `Signal of id
   ]
 [@@deriving map]
@@ -36,7 +36,7 @@ type 'n signal =
       { as_device : bool
       ; policy :
           [ `AbsoluteTimer of 'n * 'n bounded_distribution * 'n
-          | `CumulativeTimer of 'n bounded_distribution * 'n
+          | `CumulativeTimer of 'n * 'n bounded_distribution * 'n
           ]
       ; latency : 'n bounded_distribution
       }

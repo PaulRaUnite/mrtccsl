@@ -1,5 +1,4 @@
 open Prelude
-open Expr
 
 module type Var = sig
   open Interface
@@ -62,10 +61,10 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
     let env = Abstract1.env domain in
     let index_var = v_to_var index in
     let op2op = function
-      | Add -> Texpr1.Add
-      | Sub -> Texpr1.Sub
-      | Mul -> Texpr1.Mul
-      | Div -> Texpr1.Div
+      | `Add -> Texpr1.Add
+      | `Sub -> Texpr1.Sub
+      | `Mul -> Texpr1.Mul
+      | `Div -> Texpr1.Div
     in
     let rec te2te = function
       | Var v ->
@@ -93,12 +92,12 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
       let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
       let op, expr =
         match op with
-        | Neq -> failwith "neq is not convex"
-        | Eq -> Tcons1.EQ, diff
-        | Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-        | LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
-        | More -> Tcons1.SUP, diff
-        | MoreEq -> Tcons1.SUPEQ, diff
+        | `Neq -> failwith "neq is not convex"
+        | `Eq -> Tcons1.EQ, diff
+        | `Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+        | `LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
+        | `More -> Tcons1.SUP, diff
+        | `MoreEq -> Tcons1.SUPEQ, diff
       in
       let lincond = Tcons1.make expr op in
       let _ = Format.printf "%a\n" Tcons1.print lincond in
@@ -193,20 +192,20 @@ module VPL (V : Var) (N : Num) = struct
       let l = te2ae index l in
       let r = te2ae index r in
       (match op with
-       | Add -> D.Term.Add (l, r)
-       | Sub -> D.Term.Add (l, D.Term.Opp r)
-       | Mul -> D.Term.Mul (l, r)
-       | Div -> D.Term.Div (l, r))
+       | `Add -> D.Term.Add (l, r)
+       | `Sub -> D.Term.Add (l, D.Term.Opp r)
+       | `Mul -> D.Term.Mul (l, r)
+       | `Div -> D.Term.Div (l, r))
     | ZeroCond _ | Min _ | Max _ -> raise NonConvex
   ;;
 
   let op2op = function
-    | Neq -> failwith "neq is not convex"
-    | Eq -> Vpl.Cstr_type.EQ
-    | More -> Vpl.Cstr_type.GT
-    | Less -> Vpl.Cstr_type.LT
-    | MoreEq -> Vpl.Cstr_type.GE
-    | LessEq -> Vpl.Cstr_type.LE
+    | `Neq -> failwith "neq is not convex"
+    | `Eq -> Vpl.Cstr_type.EQ
+    | `More -> Vpl.Cstr_type.GT
+    | `Less -> Vpl.Cstr_type.LT
+    | `MoreEq -> Vpl.Cstr_type.GE
+    | `LessEq -> Vpl.Cstr_type.LE
   ;;
 
   let rec add_constraint index (aux, domain) formula =

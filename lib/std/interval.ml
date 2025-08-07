@@ -45,6 +45,7 @@ module type I = sig
   val right_bound_opt : t -> num option
   val is_left_unbound : t -> bool
   val is_right_unbound : t -> bool
+  val is_any_unbound : t -> bool
 
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -237,6 +238,8 @@ module Make (N : Num) : I with type num = N.t = struct
     | Bound (_, (Exclude x | Include x)) -> Some x
     | _ -> None
   ;;
+
+  let is_any_unbound interval = is_left_unbound interval || is_right_unbound interval
 end
 
 module MakeDebug (N : sig

@@ -21,7 +21,7 @@ doc: "https://github.com/PaulRaUnite/mrtccsl"
 bug-reports: "https://github.com/PaulRaUnite/mrtccsl/issues"
 depends: [
   "ocaml" {>= "5.3.0"}
-  "dune" {>= "3.13" & with-build}
+  "dune" {>= "3.14" & with-build}
   "menhir" {= "20240715"}
   "camllib"
   "apron" {>= "0.9.15"}

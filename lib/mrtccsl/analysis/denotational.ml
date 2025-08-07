@@ -21,10 +21,9 @@ type ('c, 'n) num_expr =
   | Max of ('c, 'n) num_expr * ('c, 'n) num_expr
 [@@deriving sexp, compare]
 
-let rec num_expr_of_expr = function
-  | Rtccsl.Var v -> Var (FreeVar v)
-  | Rtccsl.Const c -> Const c
-  | Rtccsl.Bin (l, op, r) -> Op (num_expr_of_expr l, op, num_expr_of_expr r)
+let num_expr_of_expr = function
+  | Language.Var v -> Var (FreeVar v)
+  | Language.Const c -> Const c
 ;;
 
 type ('c, 'n) bool_expr =
@@ -35,16 +34,16 @@ type ('c, 'n) bool_expr =
 
 module Syntax = struct
   let ( .@[] ) c i = Var (ClockVar (c, i))
-  let ( < ) x y = Linear (x, Less, y)
-  let ( <= ) x y = Linear (x, LessEq, y)
-  let ( > ) x y = Linear (x, More, y)
-  let ( >= ) x y = Linear (x, MoreEq, y)
-  let ( == ) x y = Linear (x, Eq, y)
-  let ( != ) x y = Linear (x, Neq, y)
-  let ( &+ ) x y = Op (x, Add, y)
-  let ( &- ) x y = Op (x, Sub, y)
-  let ( &* ) x y = Op (x, Mul, y)
-  let ( &/ ) x y = Op (x, Div, y)
+  let ( < ) x y = Linear (x, `Less, y)
+  let ( <= ) x y = Linear (x, `LessEq, y)
+  let ( > ) x y = Linear (x, `More, y)
+  let ( >= ) x y = Linear (x, `MoreEq, y)
+  let ( == ) x y = Linear (x, `Eq, y)
+  let ( != ) x y = Linear (x, `Neq, y)
+  let ( &+ ) x y = Op (x, `Add, y)
+  let ( &- ) x y = Op (x, `Sub, y)
+  let ( &* ) x y = Op (x, `Mul, y)
+  let ( &/ ) x y = Op (x, `Div, y)
   let ( &|> ) expr (l, r) = And [ l <= expr; expr <= r ]
   let min x y = Min (x, y)
   let max x y = Max (x, y)
@@ -167,11 +166,12 @@ module MakeExtNumExpr (N : Num) = struct
     | Op (Const n, op, Const n') ->
       Const
         (match op with
-         | Add -> N.(n + n')
-         | Sub -> N.(n - n')
-         | Mul -> N.(n * n')
-         | Div -> N.(n / n'))
-    | Op (Const n, Add, e) | Op (e, Add, Const n) -> if N.equal n N.zero then e else expr
+         | `Add -> N.(n + n')
+         | `Sub -> N.(n - n')
+         | `Mul -> N.(n * n')
+         | `Div -> N.(n / n'))
+    | Op (Const n, `Add, e) | Op (e, `Add, Const n) ->
+      if N.equal n N.zero then e else expr
     | Min (Const l, Const r) -> Const (N.min l r)
     | Max (Const l, Const r) -> Const (N.max l r)
     (* | ZeroCond (Const n, init) -> Const (N.max n init) *)
@@ -267,8 +267,8 @@ module BoolExpr = struct
           list
       in
       And (others @ List.flatten to_flatten)
-    | Linear (l, More, r) -> Linear (r, Less, l)
-    | Linear (l, MoreEq, r) -> Linear (r, LessEq, l)
+    | Linear (l, `More, r) -> Linear (r, `Less, l)
+    | Linear (l, `MoreEq, r) -> Linear (r, `LessEq, l)
     | Linear _ as e -> e
   ;;
 
@@ -373,15 +373,6 @@ module MakeExpr (V : Interface.OrderedType) (N : Num) = struct
 end
 
 module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
-  open Prelude
-
-  let string_of_num_op = function
-    | Add -> "+"
-    | Sub -> "-"
-    | Mul -> "*"
-    | Div -> "/"
-  ;;
-
   let rec string_of_tag_expr = function
     | Var v ->
       let ind_str i =
@@ -411,15 +402,6 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
       Printf.sprintf "min(%s, %s)" (string_of_tag_expr l) (string_of_tag_expr r)
     | Max (l, r) ->
       Printf.sprintf "max(%s, %s)" (string_of_tag_expr l) (string_of_tag_expr r)
-  ;;
-
-  let string_of_num_rel = function
-    | Neq -> "<>"
-    | Eq -> "="
-    | More -> ">"
-    | Less -> "<"
-    | MoreEq -> ">="
-    | LessEq -> "<="
   ;;
 
   let string_of_bool_expr =

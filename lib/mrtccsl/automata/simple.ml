@@ -1,16 +1,5 @@
 open Prelude
-
-(**Type of distributions that can be used in a simulation. *)
-type 'n distribution =
-  | Uniform of
-      { lower : 'n
-      ; upper : 'n
-      }
-  | Normal of
-      { mean : 'n
-      ; dev : 'n
-      }
-[@@deriving map]
+open Language
 
 let truncated_guassian_rvs ~a ~b ~mu ~sigma =
   if Float.equal sigma 0.0
@@ -127,29 +116,27 @@ module type S = sig
   type var = C.t
 
   module N : Num
-  module I : Interval.I with type num = N.t
+  module NI : Interval.I with type num = N.t
+  module II : Interval.I with type num = int
   module L : Label with type elt := clock
 
-  type guard = (L.t * I.t) Iter.t
+  type guard = (L.t * NI.t) Iter.t
   type solution = L.t * N.t
-  type var_strategy = var -> I.t -> I.t
   type sol_strategy = guard -> solution option
-
-  type vars =
-    { current : var -> I.t
-    ; consume : var -> unit
-    }
-
-  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
-  type limits = var -> I.t
+  type t = (N.t -> guard) * (N.t -> solution -> bool) * L.t
   type sim
 
   module Trace : Trace with type solution := solution and type num := N.t
 
   val empty_sim : sim
-  val of_spec : ?debug:bool -> (clock, param, var, N.t) Rtccsl.specification -> sim
-  val gen_trace : var_strategy -> sol_strategy -> sim -> Trace.t
-  val bisimulate : var_strategy -> sol_strategy -> sim -> sim -> Trace.t
+
+  val of_spec
+    :  ?debug:bool
+    -> (clock, param, param, var, var, N.t) Language.Specification.t
+    -> sim
+
+  val gen_trace : sol_strategy -> sim -> Trace.t
+  val bisimulate : sol_strategy -> sim -> sim -> Trace.t
   val accept_trace : sim -> N.t -> Trace.t -> N.t option
 end
 
@@ -174,14 +161,73 @@ struct
     ;;
   end
 
-  module I = Interval.MakeDebug (N)
+  module NI = struct
+    include Interval.MakeDebug (N)
+
+    let of_var_rel =
+      let open Language in
+      function
+      | NumRelation (v, rel, Const c) ->
+        let cond_f =
+          match rel with
+          | `Less -> ninf_strict
+          | `LessEq -> ninf
+          | `More -> pinf_strict
+          | `MoreEq -> pinf
+          | `Eq -> return
+          | `Neq -> failwith "irrepresentable in interval domain"
+        in
+        let cond = cond_f c in
+        v, cond
+      | _ -> failwith "not implemented"
+    ;;
+  end
+
+  module II = struct
+    include Interval.MakeDebug (Number.Integer)
+
+    let of_var_rel =
+      let open Language in
+      function
+      | NumRelation (v, rel, Const c) ->
+        let cond_f =
+          match rel with
+          | `Less -> ninf_strict
+          | `LessEq -> ninf
+          | `More -> pinf_strict
+          | `MoreEq -> pinf
+          | `Eq -> return
+          | `Neq -> failwith "irrepresentable in interval domain"
+        in
+        let cond = cond_f c in
+        v, cond
+      | _ -> failwith "not implemented"
+    ;;
+
+    let to_nonstrict = function
+      | Bound (left, right) ->
+        let left =
+          match left with
+          | Include left -> left
+          | Exclude left -> succ left
+          | Inf -> failwith "[-oo, x] is not bound"
+        and right =
+          match right with
+          | Include right -> right
+          | Exclude right -> pred right
+          | Inf -> failwith "[x, +oo] is not bound"
+        in
+        left, right
+      | Empty -> failwith "interval is empty"
+    ;;
+  end
+
   module CMap = Map.Make (C)
 
   type label = L.t
-  type num_cond = I.t
+  type num_cond = NI.t
   type guard = (label * num_cond) Iter.t
   type solution = label * N.t
-  type var_strategy = var -> I.t -> I.t
   type sol_strategy = guard -> solution option
 
   module Trace = struct
@@ -209,17 +255,96 @@ struct
     let take ~steps = Iter.take steps
   end
 
-  type vars =
-    { current : var -> I.t
-      (**[current v] returns current range of variable [v]. Raises [Not_found] if not present. *)
-    ; consume : var -> unit (**[consume v] invalidates the value *)
-    }
+  module VarSeq = struct
+    type 'v t =
+      { bounds : 'v
+      ; process : 'v -> 'v
+      ; mutable suppress : bool
+      ; mutable instances : (int, 'v * int) Hashtbl.t
+      ; mutable subscribers : int
+      }
 
-  type t = (vars -> N.t -> guard) * (vars -> N.t -> solution -> bool) * L.t
-  type limits = var -> I.t
+    type 'v container = { mutable vars : 'v t CMap.t }
+
+    let empty_container () = { vars = CMap.empty }
+
+    let declare_variable container var (bounds, process) =
+      container.vars
+      <- CMap.add
+           var
+           { bounds
+           ; process
+           ; suppress = false
+           ; instances = Hashtbl.create 0
+           ; subscribers = 0
+           }
+           container.vars
+    ;;
+
+    let suppress container = CMap.iter (fun _ seq -> seq.suppress <- true) container.vars
+
+    let unsuppress container =
+      CMap.iter (fun _ seq -> seq.suppress <- false) container.vars
+    ;;
+
+    let subscribe container var =
+      let seq = CMap.find var container.vars in
+      seq.subscribers <- seq.subscribers + 1;
+      seq
+    ;;
+
+    let peek_value seq index =
+      let v, _ =
+        Hashtbl.value_mut
+          ~default:(fun () ->
+            let value = if seq.suppress then seq.bounds else seq.process seq.bounds in
+            value, 0)
+          index
+          seq.instances
+      in
+      v
+    ;;
+
+    let pop_value seq index =
+      let v, consumptions = Hashtbl.find seq.instances index in
+      let consumptions = consumptions + 1 in
+      if consumptions = seq.subscribers
+      then Hashtbl.remove seq.instances index
+      else Hashtbl.add seq.instances index (v, consumptions)
+    ;;
+
+    type 'v handle =
+      { seq : 'v t
+      ; mutable current : int
+      }
+
+    let current { seq; current } = peek_value seq current
+
+    let consume h =
+      let { seq; current } = h in
+      pop_value seq current;
+      h.current <- current + 1
+    ;;
+
+    let get_handle container var =
+      let seq = subscribe container var in
+      let h = { seq; current = 0 } in
+      (fun () -> current h), fun () -> consume h
+    ;;
+
+    let get_handle_param return container = function
+      | Var v -> get_handle container v
+      | Const c ->
+        let c = return c in
+        (fun () -> c), fun () -> ()
+    ;;
+  end
+
+  type t = (N.t -> guard) * (N.t -> solution -> bool) * L.t
 
   type sim =
-    { limits : limits
+    { durations : NI.t VarSeq.container
+    ; integers : II.t VarSeq.container
     ; automata : t
     }
 
@@ -228,23 +353,24 @@ struct
   let sexp_of_label label = sexp_of_list C.sexp_of_t @@ L.elements label
   let sexp_of_solution = sexp_of_pair sexp_of_label N.sexp_of_t
   let sexp_of_trace trace = sexp_of_list sexp_of_solution trace
-  let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label I.sexp_of_t) guard
+  let sexp_of_guard guard = sexp_of_list (sexp_of_pair sexp_of_label NI.sexp_of_t) guard
 
-  let noop_guard _ now =
-    Iter.of_array [| L.empty, I.inter (I.pinf N.zero) (I.pinf_strict now) |]
+  let noop_guard now =
+    Iter.of_array [| L.empty, NI.inter (NI.pinf N.zero) (NI.pinf_strict now) |]
   ;;
 
-  let noop_transition _ n (_, n') = N.compare n n' < 0
+  let noop_transition n (_, n') = N.compare n n' < 0
   let empty : t = noop_guard, noop_transition, L.empty
 
   let empty_sim : sim =
-    { limits = (fun _ -> failwith "not implemented")
+    { durations = VarSeq.empty_container ()
+    ; integers = VarSeq.empty_container ()
     ; automata = noop_guard, noop_transition, L.empty
     }
   ;;
 
   let variant_to_string (label, cond) =
-    Printf.sprintf "%s ? %s" (L.to_string label) (I.to_string cond)
+    Printf.sprintf "%s ? %s" (L.to_string label) (NI.to_string cond)
   ;;
 
   let guard_to_string variants = Iter.to_string ~sep:" || " variant_to_string variants
@@ -255,20 +381,20 @@ struct
 
   let correctness_decorator a =
     let g, t, clocks = a in
-    let t vars n (l, n') =
-      let possible = g vars n in
+    let t n (l, n') =
+      let possible = g n in
       let present =
         Iter.exists
-          (fun (l', cond) -> L.equal_modulo ~modulo:clocks l l' && I.contains cond n')
+          (fun (l', cond) -> L.equal_modulo ~modulo:clocks l l' && NI.contains cond n')
           possible
       in
-      present && t vars n (l, n')
+      present && t n (l, n')
     in
     g, t, clocks
   ;;
 
-  let debug_g name g vars now =
-    let variants = g vars now in
+  let debug_g name g now =
+    let variants = g now in
     let _ = Printf.printf "<%s>: %s\n" name (guard_to_string variants) in
     variants
   ;;
@@ -282,38 +408,38 @@ struct
       if L.equal_modulo ~modulo:conf_surface l l' then Some (L.union l l') else None
     in
     let[@inline always] linear_solver c c' =
-      let res = I.inter (I.pinf N.zero) (I.inter c c') in
-      if I.is_empty res then None else Some res
+      let res = NI.inter (NI.pinf N.zero) (NI.inter c c') in
+      if NI.is_empty res then None else Some res
     in
     let[@inline always] guard_solver ((l, c), (l', c')) =
       match sat_solver l l', linear_solver c c' with
       | Some l, Some c -> Some (l, c)
       | _ -> None
     in
-    let g vars now =
+    let g now =
       (* let _ = Printf.printf "sync--- at %s\n" (N.to_string now) in *)
-      let g1 = g1 vars now
+      let g1 = g1 now
       (* let _ = Printf.printf "sync sol 1: %s\n" (guard_to_string g1) in *)
-      and g2 = g2 vars now in
+      and g2 = g2 now in
       (* let _ = Printf.printf "sync sol 2: %s\n" (guard_to_string g2) in *)
       let pot_solutions = Iter.product g1 g2 in
       let solutions = Iter.filter_map guard_solver pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
       Trace.persist solutions
     in
-    let t vars n l = t1 vars n l && t2 vars n l in
+    let t n l = t1 n l && t2 n l in
     g, t, c
   ;;
 
   (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.**)
   let lo_guard l =
-    let l = Array.map (fun l -> l, I.pinf N.zero) l in
-    fun _ _ -> l
+    let l = Array.map (fun l -> l, NI.pinf N.zero) l in
+    fun _ -> l
   ;;
 
   let stateless labels =
     let g = lo_guard labels in
-    g, fun _ _ _ -> true
+    g, fun _ _ -> true
   ;;
 
   let prec c1 c2 strict =
@@ -331,128 +457,143 @@ struct
       lo_guard l now
     in
     ( g
-    , fun _ _ (l, _) ->
+    , fun _ (l, _) ->
         let delta = if L.mem c1 l then 1 else 0 in
         let delta = delta - if L.mem c2 l then 1 else 0 in
         let _ = c := !c + delta in
         !c >= 0 )
   ;;
 
-  let of_constr constr : t =
-    let open Rtccsl in
+  let of_constr (integers, durations) constr : t =
+    let open Language in
     let label_array l = Array.map L.of_list (Array.of_list l) in
     let g, t =
       match constr with
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
-      | Exclusion clocks ->
+      | Exclusion (clocks, _) ->
         let l = label_array ([] :: List.map (fun x -> [ x ]) clocks) in
         stateless l
       | Coincidence clocks ->
         let l = label_array [ clocks; [] ] in
         stateless l
       | RTdelay { out = b; arg = a; delay } ->
+        let current_delay, consume_delay =
+          VarSeq.get_handle_param NI.return durations delay
+        in
         let module Heap =
           Heap (struct
-            include I
+            include NI
 
             let compare n n' =
               N.compare
-                (Option.get @@ I.left_bound_opt n)
-                (Option.get @@ I.left_bound_opt n')
+                (Option.get @@ NI.left_bound_opt n)
+                (Option.get @@ NI.left_bound_opt n')
             ;;
           end)
         in
         let queue = Heap.create () in
-        let g _ now =
+        let g now =
           match Heap.peek queue with
-          | None -> [| L.singleton a, I.pinf_strict now; L.empty, I.pinf_strict now |]
+          | None -> [| L.singleton a, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some next ->
-            [| L.singleton a, Option.get (I.complement_left next)
-             ; L.empty, Option.get (I.complement_left next)
+            [| L.singleton a, Option.get (NI.complement_left next)
+             ; L.empty, Option.get (NI.complement_left next)
              ; L.doubleton a b, next
              ; L.singleton b, next
             |]
         in
-        let t vars _ (l, n') =
+        let t _ (l, n') =
           let _ =
             if L.mem a l
             then (
-              let v = vars.current delay in
-              Heap.add queue (I.shift_by v n');
-              vars.consume delay)
+              Heap.add queue (NI.shift_by (current_delay ()) n');
+              consume_delay ())
           in
           let _ = if L.mem b l then ignore (Heap.pop_min queue) in
           true
         in
         g, t
-      | CumulPeriodic { out; period; offset = Const offset } ->
+      | CumulPeriodic { out; period; error; offset } ->
+        let current_offset, consume_offset =
+          VarSeq.get_handle_param NI.return durations offset
+        and current_error, consume_error =
+          VarSeq.get_handle_param NI.return durations error
+        in
         let last = ref None in
-        let g vars _ =
+        let g _ =
           let next =
             match !last with
-            | None -> I.return offset
-            | Some v -> I.shift_by (vars.current period) v
+            | None -> current_offset ()
+            | Some v -> NI.shift_by (current_error ()) N.(v + period)
           in
           let g =
-            [| L.singleton out, next; L.empty, Option.get (I.complement_left next) |]
+            [| L.singleton out, next; L.empty, Option.get (NI.complement_left next) |]
           in
           (* let _ = Printf.printf "%s: %s\n" (C.to_string period) (guard_to_string g) in  *)
           g
         in
-        let t vars _ (l, n') =
+        let t _ (l, n') =
           let _ =
             if L.mem out l
             then (
-              vars.consume period;
+              if Option.is_none !last then consume_offset () else consume_error ();
               last := Some n')
           in
           true
         in
         g, t
-      | AbsPeriodic { out; period = Const period; error; offset = Const offset } ->
+      | AbsPeriodic { out; period; error; offset } ->
+        let current_offset, consume_offset =
+          VarSeq.get_handle_param NI.return durations offset
+        and current_error, consume_error =
+          VarSeq.get_handle_param NI.return durations error
+        in
         let last = ref None in
-        let g vars _ =
+        let g _ =
           let next =
             match !last with
-            | None -> I.return offset
-            | Some v -> I.shift_by (vars.current error) N.(v + period)
+            | None -> current_offset ()
+            | Some v -> NI.shift_by (current_error ()) N.(v + period)
           in
-          [| L.singleton out, next; L.empty, Option.get (I.complement_left next) |]
+          [| L.singleton out, next; L.empty, Option.get (NI.complement_left next) |]
         in
-        let t vars _ (l, _) =
+        let t _ (l, n') =
           let _ =
             if L.mem out l
             then (
               let update =
                 match !last with
-                | None -> offset
-                | Some last -> N.(last + period)
+                | None ->
+                  consume_offset ();
+                  n'
+                | Some last ->
+                  consume_error ();
+                  N.(last + period)
               in
-              last := Some update;
-              vars.consume error)
+              last := Some update)
           in
           true
         in
         g, t
       | Sporadic { out = c; at_least = Const at_least; strict } ->
         let last = ref None in
-        let g _ now =
+        let g now =
           match !last with
-          | None -> [| L.singleton c, I.pinf_strict now; L.empty, I.pinf_strict now |]
+          | None -> [| L.singleton c, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some v ->
             let next_after = N.(at_least + v) in
             [| ( L.singleton c
-               , if strict then I.pinf_strict next_after else I.pinf next_after )
-             ; (L.empty, I.(now <-> next_after))
+               , if strict then NI.pinf_strict next_after else NI.pinf next_after )
+             ; (L.empty, NI.(now <-> next_after))
             |]
         in
-        let t _ _ (l, n') =
+        let t _ (l, n') =
           let _ = if L.mem c l then last := Some n' in
           true
         in
         g, t
-      | Periodic { out; base; period = Const period } ->
+      | Periodic { out; base; period = Const period; _ } ->
         let labels_eqp = label_array [ [ base; out ]; [] ] in
         let labels_lp = label_array [ [ base ]; [] ] in
         let c = ref 0 in
@@ -460,7 +601,7 @@ struct
           let labels = if !c = period - 1 then labels_eqp else labels_lp in
           lo_guard labels now
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ =
             if L.mem base l then c := !c + 1;
             if L.mem out l then c := 0
@@ -479,62 +620,74 @@ struct
         let g now =
           if !latched then lo_guard labels_latched now else lo_guard labels_unlatched now
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ = if L.mem arg l then latched := true in
           let _ = if L.mem base l then latched := false in
           true
         in
         g, t
-      | Delay { out; arg; delay = Const d1, Const d2; base } ->
-        let _ = assert (d1 <= d2) in
-        let diff_base = Option.is_some base in
-        let base = Option.value base ~default:arg in
-        let q =
-          ExpirationQueue.create (fun x ->
-            match x + 1 with
-            | x when x > d2 -> None
-            | x -> Some x)
+      | Delay { out; arg; delay; base } ->
+        let current_delay, consume_delay =
+          VarSeq.get_handle_param II.return integers delay
         in
+        (* let _ = assert (d1 <= d2) in *)
+        let base = Option.value base ~default:arg in
+        let diff_base = C.compare base arg <> 0 in
+        let module Heap =
+          Heap (struct
+            type t = int * int
+
+            let compare = Tuple.compare_same2 Int.compare
+          end)
+        in
+        let latch = ref None in
+        let queue = Heap.create () in
         let labels_empty = [ []; [ arg ]; [ arg; base ]; [ base ] ] in
         let labels_ne_can = [ []; [ arg ]; [ arg; base ]; [ out; base ]; [ base ] ] in
         let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
         let g now =
           let labels =
-            match ExpirationQueue.peek q with
-            | None when d1 = 0 && d2 = 0 && diff_base ->
-              [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
-            | None when d1 = 0 && d2 = 0 -> [ []; [ out; arg ] ]
-            | None when d1 = 0 ->
-              [ []; [ arg ]; [ out; arg; base ]; [ base ]; [ arg; base ] ]
-            | None -> labels_empty
-            | Some x when x = d2 -> labels_ne_must
-            | Some x when d1 <= x -> labels_ne_can
-            | Some _ -> labels_empty
+            match Heap.peek queue,  II.to_nonstrict (current_delay ()) with
+            | None, (0, 0) when diff_base -> [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
+            | None, (0, 0) -> [ []; [ out; arg ] ]
+            | None, (0, _) -> [ []; [ arg ]; [ out; arg; base ]; [ base ]; [ arg; base ] ]
+            | None, _ -> labels_empty
+            | Some (_, 0), _ -> labels_ne_must
+            | Some (x, _), _ when x <= 0 -> labels_ne_can
+            | Some _, _ -> labels_empty
           in
-          let labels = List.sort_uniq (List.compare C.compare) labels in
           let labels = label_array labels in
           lo_guard labels now
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ =
-            if L.mem arg l
-            then (
-              match ExpirationQueue.last q with
-              | Some x when x = 0 -> ()
-              | _ -> ExpirationQueue.push q 0)
+            if L.mem arg l then latch := Some (II.to_nonstrict (current_delay ()))
           in
-          let test2 =
+          if L.mem base l
+          then (
+            Option.iter
+              (fun delay ->
+                 Heap.add queue delay;
+                 consume_delay ())
+              !latch;
+            latch := None);
+          let test1 =
             if L.mem out l
             then (
-              match ExpirationQueue.pop q with
+              match Heap.pop_min queue with
               | None -> false
-              | Some x -> x >= d1)
+              | Some (x, _) -> x <= 0)
             else true
           in
-          let test3 =
-            if L.mem base l then not (ExpirationQueue.expiration_step q) else true
+          let test2 =
+            if L.mem base l
+            then
+              not
+                (Heap.map (fun (x, y) -> x - 1, y - 1) queue;
+                 Heap.exists (fun (_, y) -> y < 0) queue)
+            else true
           in
-          test2 && test3
+          test1 && test2
         in
         g, t
       | Minus { out; arg; except } ->
@@ -557,12 +710,12 @@ struct
           in
           lo_guard labels n
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
           true
         in
         g, t
-      | Fastest { out; left = a; right = b } | Slowest { out; left = a; right = b } ->
+      | Fastest { out; args = [ a; b ] } | Slowest { out; args = [ a; b ] } ->
         let count = ref 0 in
         let general_labels = [ []; [ a; b; out ] ] in
         let g n =
@@ -593,7 +746,7 @@ struct
           let labels = label_array labels in
           lo_guard labels n
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ = if L.mem a l then count := !count + 1 in
           let _ = if L.mem b l then count := !count - 1 in
           true
@@ -633,7 +786,7 @@ struct
           | Forbid _ -> g_forbid
           | _ -> failwith "unreachable"
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let from_test = L.mem from l in
           let until_test = L.mem until l in
           let _ =
@@ -657,7 +810,7 @@ struct
           let labels = label_array labels in
           lo_guard labels n
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ = if L.mem arg l then sampled := true in
           let _ = if L.mem base l then sampled := false in
           true
@@ -665,21 +818,21 @@ struct
         g, t
       | LastSampled { out; arg; base } ->
         let last = ref false in
-        let g vars n =
+        let g n =
           let labels =
             if !last
             then [ []; [ base ] ]
             else [ []; [ out; arg; base ]; [ out; arg ]; [ arg ] ]
           in
-          lo_guard (label_array labels) vars n
+          lo_guard (label_array labels) n
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           let _ = if L.mem out l then last := true in
           let _ = if L.mem base l then last := false in
           true
         in
         g, t
-      | Subclocking { sub = a; super = b } ->
+      | Subclocking { sub = a; super = b; _ } ->
         stateless (label_array [ []; [ a; b ]; [ b ] ])
       | Intersection { out; args } ->
         let labels = List.powerset args in
@@ -704,7 +857,7 @@ struct
         let locks_to_unlocks = injection_map lock_unlocks in
         let _ = injection_map (List.map Tuple.swap2 lock_unlocks) in
         let resources = ref [] in
-        let g _ now =
+        let g now =
           let free_now = n - List.length !resources in
           let to_free_variants = List.powerset (List.sort_uniq C.compare !resources) in
           to_free_variants
@@ -715,11 +868,11 @@ struct
             |> Iter.of_list
             |> Iter.filter_map (fun l ->
               if List.length l > available then None else Some (to_free @ l)))
-          |> Iter.map (fun l -> L.of_list l, I.pinf_strict now)
+          |> Iter.map (fun l -> L.of_list l, NI.pinf_strict now)
           |> Iter.to_dynarray
           |> Dynarray.to_array
         in
-        let t _ _ (l, _) =
+        let t _ (l, _) =
           (* let _ = Printf.printf "---Transition---\n" in *)
           let to_lock = L.inter l lock_clocks in
           let to_unlock = L.inter l unlock_clocks in
@@ -745,48 +898,109 @@ struct
         g, t
       | _ -> failwith "not implemented"
     in
-    let g vars now = Iter.of_array (g vars now) in
+    let g now = Iter.of_array (g now) in
     let clocks = L.of_list (clocks constr) in
     correctness_decorator (g, t, clocks)
   ;;
 
-  let of_var_rel =
-    let open Rtccsl in
-    function
-    | TimeVarRelation (v, rel, Const c) ->
-      let cond_f =
-        match rel with
-        | Less -> I.ninf_strict
-        | LessEq -> I.ninf
-        | More -> I.pinf_strict
-        | MoreEq -> I.pinf
-        | Eq -> I.return
-        | Neq -> failwith "irrepresentable in interval domain"
-      in
-      let cond = cond_f c in
-      CMap.singleton v cond
-    | _ -> failwith "not implemented"
-  ;;
-
   let debug_automata (g, t, clocks) = debug_g "all" g, t, clocks
 
-  let of_spec ?(debug = false) spec : sim =
-    let constraints =
-      List.fold_left sync empty (List.map of_constr Rtccsl.(spec.constraints))
-    and relations =
-      spec.var_relations
-      |> List.map of_var_rel
-      |> List.fold_left (CMap.union (fun _ x y -> Some (I.inter x y))) CMap.empty
+  let discr_dist_value ratios interval =
+    let left, right = II.to_nonstrict interval in
+    let available =
+      List.filter (fun (value, _) -> left <= value && value <= right) ratios
     in
-    { limits = (fun v -> Option.value ~default:I.inf (CMap.find_opt v relations))
+    let sum = List.fold_left (fun acc (_, ratio) -> acc + ratio) 0 available in
+    let choice = Random.int sum in
+    let chosen, _ =
+      List.fold_left
+        (fun (chosen, choice) (value, ratio) ->
+           match chosen with
+           | Some _ as x -> x, choice
+           | None ->
+             let choice = choice - ratio in
+             if choice < 0 then Some value, choice else None, choice)
+        (None, choice)
+        available
+    in
+    Option.get chosen
+  ;;
+
+  let cont_dist_value = function
+    | Uniform ->
+      fun cond ->
+        let lower, upper =
+          Option.unwrap ~expect:"uniform distribution is undefined on exclusive intervals"
+          @@ NI.constant_bounds cond
+        in
+        N.random lower upper
+    | Normal { mean; deviation } ->
+      let mu = N.to_float mean in
+      let sigma = N.to_float deviation in
+      fun cond ->
+        let bounds =
+          Option.unwrap
+            ~expect:"todo: gaussian distribution is undefined on exclusive bounds"
+          @@ NI.constant_bounds cond
+        in
+        let a, b = Tuple.map2 N.to_float bounds in
+        let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+        N.of_float sample
+    | Exponential _ -> failwith "todo"
+  ;;
+
+  let of_spec ?(debug = false) spec : sim =
+    let duration_bounds =
+      Language.Specification.(spec.duration)
+      |> List.map NI.of_var_rel
+      |> List.fold_left
+           (fun acc (v, rel) -> CMap.entry ~default:rel (NI.inter rel) v acc)
+           CMap.empty
+    and integer_bounds =
+      Language.Specification.(spec.integer)
+      |> List.map II.of_var_rel
+      |> List.fold_left
+           (fun acc (v, rel) -> CMap.entry ~default:rel (II.inter rel) v acc)
+           CMap.empty
+    and integer_dists, duration_dists =
+      List.partition_map
+        (function
+          | DiscreteProcess { name; ratios } -> Either.Left (name, discr_dist_value ratios)
+          | ContinuousProcess { name; dist } -> Either.Right (name, cont_dist_value dist))
+        spec.probabilistic
+    in
+    let integer_dists, duration_dists =
+      CMap.of_list integer_dists, CMap.of_list duration_dists
+    in
+    let durations = VarSeq.empty_container ()
+    and integers = VarSeq.empty_container () in
+    let process_combination inf return _ bounds dist =
+      let bounds = Option.value ~default:inf bounds
+      and process =
+        Option.map_or ~default:Fun.id (fun dist cond -> return @@ dist cond) dist
+      in
+      Some (bounds, process)
+    in
+    CMap.merge (process_combination NI.inf NI.return) duration_bounds duration_dists
+    |> CMap.iter (VarSeq.declare_variable durations);
+    CMap.merge (process_combination II.inf II.return) integer_bounds integer_dists
+    |> CMap.iter (VarSeq.declare_variable integers);
+    let constraints =
+      List.fold_left
+        sync
+        empty
+        (List.map (of_constr (integers, durations)) Language.Specification.(spec.logical))
+    in
+    { durations
+    ; integers
     ; automata = (if debug then debug_automata constraints else constraints)
     }
   ;;
 
-  let next_step strat (a : t) vars now : solution option =
+  let next_step strat (a : t) now : solution option =
     let guards, transition, _ = a in
     (* let _ = print_endline "------" in *)
-    let possible = guards vars now in
+    let possible = guards now in
     (* let _ =
       Printf.printf "--- Candidates ---\n";
       List.print
@@ -798,66 +1012,43 @@ struct
     else
       let* sol = strat possible in
       (* let _ = Printf.printf "decision: %s\n" (solution_to_string sol) in *)
-      if transition vars now sol then Some sol else None
+      if transition now sol then Some sol else None
   ;;
 
-  let empty_vars = { current = (fun _ -> failwith "none"); consume = (fun _ -> ()) }
-
-  let vars_from_rels (strat : var_strategy) (var2cond : var -> I.t) =
-    let storage = ref CMap.empty in
-    { current =
-        (fun k ->
-          match CMap.find_opt k !storage with
-          | Some x -> x
-          | None ->
-            let cond = var2cond k in
-            let new_v = strat k cond in
-            storage := CMap.add k new_v !storage;
-            (* Printf.printf
-              "generate %s with %s in %s\n"
-              (C.to_string k)
-              (I.to_string new_v)
-              (I.to_string cond); *)
-            new_v)
-    ; consume =
-        (fun k ->
-          (* Printf.printf "consume %s\n" (C.to_string k); *)
-          storage := CMap.remove k !storage)
-    }
-  ;;
-
-  (*TODO: replace with iterator? Add dynarray.of_iter with size hint *)
-  let gen_trace var_strat (sol_strat : sol_strategy) { limits; automata } : Trace.t =
+  let gen_trace (sol_strat : sol_strategy) { automata; integers; durations } : Trace.t =
+    VarSeq.unsuppress integers;
+    VarSeq.unsuppress durations;
     Iter.unfoldr
-      (fun (vars, now) ->
-         let* l, now = next_step sol_strat automata vars now in
-         Some ((l, now), (vars, now)))
-      (vars_from_rels var_strat limits, N.neg N.one)
+      (fun now ->
+         let* l, now = next_step sol_strat automata now in
+         Some ((l, now), now))
+      (N.neg N.one)
   ;;
 
-  let bisimulate var_strat s { limits; automata = a1; _ } { automata = a2; _ } =
+  let bisimulate s { automata = a1; _ } { automata = a2; _ } =
+    (*TODO: investigate relation between the vrel1 and vrel2. *)
     let _, trans, _ = a2 in
     Iter.unfoldr
-      (fun (vars, now) ->
-         let* l, n = next_step s a1 vars now in
-         if trans vars now (l, n) then Some ((l, n), (vars, n)) else None)
-      (vars_from_rels var_strat limits, N.zero)
+      (fun now ->
+         let* l, n = next_step s a1 now in
+         if trans now (l, n) then Some ((l, n), n) else None)
+      N.zero
   ;;
 
-  (*TODO: investigate relation between the vrel1 and vrel2. *)
-
-  let accept_trace { limits; automata; _ } n t =
-    let step a vars n sol =
+  let accept_trace { automata; integers; durations } n t =
+    VarSeq.suppress integers;
+    VarSeq.suppress durations;
+    let step a n sol =
       let _, transition, _ = a in
-      transition vars n sol
+      transition n sol
     in
-    let _, result =
+    let result =
       Iter.fold
-        (fun (vars, n) (l, n') ->
+        (fun n (l, n') ->
            match n with
-           | Some n -> if step automata vars n (l, n') then vars, Some n' else vars, None
-           | None -> vars, None)
-        (vars_from_rels (fun _ c -> c) limits, Some n)
+           | Some n -> if step automata n (l, n') then Some n' else None
+           | None -> None)
+        (Some n)
         t
     in
     result
@@ -875,85 +1066,54 @@ module Strategy (A : S) = struct
   type num = A.N.t
 
   module L = A.L
-  module I = A.I
+  module I = A.NI
 
   type guard = A.guard
   type solution = A.solution
 
-  module Var = struct
-    type t = var -> I.t -> I.t
-
-    let none _ x = x
-
-    let use_dist dist =
-      let prepare (var, dist) =
-        ( var
-        , match dist with
-          | Uniform { lower; upper } ->
-            fun cond ->
-              assert (I.subset I.(lower =-= upper) cond);
-              I.return @@ N.random lower upper
-          (* | AnyUniform -> N.random left right *)
-          | Normal { mean; dev } ->
-            let mu = N.to_float mean in
-            let sigma = N.to_float dev in
-            fun cond ->
-              let bounds = Option.get @@ I.constant_bounds cond in
-              let a, b = Tuple.map2 N.to_float bounds in
-              let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
-              I.return @@ N.of_float sample )
-      in
-      let dist = dist |> List.map prepare |> CMap.of_list in
-      fun var cond ->
-        match CMap.find_opt var dist with
-        | Some f -> f cond
-        | None -> cond
-    ;;
-  end
-
   module Num = struct
-    type t = I.t -> N.t
+    type t = NI.t -> N.t
 
     let bounded bound lin_cond =
-      assert (I.subset bound (I.pinf N.zero));
-      let choice = I.inter lin_cond bound in
-      if I.is_empty choice then None else Some choice
+      assert (NI.subset bound (NI.pinf N.zero));
+      let choice = NI.inter lin_cond bound in
+      if NI.is_empty choice then None else Some choice
     ;;
 
     let random_leap ~upper_bound ~ceil ~floor ~rand cond =
-      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
+      let left_bound = Option.value ~default:N.zero (NI.left_bound_opt cond) in
       let cond =
-        if I.is_right_unbound cond
-        then I.inter cond I.(left_bound =-= N.(left_bound + upper_bound))
+        if NI.is_right_unbound cond
+        then NI.inter cond NI.(left_bound =-= N.(left_bound + upper_bound))
         else cond
       in
       let x, y =
         match cond with
-        | I.Bound (I.Include x, I.Include y) -> x, y
-        | I.Bound (I.Exclude x, I.Include y) -> ceil x y, y
-        | I.Bound (I.Include x, I.Exclude y) -> x, floor x y
-        | I.Bound (I.Exclude x, I.Exclude y) -> ceil x y, floor x y
+        | NI.Bound (NI.Include x, NI.Include y) -> x, y
+        | NI.Bound (NI.Exclude x, NI.Include y) -> ceil x y, y
+        | NI.Bound (NI.Include x, NI.Exclude y) -> x, floor x y
+        | NI.Bound (NI.Exclude x, NI.Exclude y) -> ceil x y, floor x y
         | _ -> invalid_arg "random on infinite interval is not supported"
       in
       rand x y
     ;;
 
     let slow ~upper_bound ~ceil cond =
-      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
-      let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
+      let left_bound = Option.value ~default:N.zero (NI.left_bound_opt cond) in
+      let cond = NI.inter cond NI.(left_bound =-= N.(left_bound + upper_bound)) in
       match cond with
-      | I.Bound (I.Include x, _) -> x
-      | I.Bound (I.Exclude x, I.Include y) | I.Bound (I.Exclude x, I.Exclude y) ->
+      | NI.Bound (NI.Include x, _) -> x
+      | NI.Bound (NI.Exclude x, NI.Include y) | NI.Bound (NI.Exclude x, NI.Exclude y) ->
         ceil x y
       | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
 
     let fast ~upper_bound ~floor cond =
-      let left_bound = Option.value ~default:N.zero (I.left_bound_opt cond) in
-      let cond = I.inter cond I.(left_bound =-= N.(left_bound + upper_bound)) in
+      let left_bound = Option.value ~default:N.zero (NI.left_bound_opt cond) in
+      let cond = NI.inter cond NI.(left_bound =-= N.(left_bound + upper_bound)) in
       match cond with
-      | I.Bound (I.Include _, I.Include y) | I.Bound (I.Exclude _, I.Include y) -> y
-      | I.Bound (I.Include x, I.Exclude y) | I.Bound (I.Exclude x, I.Exclude y) ->
+      | NI.Bound (NI.Include _, NI.Include y) | NI.Bound (NI.Exclude _, NI.Include y) -> y
+      | NI.Bound (NI.Include x, NI.Exclude y) | NI.Bound (NI.Exclude x, NI.Exclude y) ->
         floor x y
       | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
@@ -1045,7 +1205,7 @@ module Hashed = struct
 
       let with_spec session spec =
         let f k = save session k in
-        Rtccsl.map_specification f f f Fun.id spec
+        Language.Specification.map f f f f f Fun.id spec
       ;;
 
       let with_dist session dist =
@@ -1421,7 +1581,7 @@ end
 
 let%test_module _ =
   (module struct
-    open Rtccsl
+    open Language
     open Number
     module A = Make (Clock.String) (Float)
     module S = Strategy (A)
@@ -1441,19 +1601,21 @@ let%test_module _ =
            ~rand:Float.random)
     ;;
 
+    open Specification.Builder
+
     let%test _ =
-      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
-      not (A.Trace.is_empty (A.gen_trace S.Var.none slow_strat a))
+      let a = A.of_spec @@ constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
+      not (A.Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
-      not (A.Trace.is_empty (A.gen_trace S.Var.none slow_strat a))
+      let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
+      not (A.Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ Rtccsl.constraints_only [ Coincidence [ "a"; "b" ] ] in
-      let trace = A.gen_trace S.Var.none random_strat a in
+      let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let trace = A.gen_trace random_strat a in
       not (A.Trace.is_empty trace)
     ;;
 
@@ -1469,15 +1631,11 @@ let%test_module _ =
     let%test _ =
       let empty1 =
         A.of_spec
-          { constraints = [ Coincidence [ "a"; "b" ]; Exclusion [ "a"; "b" ] ]
-          ; var_relations = []
-          }
+        @@ constraints_only [ Coincidence [ "a"; "b" ]; Exclusion ([ "a"; "b" ], None) ]
       in
       let empty2 = A.empty_sim in
       let steps = 10 in
-      let trace =
-        A.bisimulate S.Var.none slow_strat empty1 empty2 |> A.Trace.take ~steps
-      in
+      let trace = A.bisimulate slow_strat empty1 empty2 |> A.Trace.take ~steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
@@ -1487,17 +1645,14 @@ let%test_module _ =
     let%test _ =
       let sampling1 =
         A.of_spec
-        @@ Rtccsl.constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = Const 0, Const 0; base = Some "b" } ]
+        @@ constraints_only
+             [ Delay { out = "o"; arg = "i"; delay = Const 0; base = Some "b" } ]
       in
       let sampling2 =
-        A.of_spec
-        @@ Rtccsl.constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
+        A.of_spec @@ constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
       in
       let steps = 10 in
-      let trace =
-        A.bisimulate S.Var.none random_strat sampling1 sampling2 |> A.Trace.take ~steps
-      in
+      let trace = A.bisimulate random_strat sampling1 sampling2 |> A.Trace.take ~steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
@@ -1506,9 +1661,9 @@ let%test_module _ =
 
     let%test _ =
       let a =
-        A.of_spec @@ Rtccsl.constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
+        A.of_spec @@ constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
       in
-      let trace = A.gen_trace S.Var.none slow_strat a |> A.Trace.take ~steps:10 in
+      let trace = A.gen_trace slow_strat a |> A.Trace.take ~steps:10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)

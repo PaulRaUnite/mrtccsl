@@ -68,7 +68,7 @@ module Solver = struct
 end
 
 module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t) = struct
-  open Rtccsl
+  open Language
   open Denotational
   include MakeDebug (C) (N)
 
@@ -79,9 +79,11 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   include MakeExpr (C) (N)
 
-  exception ExactRelationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
-  exception OverApproximationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
-  exception UnderApproximationUnavailable of (C.t, C.t, C.t, N.t) Rtccsl.constr
+  exception ExactRelationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
+  exception OverApproximationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
+
+  exception
+    UnderApproximationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
 
   (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
@@ -106,24 +108,27 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       And pair_chain
     | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
-    | RTdelay { out; arg; delay } ->
+    | RTdelay { out; arg; delay = Var delay } ->
       let delay = Var (FreeVar delay) in
       out.@[i] &- arg.@[i] == delay && delay >= Const N.zero
-    | Delay { out; arg; delay = Const d1, Const d2; base = None } when d1 = d2 ->
-      out.@[i - d1] == arg.@[i]
-    | Fastest { out; left; right } -> out.@[i] == min left.@[i] right.@[i]
-    | Slowest { out; left; right } -> out.@[i] == max left.@[i] right.@[i]
-    | CumulPeriodic { out; period; offset } ->
-      let period, offset = Var (FreeVar period), num_expr_of_expr offset in
-      let prev = ZeroCond (out.@[i - 1], offset &+ period ) in
-      out.@[i] &- prev == period && period > Const N.zero && offset > Const N.zero
-    | AbsPeriodic { out; period; error; offset } ->
+    | Delay { out; arg; delay = Const d1; base = None } -> out.@[i - d1] == arg.@[i]
+    | Fastest { out; args = [ left; right ] } -> out.@[i] == min left.@[i] right.@[i]
+    | Slowest { out; args = [ left; right ] } -> out.@[i] == max left.@[i] right.@[i]
+    | CumulPeriodic { out; period; error = Var error; offset } ->
       let period, error, offset =
-        num_expr_of_expr period, Var (FreeVar error), num_expr_of_expr offset
+        Const period, Var (FreeVar error), num_expr_of_expr offset
       in
-      out.@[i] &- (period &* Var (Index (i - 1))) &- offset == error
+      let prev = ZeroCond (out.@[i - 1], offset &+ period) in
+      out.@[i] == (prev &+ period &+ error)
       && period > Const N.zero
-      && offset > Const N.zero
+      && offset >= Const N.zero
+    | AbsPeriodic { out; period; error = Var error; offset } ->
+      let period, error, offset =
+        Const period, Var (FreeVar error), num_expr_of_expr offset
+      in
+      out.@[i] == ((period &* Var (Index (i - 1))) &+ offset &+ error)
+      && period > Const N.zero
+      && offset >= Const N.zero
     | Sporadic { out; at_least; strict } ->
       let diff = out.@[i] &- out.@[i - 1] in
       let at_least = num_expr_of_expr at_least in
@@ -132,12 +137,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   ;;
 
   let var_relation = function
-    | TimeVarRelation (v, op, p) -> Linear (Var (FreeVar v), op, num_expr_of_expr p)
+    | NumRelation (v, op, p) -> Linear (Var (FreeVar v), op, num_expr_of_expr p)
   ;;
 
-  let of_spec cf { constraints; var_relations } =
-    let constraints = List.map (BoolExpr.norm << cf) constraints in
-    let relations = List.map var_relation var_relations in
+  let of_spec cf Specification.{ logical; duration; _ } =
+    let constraints = List.map (BoolExpr.norm << cf) logical in
+    let relations = List.map var_relation duration in
     List.append constraints relations
   ;;
 
@@ -146,7 +151,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let open Syntax in
     let i = 0 in
     match c with
-    | Exclusion list ->
+    | Exclusion (list, _) ->
       let pairwise_exclusions =
         Seq.product (List.to_seq list) (List.to_seq list)
         |> Seq.filter (fun (c1, c2) -> C.compare c1 c2 <> 0)
@@ -155,7 +160,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       in
       And pairwise_exclusions
     | c ->
-      let clocks = Rtccsl.clocks c in
+      let clocks = clocks c in
       And (List.map (fun c -> Syntax.(c.@[-1] < c.@[0])) clocks)
   ;;
 
@@ -171,7 +176,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let open Syntax in
     let i = 0 in
     match c with
-    | Exclusion list ->
+    | Exclusion (list, _) ->
       let maybe_pair_chain =
         List.fold_left
           (fun acc c ->
@@ -189,15 +194,15 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           maybe_pair_chain
       in
       And pair_chain
-    | Subclocking { sub; super } -> sub.@[i] == super.@[i]
+    | Subclocking { sub; super; _ } -> sub.@[i] == super.@[i]
     | Minus { out; arg; except } ->
-      let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ])) in
+      let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ], None)) in
       (out.@[i] == arg.@[i] || out.@[i - 1] == arg.@[i - 1]) && exclude_arg_except
     | Intersection { out; args } | Union { out; args } ->
       exact_rel (Coincidence (out :: args))
     | Sample { out; arg; base } ->
       base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
-    | Delay { out; arg; delay = Const d1, Const d2; base = Some base } when d1 = d2 ->
+    | Delay { out; arg; delay = Const d1; base = Some base } ->
       out.@[i - d1] == base.@[i]
       && base.@[i - 1 - d1] < arg.@[i - d1]
       && arg.@[i - d1] <= base.@[i - d1]
@@ -268,9 +273,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let rule v acc =
       match v with
       | FreeVar _ -> acc
-      | Index i -> MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) (i, i) None acc
+      | Index i ->
+        MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) ~default:(i, i) None acc
       | ClockVar (c, i) ->
-        MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) (i, i) (Some c) acc
+        MapOC.entry (fun (l, r) -> Int.(min i l, max i r)) ~default:(i, i) (Some c) acc
     in
     BoolExpr.fold_vars rule MapOC.empty formula
   ;;
@@ -495,7 +501,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                           new_spawned_variables
                           := MapOC.entry
                                (fun acc -> (j, fi) :: acc)
-                               []
+                               ~default:[]
                                vf
                                !new_spawned_variables)
                       in
@@ -1076,7 +1082,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         BoolExpr.eliminate
           Option.some
           (function
-            | Linear (Var (ClockVar (c1, i)), Less, Var (ClockVar (c2, j)))
+            | Linear (Var (ClockVar (c1, i)), `Less, Var (ClockVar (c2, j)))
               when C.compare c1 c2 = 0 && i = j - 1 -> None
             | e -> Some e)
           f
@@ -1095,7 +1101,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     module SubstituteMap = Map.Make (C)
 
     let rec equalities acc = function
-      | Linear (Var (ClockVar (l, i)), Eq, Var (ClockVar (r, j))) ->
+      | Linear (Var (ClockVar (l, i)), `Eq, Var (ClockVar (r, j))) ->
         ((l, i), (r, j)) :: acc
       | Linear _ -> acc
       | And list | Or list -> List.fold_left equalities acc list
@@ -1384,12 +1390,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       ; structure_in_property : Simulation.solution option
       }
 
-    let solve (a, s, p) =
+    let solve Language.Module.{ assumptions; structure; assertions } =
+      let a, s, p =
+        ( Option.value ~default:Specification.empty (List.first assumptions)
+        , structure
+        , Option.value ~default:Specification.empty (List.first assertions) )
+      in
       { assumption = Existence.solve a
-      ; structure = Existence.solve (merge a s)
+      ; structure = Existence.solve Specification.(merge a s)
       ; property = Existence.solve p
       ; assumption_in_structure = Assumption.solve a s
-      ; structure_in_property = Property.solve (merge a s) p
+      ; structure_in_property = Property.solve Specification.(merge a s) p
       }
     ;;
 
@@ -1496,7 +1507,7 @@ struct
   let%test_unit _ = assert (not @@ D.is_bottom (P.to_polyhedra "i" (And [])))
 
   let%test_unit _ =
-    let c = Rtccsl.Precedence { cause = "a"; conseq = "b" } in
+    let c = Language.Precedence { cause = "a"; conseq = "b" } in
     let formula = P.exact_rel c in
     let domain = P.to_polyhedra "i" formula in
     assert (not @@ D.is_bottom domain)

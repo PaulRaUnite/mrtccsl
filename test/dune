@@ -10,7 +10,7 @@
 
 (test
  (name parser)
- (libraries mrtccsl)
+ (libraries mrtccsl.mrtccslparsing mrtccsl)
  (deps (glob_files code/*.mrtccsl)))
 
 (env

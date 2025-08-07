@@ -103,7 +103,6 @@ let parallel_reaction_times
       ~sem
       ?(with_partial = false)
       params
-      dist
       system_spec
       func_chain_spec
       runs
@@ -113,7 +112,7 @@ let parallel_reaction_times
   let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
   let body _ =
     let session, _, _, full_chains, partial_chains =
-      FnCh.functional_chains ~sem params dist system_spec func_chain_spec
+      FnCh.functional_chains ~sem params system_spec func_chain_spec
     in
     let full_reaction_times =
       FnCh.reaction_times session [ start, finish ] (Iter.of_dynarray full_chains)
@@ -163,7 +162,7 @@ let generate_trace
       ~steps
       ~horizon
       directory
-      dist
+      
       system_spec
       tasks
       func_chain_spec
@@ -179,13 +178,15 @@ let generate_trace
       ~debug
       ~sem
       (strategy, steps, horizon)
-      dist
+      
       system_spec
       func_chain_spec
   in
   if print_svgbob
   then (
-    let clocks = List.sort_uniq String.compare (Rtccsl.spec_clocks system_spec) in
+    let clocks =
+      List.sort_uniq String.compare (Language.Specification.clocks system_spec)
+    in
     let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
     Export.trace_to_vertical_svgbob
       ~numbers:false
@@ -216,18 +217,17 @@ let process_config
       ~processor
       ~horizon
       ~steps
-      (name, dist, spec, tasks, chain)
+      (name, spec, tasks, chain)
   =
-  (let open Rtccsl in
-   let len = List.length spec.constraints in
-   let spec = Opt.optimize spec in
-   assert (len = List.length spec.constraints));
+  let spec = Opt.optimize spec in
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
   let _ =
     print_endline
-      (Rtccsl.show_specification
+      (Language.Specification.show
+         Format.pp_print_string
+         Format.pp_print_string
          Format.pp_print_string
          Format.pp_print_string
          Format.pp_print_string
@@ -245,7 +245,7 @@ let process_config
          ~steps
          ~horizon
          prefix
-         dist
+         
          spec
          tasks
          chain

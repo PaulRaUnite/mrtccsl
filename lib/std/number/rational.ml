@@ -52,7 +52,7 @@ let random l r =
 
 let from_int = of_int
 let to_rational = Fun.id
-let from_pair nom denom = of_frac nom denom
+let from_pair (nom, denom) = of_frac nom denom
 
 let of_decimal_string s =
   match String.split_on_char '.' s with
@@ -60,7 +60,7 @@ let of_decimal_string s =
     let whole = (from_int << int_of_string) whole in
     let decimal_num = int_of_string decimal in
     let len_after_zero = String.length decimal in
-    let decimal = from_pair decimal_num len_after_zero in
+    let decimal = of_frac decimal_num len_after_zero in
     add whole decimal
   | _ -> failwith "wrong decimal number"
 ;;

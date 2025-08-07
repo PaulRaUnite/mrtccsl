@@ -9,8 +9,6 @@
   apron.polkaMPQ
   vpl-core
   ocamlgraph
-  menhirLib
-  ocolor
   cudd
   std
   iter

@@ -1,6 +1,7 @@
 open Mrtccsl
 open Prelude
-open Rtccsl
+open Language
+open Language.Specification.Builder
 open Number
 module N = Integer
 module A = Automata.Simple.MakeExtendedString (N)
@@ -62,12 +63,13 @@ let () =
           [ "(ab)(ab)" ] )
     ; ( "exclusion"
       , rglwt
-          (constraints_only [ Exclusion [ "a"; "b"; "c" ] ])
+          (constraints_only [ Exclusion ([ "a"; "b"; "c" ], None) ])
           [ "abc" ]
           [ "(ab)"; "(abc)" ] )
     ; ( "periodic"
       , rglwt
-          (constraints_only [ Periodic { out = "o"; base = "b"; period = const 3 } ])
+          (constraints_only
+             [ Periodic { out = "o"; base = "b"; period = const 3; skip = None } ])
           [ "bb(bo)bb(bo)" ]
           [ "bbbbbb" ] )
     ; ( "sample"
@@ -78,31 +80,40 @@ let () =
     ; ( "delay-trivial"
       , rglwt
           (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 0, const 0; base = None } ])
+             [ Delay { out = "o"; arg = "i"; delay = const 0; base = None } ])
           [ "(oi)(oi)" ]
           [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
       , rglwt
           (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 2, const 2; base = None } ])
+             [ Delay { out = "o"; arg = "i"; delay = const 2; base = None } ])
           [ "ii(oi)(oi)" ]
           [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
-          (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 2, const 4; base = None } ])
+          (of_decl (fun b ->
+             logical b
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = None };
+          integer b @@ NumRelation ("duration", `LessEq, const 4);
+             integer b @@ NumRelation ("duration", `MoreEq, const 2)))
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
           [ "iiiii(oi)" ] )
     ; ( "delay-undet-zero"
       , rglwt
-          (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 0, const 2; base = None } ])
+          (of_decl (fun b ->
+             logical b
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = None };
+             integer b @@ NumRelation ("duration", `LessEq, const 2);
+             integer b @@ NumRelation ("duration", `MoreEq, const 0)))
           [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
           [ "iiiii"; "oooo" ] )
     ; ( "delay-sample"
       , rglwt
-          (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 1, const 2; base = Some "b" } ])
+          (of_decl (fun b ->
+             logical b
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = Some "b" };
+             integer b @@ NumRelation ("duration", `LessEq, const 2);
+             integer b @@ NumRelation ("duration", `MoreEq, const 1)))
           [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
           [ "ooo"; "(ib)bbb(ob)" ] )
     ; ( "minus"
@@ -122,12 +133,12 @@ let () =
           [ "baba"; "aa" ] )
     ; ( "fastest"
       , rglwt
-          (constraints_only [ Fastest { out = "o"; left = "a"; right = "b" } ])
+          (constraints_only [ Fastest { out = "o"; args = [ "a"; "b" ] } ])
           [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)" ]
           [ "aaaa"; "bbb"; "ooo" ] )
     ; ( "slowest"
       , rglwt
-          (constraints_only [ Slowest { out = "o"; left = "a"; right = "b" } ])
+          (constraints_only [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
           [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
           [ "ooo" ] )
     ; ( "allow"
@@ -168,7 +179,7 @@ let () =
           [ "ab"; "(lab)" ] )
     ; ( "subclock"
       , rglwt
-          (constraints_only [ Subclocking { sub = "a"; super = "b" } ])
+          (constraints_only [ Subclocking { sub = "a"; super = "b"; dist = None } ])
           [ "(ab)b" ]
           [ "a" ] )
     ; ( "inter"
@@ -178,35 +189,29 @@ let () =
           [ "(abc)"; "(iab)" ] )
     ; ( "rt-delay"
       , rtwt
-          { constraints = [ RTdelay { arg = "i"; out = "o"; delay = "t" } ]
-          ; var_relations =
-              [ TimeVarRelation ("t", LessEq, Const 3)
-              ; TimeVarRelation ("t", MoreEq, Const 1)
-              ]
-          }
+          (of_decl (fun b ->
+             logical b @@ RTdelay { arg = "i"; out = "o"; delay = var "t" };
+             duration b @@ NumRelation ("t", `LessEq, Const 3);
+             duration b @@ NumRelation ("t", `MoreEq, Const 1)))
           [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
           [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
-    ; ( "cum-period"
+    ; ( "cumul-period"
       , rtwt
-          { constraints = [ CumulPeriodic { out = "o"; period = "p"; offset = Const 2 } ]
-          ; var_relations =
-              [ TimeVarRelation ("p", LessEq, Const 5)
-              ; TimeVarRelation ("p", MoreEq, Const 3)
-              ]
-          }
+          (of_decl (fun b ->
+             logical b
+             @@ CumulPeriodic { out = "o"; period = 4; error = var "e"; offset = const 2 };
+             duration b @@ NumRelation ("e", `LessEq, Const 1);
+             duration b @@ NumRelation ("e", `MoreEq, Const (-1))))
           [ "ooo", [ 2; 6; 10 ]; "ooo", [ 2; 5; 8 ] ]
           [ "o", [ 4 ]; "o", [ 1 ]; "oo", [ 2; 11 ] ] )
     ; ( "abs-period"
       , rtwt
-          { constraints =
-              [ AbsPeriodic { out = "o"; period = Const 4; error = "e"; offset = Const 2 }
-              ]
-          ; var_relations =
-              [ TimeVarRelation ("e", LessEq, Const 1)
-              ; TimeVarRelation ("e", MoreEq, Const ~-1)
-              ]
-          }
-          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 1; 5; 11 ] ]
+          (of_decl (fun b ->
+             logical b
+             @@ AbsPeriodic { out = "o"; period = 4; error = var "e"; offset = const 2 };
+             duration b @@ NumRelation ("e", `LessEq, Const 1);
+             duration b @@ NumRelation ("e", `MoreEq, Const (-1))))
+          [ "ooo", [ 2; 6; 10 ]; "ooo", [ 2; 5; 11 ] ]
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
