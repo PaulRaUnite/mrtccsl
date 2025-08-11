@@ -55,15 +55,19 @@ rule read =
   | "%" { PERCENT }
   | "~" { SIM }
   (* keywords *)
+  | "structure" {STRUCTURE}
+  | "assume" { ASSUME }
+  | "assert" { ASSERT }
+  | "var" { VAR }
   | "integer" {INTEGER}
   | "duration" {DURATION}
+  | "clock" { CLOCK }
   | "next" { NEXT }
   | "fastest" { FASTEST }
   | "slowest" { SLOWEST }
-  | "assume" { ASSUME }
-  | "assert" { ASSERT }
   | "sample" { SAMPLE }
   | "on" { ON }
+  | "of" { OF }
   | "alternates" { ALTERNATES }
   | "delay" { DELAY }
   | "and" { AND }
@@ -86,6 +90,10 @@ rule read =
   | "discrete" {DISCRETE}
   | "continuous" {CONTINUOUS}
   | "process" {PROCESS}
+  | "with" {WITH}
+  | "normal" {NORMAL}
+  | "uniform" {UNIFORM}
+  | "strict" {STRICT}
   (* time scales and units *)
   | "year" { SECOND(365*24*60*60, 1) }
   | "month" { SECOND(30*24*60*60, 1) }

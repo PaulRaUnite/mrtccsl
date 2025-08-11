@@ -23,7 +23,7 @@ type 'a interval =
   | PlusMinus of 'a * 'a
 
 type 'a inline_relation' =
-  | InlineVariable of var
+  | InlineExpr of 'a
   | InlineInterval of 'a interval
 
 type 'a inline_relation = 'a inline_relation' Loc.t
@@ -107,8 +107,9 @@ and clock_expr' =
 
 and clock_expr = clock_expr' Loc.t
 
+type var_type = [ `Int | `Duration | `Clock ] 
 type statement' =
-  | VariableDeclaration of id * [ `Int | `Duration | `Clock ]
+  | VariableDeclaration of (id list * var_type) list
   | IntRelation of int_expr * (num_rel * int_expr) list
   | DurationRelation of duration_expr * (num_rel * duration_expr) list
   | ClockRelation of clock_expr * clock_rel * clock_expr

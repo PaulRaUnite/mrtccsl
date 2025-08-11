@@ -91,3 +91,53 @@ let bounding_box list =
     Location (start, finish)
   | _ -> Nowhere
 ;;
+
+let highlight ~color ~symbol loc msg =
+  match loc with
+  | Nowhere -> fun fmt -> Format.fprintf fmt "Unknown location"
+  | Location (s, f) ->
+    if not (String.equal s.pos_fname f.pos_fname)
+    then failwith "Trying to highlight range in different files"
+    else if s.pos_lnum = f.pos_lnum
+    then (
+      let _, lexbuf = MenhirLib.LexerUtil.read s.pos_fname in
+      let lexbuf = lexbuf.lex_buffer in
+      (* Format.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
+      let prefix = Bytes.sub lexbuf s.pos_bol (s.pos_cnum - s.pos_bol) in
+      let offset =
+        Bytes.fold_right
+          (fun c mono ->
+             mono
+             +
+             match c with
+             | '\t' -> 4
+             | _ -> 1)
+          prefix
+          0
+      and width = max (f.pos_cnum - s.pos_cnum) 1
+      and linenum = Format.sprintf "%i |" s.pos_lnum
+      and linewidth =
+        Fun.catch_with_default
+          (Bytes.index_from lexbuf f.pos_cnum)
+          '\n'
+          (Bytes.length lexbuf)
+        - s.pos_bol
+      in
+      let line =
+        String.replace ~sub:"\t" ~by:"    " (Bytes.sub_string lexbuf s.pos_bol linewidth)
+      in
+      fun formatter ->
+        Ocolor_format.prettify_formatter formatter;
+        let range = MenhirLib.LexerUtil.range (s, f) in
+        Format.pp_print_string formatter range;
+        Format.pp_print_string formatter linenum;
+        Format.pp_print_string formatter line;
+        Format.pp_print_newline formatter ();
+        let buf = Buffer.create 16 in
+        Buffer.add_chars buf (String.length linenum + offset) ' ';
+        Buffer.add_chars buf width symbol;
+        Ocolor_format.pp_open_style formatter (Ocolor_types.Fg color);
+        Format.fprintf formatter "%s %s\n\n" (Buffer.contents buf) msg;
+        Ocolor_format.pp_close_style formatter ())
+    else ignore
+;;

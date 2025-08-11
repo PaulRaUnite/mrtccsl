@@ -16,17 +16,80 @@ type m = (var, var, var, var, var, Rational.t) Mrtccsl.Language.Module.t
 
 type compile_error =
   | DuplicateDeclaration of
-      { duplicate : Loc.location
-      ; previous : Loc.location
+      { duplicate : Loc.location * Ast.var_type
+      ; previous : Loc.location * Ast.var_type
       }
-  | ComplexInlineDeclaration of Loc.location
-  | WrongType of
-      { call : Loc.location
-      ; declaration : Loc.location
+  | ComplexInlineVariableDeclaration of Loc.location
+  | WrongUsageType of
+      { call : Loc.location * Ast.var_type
+      ; declaration : Loc.location * Ast.var_type
       }
   | IncorrectComparison of Loc.location
   | IncorrectValue of Loc.location * string
-  | NotImplemented of string
+  | NotImplemented of Loc.location * string
+
+let red = Ocolor_types.C4 Ocolor_types.red
+let yellow = Ocolor_types.C4 Ocolor_types.yellow
+let green = Ocolor_types.C4 Ocolor_types.green
+let blue = Ocolor_types.C4 Ocolor_types.hi_blue
+
+let type_to_string = function
+  | `Int -> "integer"
+  | `Duration -> "duration"
+  | `Clock -> "clock"
+;;
+
+let print_compile_error fmt = function
+  | DuplicateDeclaration { duplicate = dloc, dtype; previous = ploc, ptype } ->
+    Loc.highlight
+      ~color:red
+      ~symbol:'^'
+      dloc
+      (Format.sprintf "variable declared as %s" (type_to_string dtype))
+      fmt;
+    Format.fprintf fmt "\n";
+    Loc.highlight
+      ~color:blue
+      ~symbol:'-'
+      ploc
+      (Format.sprintf "but variable was already declared as %s." (type_to_string ptype))
+      fmt
+  | ComplexInlineVariableDeclaration loc ->
+    Loc.highlight
+      ~color:red
+      ~symbol:'^'
+      loc
+      "complex unknown variables are not supported"
+      fmt
+  | WrongUsageType { call = cloc, ctype; declaration = dloc, dtype } ->
+    Loc.highlight
+      ~color:red
+      ~symbol:'^'
+      cloc
+      (Format.sprintf "variable is used in %s context" (type_to_string ctype))
+      fmt;
+    Loc.highlight
+      ~color:blue
+      ~symbol:'-'
+      dloc
+      (Format.sprintf "but it was declared as %s" (type_to_string dtype))
+      fmt
+  | IncorrectComparison loc ->
+    Loc.highlight
+      ~color:red
+      ~symbol:'^'
+      loc
+      (Format.sprintf "comparison does not evaluates to true")
+      fmt
+  | IncorrectValue (loc, msg) -> Loc.highlight ~color:red ~symbol:'^' loc msg fmt
+  | NotImplemented (loc, msg) ->
+    Loc.highlight
+      ~color:red
+      ~symbol:'^'
+      loc
+      (Format.sprintf "not implemented, %s." msg)
+      fmt
+;;
 
 type 'a with_error = ('a, compile_error) Result.t
 type result = (m, compile_error list) Result.t
@@ -71,7 +134,8 @@ module Context = struct
   let empty = { rev_roots = []; current = None; generator = 0 }
 
   let next_root context id =
-    { rev_roots = Option.get context.current :: context.rev_roots
+    { rev_roots =
+        Option.map_or (fun x -> x :: context.rev_roots) ~default:[] context.current
     ; current = Some { id; blocks = []; vars = [] }
     ; generator = context.generator
     }
@@ -109,11 +173,13 @@ module Context = struct
       Ok { block with blocks }
     | [] ->
       (match List.find_opt (fun { var; _ } -> equal_head var decl.var) block.vars with
-       | Some prev_decl ->
+       | Some prev_decl when prev_decl.var_type <> decl.var_type ->
          Error
            (DuplicateDeclaration
-              { duplicate = decl.location; previous = prev_decl.location })
-       | None -> Ok { block with vars = decl :: block.vars })
+              { duplicate = decl.location, decl.var_type
+              ; previous = prev_decl.location, prev_decl.var_type
+              })
+       | _ -> Ok { block with vars = decl :: block.vars })
   ;;
 
   let add ~context ~prefix decl : t with_error =
@@ -143,7 +209,11 @@ module Context = struct
        | Some decl ->
          if decl.var_type = expect
          then Some (Ok (head_to_var decl.var))
-         else Some (Error (WrongType { call = decl.location; declaration = location }))
+         else
+           Some
+             (Error
+                (WrongUsageType
+                   { call = location, expect; declaration = decl.location, decl.var_type }))
        | None -> None)
     | block_id :: path ->
       List.find_map
@@ -182,7 +252,7 @@ module Context = struct
       (match qualified_var.data with
        | [] -> failwith "illegal variable: variable path cannot be empty"
        | v :: [] -> add_variable ~context ~prefix:scope v expect location
-       | _ -> Error (ComplexInlineDeclaration location))
+       | _ -> Error (ComplexInlineVariableDeclaration location))
   ;;
 end
 
@@ -211,7 +281,10 @@ let into_module { assumptions; structure; assertions } =
         Context.add_anon_variable ~context ~prefix:scope ~var_type:`Int expr.loc
       in
       Ok (context, wrap_var v)
-    | _ -> Error (NotImplemented "CCSL's IR does not support complex expressions")
+    | _ ->
+      Error
+        (NotImplemented
+           (Loc.where expr, "CCSL's IR does not support complex integer expressions"))
   in
   let compile_duration (Second { value; scale }) = Number.Rational.mul value scale in
   let compile_duration_expr ~context ~scope expr =
@@ -226,7 +299,10 @@ let into_module { assumptions; structure; assertions } =
         Context.add_anon_variable ~context ~prefix:scope ~var_type:`Int expr.loc
       in
       Ok (context, wrap_var v)
-    | _ -> Error (NotImplemented "CCSL's IR does not support complex expressions")
+    | _ ->
+      Error
+        (NotImplemented
+           (Loc.where expr, "CCSL's IR does not support complex duration expressions"))
   in
   let compile_interval ~compile ~plus ~minus ~build ~context var expr =
     let* context, left_strict, left, right, right_strict =
@@ -246,9 +322,9 @@ let into_module { assumptions; structure; assertions } =
   in
   let compile_inline_relation ~compile ~plus ~minus ~expect ~build ~context ~scope expr =
     match Loc.unwrap expr with
-    | InlineVariable v ->
-      let* context, v = Context.resolve ~context ~scope ~expect v in
-      Ok (context, wrap_var v)
+    | InlineExpr e ->
+      let* context, v = compile ~context e in
+      Ok (context, v)
     | InlineInterval interval ->
       let* context, v =
         Context.add_anon_variable ~context ~prefix:scope ~var_type:expect (Loc.where expr)
@@ -442,11 +518,25 @@ let into_module { assumptions; structure; assertions } =
   let rec compile_stmt ~context ~scope ~builder stmt =
     let* context = context in
     match Loc.unwrap stmt with
-    | VariableDeclaration (var, expected_type) ->
-      let* context, _ =
-        Context.add_variable ~context ~prefix:scope var.data expected_type var.loc
-      in
-      Ok context
+    | VariableDeclaration list ->
+      List.fold_left
+        (fun context (vars, expected_type) ->
+           List.fold_left
+             (fun context var ->
+                let* context = context in
+                let* context, _ =
+                  Context.add_variable
+                    ~context
+                    ~prefix:scope
+                    (Loc.unwrap var)
+                    expected_type
+                    (Loc.where var)
+                in
+                Ok context)
+             context
+             vars)
+        (Ok context)
+        list
     | DurationRelation (left_ast, rights) ->
       let* context, left = compile_duration_expr ~context ~scope left_ast in
       let* context, _, _ =

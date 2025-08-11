@@ -11,9 +11,10 @@
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET (* brackets *)
 %token COMMA COLON SEMICOLON (* delimiters *)
 %token <int * int> SECOND HERTZ
-%token INTEGER DURATION
+%token INTEGER DURATION CLOCK
 %token ASSUME ASSERT STRUCTURE (*modules*)
 %token AT QUESTION (* special syntax inside modules *)
+%token VAR (* variable declaration *)
 %token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT (*constraints*)
 %token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM SIM
 %token LESS LESSEQ MORE MOREEQ EQUAL NOTEQUAL  (* variable relations *)
@@ -29,29 +30,33 @@
 %type<clock_expr'> delim_clock_expr0
 %type <Ast.module_body_declaration> top_module
 %type <Ast.statements> statements
-%start top_module statements
+%type <Ast.statement'> statement0
+%start top_module statements statement0
 
 %%
 
 %inline addsub :
-| PLUS {`Add}
-| MINUS {`Sub}
+| PLUS {`Add} [@name add_single]
+| MINUS {`Sub} [@name sub_single]
 
 %inline binop :
-| PLUS {`Add}
-| MINUS {`Sub}
-| STAR {`Mul}
-| SLASH {`Div}
+| PLUS {`Add} [@name add]
+| MINUS {`Sub} [@name sub]
+| STAR {`Mul} [@name mul]
+| SLASH {`Div} [@name div]
 
 %inline num_rel :
-| LESS {`Less}
-| LESSEQ {`LessEq}
-| EQUAL {`Eq}
-| MORE {`More}
-| MOREEQ {`MoreEq}
-| NOTEQUAL {`Neq}
+| LESS {`Less} [@name less]
+| LESSEQ {`LessEq} [@name lesseq]
+| EQUAL {`Eq} [@name equal]
+| MORE {`More} [@name more]
+| MOREEQ {`MoreEq} [@name moreeq]
+| NOTEQUAL {`Neq} [@name notequal]
 
-count(X): {0} | X ; next=count(X) { next+1 }
+%inline var_type :
+| INTEGER { `Int } [@name int]
+| DURATION { `Duration } [@name duration]
+| CLOCK { `Clock } [@name clock]
 
 dangling_list(sep, X):
 | l=loption(non_empty_dangling_list(sep, X)) {l}
@@ -70,13 +75,15 @@ non_empty_dangling_list(sep, X):
 
 %inline percentage : DECIMAL ; PERCENT { Percent $1 }
 
-%inline duration : value=DECIMAL ; scale=SECOND { Second { value ; scale=(Number.Rational.from_pair scale) } }
+%inline duration : 
+| value=DECIMAL ; scale=SECOND { Second { value ; scale=(Number.Rational.from_pair scale) } }
+| value=INT ; scale=SECOND {Second {value=Number.Rational.of_int value; scale=(Number.Rational.from_pair scale)}}
 
-interval(X) :
-| LBRACKET ; left=X ; right=X ; RBRACKET { Interval {left_strict=false; left; right; right_strict=false} }
-| RBRACKET ; left=X ; right=X ; RBRACKET { Interval {left_strict=true; left; right; right_strict=false} }
-| LBRACKET ; left=X ; right=X ; LBRACKET { Interval {left_strict=false; left; right; right_strict=true} }
-| RBRACKET ; left=X ; right=X ; LBRACKET { Interval {left_strict=true; left; right; right_strict=true} }
+%inline interval(X) :
+| LBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { Interval {left_strict=false; left; right; right_strict=false} }
+| RBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { Interval {left_strict=true; left; right; right_strict=false} }
+| LBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { Interval {left_strict=false; left; right; right_strict=true} }
+| RBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { Interval {left_strict=true; left; right; right_strict=true} }
 | mean=X ; PLUSMINUS ; error=X { PlusMinus (mean,error) }
 
 
@@ -95,7 +102,7 @@ contdist0 :
 
 duration_expr : duration_expr0 {Loc.make $symbolstartpos $endpos $1}
 %inline delim_duration_expr0 : 
-| LPAREN ; e=duration_expr0 ; RPAREN {e}
+| LPAREN ; e=duration_expr0 ; RPAREN {e} 
 | var {DVariable $1}
 | duration {DConstant $1}
 delim_duration_expr : delim_duration_expr0 {Loc.make $symbolstartpos $endpos $1}
@@ -115,8 +122,11 @@ int_expr0 :
 | QUESTION { IHole }
 
 %inline inline_relation(X) : 
-| var { Loc.make $symbolstartpos $endpos @@ InlineVariable $1 }
+| X { Loc.make $symbolstartpos $endpos @@ InlineExpr $1 }
 | interval(X)  { Loc.make $symbolstartpos $endpos @@ InlineInterval $1 }
+
+offset : OFFSET ; duration {$2}
+skip : SKIP ; inline_relation(int_expr) {$2}
 
 clock_expr : clock_expr0 {Loc.make $symbolstartpos $endpos $1}
 %inline delim_clock_expr0 : 
@@ -130,19 +140,20 @@ clock_expr0 :
 | first=delim_clock_expr ; exprs=nonempty_list(preceded(XOR, delim_clock_expr)) ; ratios=option(delimited(LBRACKET, var, RBRACKET)) { CDisjUnion {args=(first::exprs); ratios} }
 | arg=delim_clock_expr ; DOLLAR ; delay=inline_relation(int_expr) ; on=option(ON ; e=delim_clock_expr {e}) { CTickDelay {arg;delay;on} }
 | NEXT ; arg=delim_clock_expr {CNext arg}
-| skip=option(preceded(SKIP, inline_relation(int_expr))) ; EVERY ; period=inline_relation(int_expr) ; OF ; base=delim_clock_expr { CPeriodic {skip;period;base}}
+| skip=option(skip) ; EVERY ; period=inline_relation(int_expr) ; OF ; base=delim_clock_expr { CPeriodic {skip;period;base}}
 | SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CSample{arg;base} }
 | base=delim_clock_expr ; EXCEPT ; subs=list(delim_clock_expr) { CMinus {base;subs}}
-| FASTEST ; OF ; clocks=list(delim_clock_expr) ; RPAREN { CFastest clocks }
-| SLOWEST ; OF ; clocks=list(delim_clock_expr) ; RPAREN { CSlowest clocks }
-| PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(preceded(OFFSET, duration)) { CPeriodJitter {period;error;offset}}
-| PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(preceded(OFFSET, duration)) { CPeriodDrift {period;error;offset}}
+| FASTEST ; OF ; clocks=list(delim_clock_expr) { CFastest clocks }
+| SLOWEST ; OF ; clocks=list(delim_clock_expr) { CSlowest clocks }
+| PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodJitter {period;error;offset}}
+| PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodDrift {period;error;offset}}
 | DELAY ; arg=delim_clock_expr ; BY ; delay=inline_relation(duration_expr) {CTimeDelay {arg;delay}}
 | strict=option(STRICT) ; SPORADIC ; at_least=duration {CSporadic {at_least; strict=(Option.is_some strict)}} 
 
 
 statement : statement0 {Loc.make $symbolstartpos $endpos $1}
-%inline statement0 : 
+statement0 : 
+| VAR ; decls=separated_nonempty_list(COMMA, separated_pair(separated_nonempty_list(COMMA, id), COLON, var_type)) { VariableDeclaration decls }
 | INTEGER ; COLON ; e=int_expr ; l=pair(num_rel,int_expr)+ {IntRelation (e,l)}
 | DURATION ; COLON ; e=duration_expr ; l=pair(num_rel,duration_expr)+ {DurationRelation (e,l)}
 | e1=clock_expr ; r=clock_rel ; e2=clock_expr {ClockRelation (e1,r,e2)}
@@ -153,8 +164,8 @@ statement : statement0 {Loc.make $symbolstartpos $endpos $1}
 | name=id ; LBRACE ; statements=statements ; RBRACE { Block {name ; statements } }
 
 statements :
-| separated_list(SEMICOLON+, statement) { $1 }
+| dangling_list(SEMICOLON, statement) { $1 }
 
 %inline mod_block (NAME) : r=preceded(NAME, delimited(LBRACE, statements, RBRACE)) {r}
 
-top_module : assumptions=list(mod_block(ASSUME)); structure=mod_block(STRUCTURE); assertions=list(mod_block(ASSERT)) { {assumptions; structure; assertions} }
+top_module : assumptions=list(mod_block(ASSUME)); structure=mod_block(STRUCTURE); assertions=list(mod_block(ASSERT)) ; EOF { {assumptions; structure; assertions} }

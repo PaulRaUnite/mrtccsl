@@ -76,10 +76,96 @@ let string_token =
   | DRIFT -> "DRIFT"
   | DISCRETE -> "DISCRETE"
   | CONTINUOUS -> "CONTINUOUS"
+  | CLOCK -> "CLOCK"
+  | VAR -> "VAR"
 ;;
 
-let pp_tokens l formatter =
-  Format.pp_print_list (fun f t -> Format.pp_print_string f (string_token t)) formatter l
+let test_tokens =
+  Parser.
+    [ XOR
+    ; WITH
+    ; VAR
+    ; UNIFORM
+    ; SUBCLOCKS
+    ; STRUCTURE
+    ; STRICT
+    ; STAR
+    ; SPORADIC
+    ; SLOWEST
+    ; SLASH
+    ; SKIP
+    ; SIM
+    ; SHARP
+    ; SEMICOLON
+    ; SECOND (1, 1)
+    ; SAMPLE
+    ; RPAREN
+    ; RBRACKET
+    ; RBRACE
+    ; QUESTION
+    ; PROCESS
+    ; PRECEDES
+    ; PPM
+    ; POOL
+    ; PLUSMINUS
+    ; PLUS
+    ; PERIODIC
+    ; PERCENT
+    ; OR
+    ; ON
+    ; OFFSET
+    ; OF
+    ; NOTEQUAL
+    ; NORMAL
+    ; NEXT
+    ; MUTEX
+    ; MOREEQ
+    ; MORE
+    ; MINUS
+    ; LPAREN
+    ; LESSEQ
+    ; LESS
+    ; LBRACKET
+    ; LBRACE
+    ; JITTER
+    ; INTEGER
+    ; INT 0
+    ; ID "test"
+    ; HERTZ (1, 1)
+    ; FASTEST
+    ; EXCEPT
+    ; EVERY
+    ; EQUAL
+    ; EOF
+    ; DURATION
+    ; DRIFT
+    ; DOT
+    ; DOLLAR
+    ; DISCRETE
+    ; DELAY
+    ; DECIMAL Number.Rational.zero
+    ; CONTINUOUS
+    ; COMMA
+    ; COLON
+    ; COINCIDENCE
+    ; CLOCK
+    ; CAUSES
+    ; BY
+    ; AT
+    ; ASSUME
+    ; ASSERT
+    ; ARROWRIGHT
+    ; AND
+    ; ALTERNATES
+    ]
+;;
+
+let pp_tokens formatter l =
+  Format.pp_print_list
+    ~pp_sep:Format.pp_print_space
+    (fun f t -> Format.pp_print_string f (string_token t))
+    formatter
+    l
 ;;
 
 type 'a control = (Ast.module_body_declaration, 'a) result
@@ -106,15 +192,27 @@ let parse_with_error_handling buffer =
   in
   let start = Parser.Incremental.top_module buffer.lex_curr_p in
   let result =
-    Parser.MenhirInterpreter.loop_handle
+    Parser.MenhirInterpreter.loop_handle_undo
       Result.ok
-      (fun _ ->
+      (fun before _ ->
+         let acceptable_tokens =
+           List.filter
+             (fun token ->
+                Parser.MenhirInterpreter.acceptable before token Lexing.dummy_pos)
+             test_tokens
+         in
          Result.error
          @@ Loc.pp_warning
               buffer.lex_buffer
               buffer.lex_start_p
               buffer.lex_curr_p
-              "Unexpected token, cannot recover")
+              (Format.asprintf
+                 "Unexpected token, cannot recover.\nLast tokens: %a\nWould accept: %a"
+                 pp_tokens
+                 (CircularList.content last_tokens
+                  |> List.map (fun (_, token, _, _) -> token))
+                 pp_tokens
+                 acceptable_tokens))
       supply
       start
   in
