@@ -5,33 +5,6 @@ module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
 open FnCh
 
-let parse_chain str =
-  let causalities = String.split ~by:"->" str in
-  let with_sampling = List.map (String.split ~by:"?") causalities in
-  let r =
-    Seq.fold_left
-      (fun chain samples ->
-         Seq.fold_lefti
-           (fun chain i next ->
-              let r =
-                match chain with
-                | Some chain ->
-                  { chain with
-                    rest =
-                      List.append
-                        chain.rest
-                        [ (if i = 0 then `Causality, next else `Sampling, next) ]
-                  }
-                | None -> { first = next; rest = [] }
-              in
-              Some r)
-           chain
-           (List.to_seq samples))
-      None
-      (List.to_seq with_sampling)
-  in
-  Option.get r
-;;
 
 let process input output chain =
   let lines = In_channel.with_open_text input In_channel.input_all in

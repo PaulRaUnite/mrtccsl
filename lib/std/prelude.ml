@@ -25,6 +25,18 @@ module Fun = struct
   let catch_with_default f v default = catch_to_opt f v |> Option.value ~default
 end
 
+module Int = struct
+  include Int
+
+  let rec pow a = function
+    | 0 -> 1
+    | 1 -> a
+    | n ->
+      let b = pow a (n / 2) in
+      b * b * if n mod 2 = 0 then 1 else a
+  ;;
+end
+
 module Option = struct
   include Option
 
@@ -68,6 +80,11 @@ module Result = struct
       Ok (x, y)
     ;;
   end
+
+  let unwrap ~msg = function
+    | Ok x -> x
+    | Error e -> Format.printf "%a" e (); failwith msg
+  ;;
 end
 
 module Seq = struct

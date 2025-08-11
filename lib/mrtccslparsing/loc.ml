@@ -49,8 +49,7 @@ let highlight ~warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg :
     let line =
       String.replace ~sub:"\t" ~by:"    " (Bytes.sub_string lexbuf s.pos_bol linewidth)
     in
-    fun formatter ->
-      Ocolor_format.prettify_formatter formatter;
+    fun formatter () ->
       let range = MenhirLib.LexerUtil.range (s, f) in
       Format.pp_print_string formatter range;
       Format.pp_print_string formatter linenum;
@@ -65,7 +64,7 @@ let highlight ~warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg :
       if warning
       then Format.fprintf formatter "@{<yellow>%s@}\n" (Buffer.contents buf)
       else Format.fprintf formatter "@{<red>%s@}\n" (Buffer.contents buf))
-  else ignore
+  else failwith "start and finish are in the same place"
 ;;
 
 let pp_warning = highlight ~warning:true
@@ -127,7 +126,6 @@ let highlight ~color ~symbol loc msg =
         String.replace ~sub:"\t" ~by:"    " (Bytes.sub_string lexbuf s.pos_bol linewidth)
       in
       fun formatter ->
-        Ocolor_format.prettify_formatter formatter;
         let range = MenhirLib.LexerUtil.range (s, f) in
         Format.pp_print_string formatter range;
         Format.pp_print_string formatter linenum;

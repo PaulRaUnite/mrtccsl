@@ -23,9 +23,9 @@ The project consists of the following tools:
     - [ ] finiteness of representation
     - [ ] liveness
     - [ ] inclusion testing
-- [ ] text interface and build system
-    - parses text version of MRTCCSL, builds the specification(s) and proof obligations for it(them), supposed to use the methods above to solve
-    - not implemented
+- [x] textual interface
+    - parses text version of MRTCCSL, see [examples](./test/code/)
+
 
 ## Development
 - install opam from https://opam.ocaml.org

@@ -69,6 +69,34 @@ let categorization_points chain =
     chain.rest
 ;;
 
+let parse_chain str =
+  let causalities = String.split ~by:"->" str in
+  let with_sampling = List.map (String.split ~by:"?") causalities in
+  let r =
+    Seq.fold_left
+      (fun chain samples ->
+         Seq.fold_lefti
+           (fun chain i next ->
+              let r =
+                match chain with
+                | Some chain ->
+                  { chain with
+                    rest =
+                      List.append
+                        chain.rest
+                        [ (if i = 0 then `Causality, next else `Sampling, next) ]
+                  }
+                | None -> { first = next; rest = [] }
+              in
+              Some r)
+           chain
+           (List.to_seq samples))
+      None
+      (List.to_seq with_sampling)
+  in
+  Option.get r
+;;
+
 module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   module S = Automata.Simple.Hashed.WithSession (C) (N)
   module A = S.Inner
@@ -232,7 +260,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     =
     let session = create () in
     let env = A.of_spec ~debug (with_spec session system_spec) in
-    let trace, deadlock =
+    let trace, cut =
       A.gen_trace s env |> A.Trace.take ~steps:n |> A.Trace.until ~horizon:time
     in
     let trace = A.Trace.persist ~size_hint:n trace in
@@ -246,7 +274,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    session, trace, !deadlock, full_chains, dangling_chains
+    session, trace, not !cut, full_chains, dangling_chains
   ;;
 
   let reaction_times session pairs_to_compare chains =

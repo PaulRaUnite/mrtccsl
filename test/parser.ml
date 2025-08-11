@@ -9,6 +9,7 @@ let files_to_check =
 ;;
 
 let _ =
+  Ocolor_format.prettify_formatter Format.std_formatter;
   List.iter
     (fun name ->
        Printf.printf "testing file: %s\n" name;
@@ -18,7 +19,7 @@ let _ =
          match result with
          | Ok x -> x
          | Error msg ->
-           msg Format.std_formatter;
+           msg Format.std_formatter ();
            Format.print_flush ();
            failwith "test failed in parsing"
        in

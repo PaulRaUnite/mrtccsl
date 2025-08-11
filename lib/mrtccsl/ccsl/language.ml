@@ -282,6 +282,7 @@ module Module = struct
       (* WARNING: currently probability declarations inside structure are disallowed *)
     ; assertions : ('c, 'tp, 'ip, 'tv, 'iv, 't) Specification.t list
     }
+  [@@deriving map, show, fold]
 
   let empty = { assumptions = []; structure = Specification.empty; assertions = [] }
 
@@ -299,5 +300,10 @@ module Module = struct
     let state, structure = of_stateful_decl state structure in
     let state, assertions = List.fold_left_map of_stateful_decl state assertions in
     state, { assumptions; structure; assertions }
+  ;;
+
+  let flatten { assumptions; structure; assertions } =
+    let specs = structure :: List.append assumptions assertions in
+    List.fold_left Specification.merge Specification.empty specs
   ;;
 end

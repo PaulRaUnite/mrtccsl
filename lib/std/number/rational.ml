@@ -60,7 +60,7 @@ let of_decimal_string s =
     let whole = (from_int << int_of_string) whole in
     let decimal_num = int_of_string decimal in
     let len_after_zero = String.length decimal in
-    let decimal = of_frac decimal_num len_after_zero in
+    let decimal = of_frac decimal_num (Int.pow 10 len_after_zero) in
     add whole decimal
   | _ -> failwith "wrong decimal number"
 ;;

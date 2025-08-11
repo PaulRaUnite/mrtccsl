@@ -11,10 +11,10 @@
  (libraries mrtccsl std))
 
 (executable
- (public_name sim_halsoa)
- (name sim_halsoa)
- (modules sim_halsoa)
- (libraries mrtccsl std domainslib halsoa))
+ (public_name simulate)
+ (name simulate)
+ (modules simulate)
+ (libraries mrtccsl std domainslib halsoa mrtccslparsing))
 
 (env
  (dev

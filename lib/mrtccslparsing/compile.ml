@@ -40,7 +40,6 @@ let type_to_string = function
 ;;
 
 let print_compile_error fmt =
-  Ocolor_format.prettify_formatter fmt;
   let print_msg color fmt msg =
     Ocolor_format.pp_open_style fmt (Ocolor_types.Fg color);
     Format.fprintf fmt "%s\n" msg;
@@ -358,11 +357,11 @@ let into_module { assumptions; structure; assertions } =
     (*TODO: write a simplification of the expressions? *)
     | DConstant d -> Ok (context, Const (compile_duration d))
     | DVariable v ->
-      let* context, v = Context.resolve ~context ~scope ~expect:`Int v in
+      let* context, v = Context.resolve ~context ~scope ~expect:`Duration v in
       Ok (context, wrap_var v)
     | DHole ->
       let* context, v =
-        Context.add_anon_variable ~context ~prefix:scope ~var_type:`Int expr.loc
+        Context.add_anon_variable ~context ~prefix:scope ~var_type:`Duration expr.loc
       in
       Ok (context, wrap_var v)
     | _ ->
@@ -618,7 +617,7 @@ let into_module { assumptions; structure; assertions } =
                     else
                       Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
                   | Const cl, Var v ->
-                    Builder.duration builder (NumRelation (v, Expr.invert comp, Const cl));
+                    Builder.duration builder (NumRelation (v, Expr.swap comp, Const cl));
                     Ok ()
                   | Var v, x ->
                     Builder.duration builder (NumRelation (v, comp, x));
@@ -647,7 +646,7 @@ let into_module { assumptions; structure; assertions } =
                     else
                       Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
                   | Const cl, Var v ->
-                    Builder.integer builder (NumRelation (v, Expr.invert comp, Const cl));
+                    Builder.integer builder (NumRelation (v, Expr.swap comp, Const cl));
                     Ok ()
                   | Var v, x ->
                     Builder.integer builder (NumRelation (v, comp, x));
@@ -684,15 +683,16 @@ let into_module { assumptions; structure; assertions } =
          in
          let constr =
            match comp with
-           | Coincidence -> Coincidence [ left; right ]
-           | Exclusion -> Exclusion ([ left; right ], None)
-           | Precedence -> Precedence { cause = left; conseq = right }
-           | Causality -> Causality { cause = left; conseq = right }
+           | Coincidence ->
+             if left = right then None else Some (Coincidence [ left; right ])
+           | Exclusion -> Some (Exclusion ([ left; right ], None))
+           | Precedence -> Some (Precedence { cause = left; conseq = right })
+           | Causality -> Some (Causality { cause = left; conseq = right })
            | Subclocking _ ->
-             Subclocking { sub = left; super = right; dist = percent_var }
-           | Alternation -> Alternate { first = left; second = right }
+             Some (Subclocking { sub = left; super = right; dist = percent_var })
+           | Alternation -> Some (Alternate { first = left; second = right })
          in
-         Builder.logical builder constr;
+         Option.iter (Builder.logical builder) constr;
          Ok context)
     | DiscreteProcess { var; values; ratios } ->
       error_recover
@@ -700,19 +700,18 @@ let into_module { assumptions; structure; assertions } =
         ~errors:[]
         (let values = Loc.unwrap values
          and ratios = Loc.unwrap ratios in
+         let* context, name = Context.resolve ~context ~scope ~expect:`Int var in
          Builder.probab builder
-         @@ DiscreteProcess
-              { name = Explicit (Loc.unwrap var); ratios = List.combine values ratios };
+         @@ DiscreteProcess { name; ratios = List.combine values ratios };
          Ok context)
     | ContinuousProcess { var; dist } ->
       error_recover
         ~context
         ~errors:[]
-        (Builder.probab builder
+        (let* context, name = Context.resolve ~context ~scope ~expect:`Duration var in
+         Builder.probab builder
          @@ ContinuousProcess
-              { name = Explicit (Loc.unwrap var)
-              ; dist = map_distribution compile_duration (Loc.unwrap dist)
-              };
+              { name; dist = map_distribution compile_duration (Loc.unwrap dist) };
          Ok context)
     | Pool (n, pairs) ->
       error_recover

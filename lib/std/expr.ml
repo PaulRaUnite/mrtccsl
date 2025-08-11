@@ -59,3 +59,12 @@ let invert = function
   | `MoreEq -> `Less
   | `Neq -> `Eq
 ;;
+
+let swap = function
+  | `Less -> `More
+  | `LessEq -> `MoreEq
+  | `Eq -> `Eq
+  | `More -> `Less
+  | `MoreEq -> `LessEq
+  | `Neq -> `Neq
+;;

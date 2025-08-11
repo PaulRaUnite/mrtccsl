@@ -162,13 +162,11 @@ let generate_trace
       ~steps
       ~horizon
       directory
-      
       system_spec
       tasks
       func_chain_spec
       i
   =
-  let _ = Random.init 2174367364 in
   let strategy = ST.Solution.refuse_empty random_strat in
   let basename = Printf.sprintf "%s/%i" directory i in
   let sem = Earliest
@@ -178,10 +176,10 @@ let generate_trace
       ~debug
       ~sem
       (strategy, steps, horizon)
-      
       system_spec
       func_chain_spec
   in
+  Printf.printf "trace deadlocked: %b\n" deadlock;
   if print_svgbob
   then (
     let clocks =
@@ -217,8 +215,9 @@ let process_config
       ~processor
       ~horizon
       ~steps
-      (name, spec, tasks, chain)
+      (name, m, tasks, chain)
   =
+  let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let prefix = Filename.concat directory name in
   let _ = print_endline prefix in
@@ -245,7 +244,6 @@ let process_config
          ~steps
          ~horizon
          prefix
-         
          spec
          tasks
          chain
@@ -259,9 +257,23 @@ let process_config
   close_out data_file
 ;;
 
+let parse_tasks s =
+  let names = String.split ~by:"," s in
+  List.map
+    (fun name ->
+       ( name
+       , Printf.sprintf "%s.r" name
+       , Printf.sprintf "%s.s" name
+       , Printf.sprintf "%s.f" name
+       , Printf.sprintf "%s.d" name ))
+    names
+;;
+
 let () =
+  let _ = Random.self_init () in
   let usage_msg =
-    "sim_halsoa [-t <traces>] [-n <cores>] [-h <trace horizon>] [-bob] [-cadp] <dir>"
+    "simulate [--traces <traces>] [--cores <cores>] [--horizon <trace horizon>] [-bob] \
+     [-cadp] [--tasks <tasks>] <specification> -o <dir> -fc <functional chain>"
   in
   let traces = ref 1
   and cores = ref 1
@@ -269,12 +281,18 @@ let () =
   and horizon = ref 10_000.0
   and print_svgbob = ref false
   and print_trace = ref false
-  and inspect_deadlock = ref false in
+  and inspect_deadlock = ref false
+  and directory = ref ""
+  and chain = ref ""
+  and tasks = ref "" in
   let speclist =
-    [ "-t", Arg.Set_int traces, "Number of traces to generate"
-    ; "-c", Arg.Set_int cores, "Number of cores to use"
-    ; "-h", Arg.Set_float horizon, "Max time of simulation"
-    ; "-s", Arg.Set_int steps, "Max steps of simulation"
+    [ "--traces", Arg.Set_int traces, "Number of traces to generate"
+    ; "--cores", Arg.Set_int cores, "Number of cores to use"
+    ; "--horizon", Arg.Set_float horizon, "Max time of simulation"
+    ; "--steps", Arg.Set_int steps, "Max steps of simulation"
+    ; "--tasks", Arg.Set_string tasks, "Tasks specification"
+    ; "-o", Arg.Set_string directory, "Output directory path"
+    ; "-fc", Arg.Set_string chain, "Functional chain specification, links are -> and ?"
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
     ; "-cadp", Arg.Set print_trace, "Print CADP trace"
     ; ( "-inspect"
@@ -282,13 +300,17 @@ let () =
       , "Collect and print debug information for deadlocked traces" )
     ]
   in
-  let directory = ref None in
-  let _ = Arg.parse speclist (fun dir -> directory := Some dir) usage_msg in
+  let specification = ref "" in
+  let _ = Arg.parse speclist (fun file -> specification := file) usage_msg in
   let recommended_cores = Stdlib.Domain.recommended_domain_count () in
   if !traces < 1 then invalid_arg "number of traces should be positive";
   if !cores < 1 then invalid_arg "number of cores should be positive";
   if !steps < 1 then invalid_arg "number of steps should be positive";
   if !horizon <= 0.0 then invalid_arg "horizon should be positive";
+  if !chain = "" then invalid_arg "empty chain";
+  if String.is_empty !specification
+  then invalid_arg "specification filepath cannot be emtpy";
+  if String.is_empty !directory then invalid_arg "output directory path cannot be emtpy";
   let processor =
     if !cores <> 1
     then (
@@ -311,45 +333,36 @@ let () =
         |> Iter.map f
         |> Iter.fold Iter.append Iter.empty
   in
-  let directory = Option.get !directory in
-  List.iter
-    (process_config
-       ~processor
-       ~debug:!inspect_deadlock
-       ~print_svgbob:!print_svgbob
-       ~print_trace:!print_trace
-       ~directory:(Filename.concat directory "absolute")
-       ~steps:!steps
-       ~horizon:(of_float !horizon))
-    (C.aebsimple_variants true);
-  List.iter
-    (process_config
-       ~processor
-       ~debug:!inspect_deadlock
-       ~print_svgbob:!print_svgbob
-       ~print_trace:!print_trace
-       ~directory:(Filename.concat directory "cumulative")
-       ~steps:!steps
-       ~horizon:(of_float !horizon))
-    (C.aebsimple_variants false);
-  List.iter
-    (process_config
-       ~processor
-       ~debug:!inspect_deadlock
-       ~print_svgbob:!print_svgbob
-       ~print_trace:!print_trace
-       ~directory:(Filename.concat directory "absolute")
-       ~steps:!steps
-       ~horizon:(of_float !horizon))
-    (C.aebsfull_variants true);
-  List.iter
-    (process_config
-       ~processor
-       ~debug:!inspect_deadlock
-       ~print_svgbob:!print_svgbob
-       ~print_trace:!print_trace
-       ~directory:(Filename.concat directory "cumulative")
-       ~steps:!steps
-       ~horizon:(of_float !horizon))
-    (C.aebsfull_variants false)
+  Ocolor_format.prettify_formatter Format.std_formatter;
+  let ast =
+    Mrtccslparsing.Parse.from_file !specification
+    |> Result.map_error (fun pp_e ->
+      fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
+    |> Result.unwrap ~msg:"Failed in parsing."
+  in
+  let functional_chain = parse_chain !chain in
+  let name = Filename.basename !specification in
+  let context, m, errors = Mrtccslparsing.Compile.into_module ast in
+  if List.is_empty errors
+  then (
+    let v2s =
+      Mrtccslparsing.Compile.(
+        function
+        | Explicit v -> List.to_string ~sep:"." Fun.id v
+        | Anonymous i -> Printf.sprintf "anon(%i)" i)
+    in
+    let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
+    process_config
+      ~processor
+      ~debug:!inspect_deadlock
+      ~print_svgbob:!print_svgbob
+      ~print_trace:!print_trace
+      ~directory:!directory
+      ~steps:!steps
+      ~horizon:(of_float !horizon)
+      (name, m, [], functional_chain))
+  else (
+    Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
+    List.iter (Mrtccslparsing.Compile.print_compile_error Format.std_formatter) errors;
+    failwith "Compilation error.")
 ;;
