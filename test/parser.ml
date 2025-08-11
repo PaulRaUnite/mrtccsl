@@ -1,6 +1,12 @@
 open Prelude
 
-let files_to_check = [ "empty.mrtccsl"; "with_constraints.mrtccsl"; "hal4sdv.mrtccsl" ]
+let files_to_check =
+  [ "empty.mrtccsl"
+  ; "with_constraints.mrtccsl"
+  ; "hal4sdv.mrtccsl"
+  ; "with_constraints_variables_only.mrtccsl"
+  ]
+;;
 
 let _ =
   List.iter
@@ -14,10 +20,15 @@ let _ =
          | Error msg ->
            msg Format.std_formatter;
            Format.print_flush ();
-           failwith "test failed"
+           failwith "test failed in parsing"
        in
-       match Mrtccslparsing.Compile.into_module module_dec with
-       | Ok _, _ -> ()
-       | Error e, _ -> Mrtccslparsing.Compile.print_compile_error Format.std_formatter e)
+       let context, _, errors = Mrtccslparsing.Compile.into_module module_dec in
+       Format.printf "%a\n" Mrtccslparsing.Compile.Context.pp context;
+       if not (List.is_empty errors)
+       then (
+         List.iter
+           (Mrtccslparsing.Compile.print_compile_error Format.std_formatter)
+           errors;
+         failwith "test failed in compilation"))
     files_to_check
 ;;

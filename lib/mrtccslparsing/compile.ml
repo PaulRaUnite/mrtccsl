@@ -39,29 +39,39 @@ let type_to_string = function
   | `Clock -> "clock"
 ;;
 
-let print_compile_error fmt = function
+let print_compile_error fmt =
+  Ocolor_format.prettify_formatter fmt;
+  let print_msg color fmt msg =
+    Ocolor_format.pp_open_style fmt (Ocolor_types.Fg color);
+    Format.fprintf fmt "%s\n" msg;
+    Ocolor_format.pp_close_style fmt ()
+  in
+  function
   | DuplicateDeclaration { duplicate = dloc, dtype; previous = ploc, ptype } ->
+    print_msg red fmt "Error: Inconsistent variable declaration.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
       dloc
-      (Format.sprintf "variable declared as %s" (type_to_string dtype))
+      (Format.sprintf "variable is declared as %s" (type_to_string dtype))
       fmt;
     Format.fprintf fmt "\n";
     Loc.highlight
       ~color:blue
       ~symbol:'-'
       ploc
-      (Format.sprintf "but variable was already declared as %s." (type_to_string ptype))
+      (Format.sprintf "but variable was declared as %s." (type_to_string ptype))
       fmt
   | ComplexInlineVariableDeclaration loc ->
+    print_msg red fmt "Allocating complex variables is not supported.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
       loc
-      "complex unknown variables are not supported"
+      "verify that this variable was correctly declared before"
       fmt
   | WrongUsageType { call = cloc, ctype; declaration = dloc, dtype } ->
+    print_msg red fmt "Inconsistency between previous and current usage of a variable.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
@@ -75,14 +85,18 @@ let print_compile_error fmt = function
       (Format.sprintf "but it was declared as %s" (type_to_string dtype))
       fmt
   | IncorrectComparison loc ->
+    print_msg red fmt "Static comparison check failed.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
       loc
-      (Format.sprintf "comparison does not evaluates to true")
+      (Format.sprintf "this relation does not evaluate to true")
       fmt
-  | IncorrectValue (loc, msg) -> Loc.highlight ~color:red ~symbol:'^' loc msg fmt
+  | IncorrectValue (loc, msg) ->
+    print_msg red fmt "Value convertion failed.";
+    Loc.highlight ~color:red ~symbol:'^' loc msg fmt
   | NotImplemented (loc, msg) ->
+    print_msg red fmt "Feature is not implemented.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
@@ -117,11 +131,37 @@ module Context = struct
     ; location : Loc.location
     }
 
+  let pp_var fmt { var; var_type; _ } =
+    let var_string =
+      match var with
+      | HExplicit s -> s
+      | HAnonymous i -> Format.sprintf "anon(%i)" i
+    in
+    Format.fprintf fmt "%s: %s;" var_string (type_to_string var_type)
+  ;;
+
   type block =
     { id : string
     ; blocks : block list
     ; vars : var_decl list
     }
+
+  let rec pp_block fmt ~indent { id; blocks; vars } =
+    let pp_sep fmt () = Format.fprintf fmt "\n" in
+    let pp_indent f fmt v =
+      Format.fprintf fmt "%s%a" (String.repeat " " (indent + 4)) f v
+    in
+    Format.fprintf fmt "%s {\n" id;
+    Format.pp_print_list ~pp_sep (pp_indent pp_var) fmt (List.rev vars);
+    if not (List.is_empty vars) then Format.pp_print_newline fmt ();
+    Format.pp_print_list
+      ~pp_sep
+      (pp_indent (pp_block ~indent:(indent + 4)))
+      fmt
+      (List.rev blocks);
+    if not (List.is_empty blocks) then Format.pp_print_newline fmt ();
+    Format.fprintf fmt "%s} " (String.repeat " " indent)
+  ;;
 
   let make_block id = { id; blocks = []; vars = [] }
 
@@ -130,6 +170,21 @@ module Context = struct
     ; current : block option
     ; generator : int
     }
+
+  let pp fmt { rev_roots; current; _ } =
+    let blocks =
+      match current with
+      | Some current -> current :: rev_roots
+      | None -> rev_roots
+    in
+    Format.fprintf
+      fmt
+      "%a@."
+      (Format.pp_print_list
+         ~pp_sep:(fun fmt () -> Format.fprintf fmt "")
+         (pp_block ~indent:0))
+      (List.rev blocks)
+  ;;
 
   let empty = { rev_roots = []; current = None; generator = 0 }
 
@@ -257,6 +312,17 @@ module Context = struct
 end
 
 open Ast
+
+let error_recover ~context ~errors = function
+  | Ok context -> context, []
+  | Error e -> context, e :: errors
+;;
+
+let[@inline] accumulate_errors ~errors (context, new_errors) =
+  context, List.append new_errors errors
+;;
+
+let[@inline] finilize_errors (context, errors) = context, List.rev errors
 
 let into_module { assumptions; structure; assertions } =
   let open Mrtccsl.Language in
@@ -516,130 +582,148 @@ let into_module { assumptions; structure; assertions } =
       Ok (context, var))
   in
   let rec compile_stmt ~context ~scope ~builder stmt =
-    let* context = context in
     match Loc.unwrap stmt with
     | VariableDeclaration list ->
       List.fold_left
-        (fun context (vars, expected_type) ->
+        (fun (context, errors) (vars, expected_type) ->
            List.fold_left
-             (fun context var ->
-                let* context = context in
-                let* context, _ =
-                  Context.add_variable
-                    ~context
-                    ~prefix:scope
-                    (Loc.unwrap var)
-                    expected_type
-                    (Loc.where var)
-                in
-                Ok context)
-             context
+             (fun (context, errors) var ->
+                Context.add_variable
+                  ~context
+                  ~prefix:scope
+                  (Loc.unwrap var)
+                  expected_type
+                  (Loc.where var)
+                |> Result.map fst
+                |> error_recover ~context ~errors)
+             (context, errors)
              vars)
-        (Ok context)
+        (context, [])
         list
     | DurationRelation (left_ast, rights) ->
-      let* context, left = compile_duration_expr ~context ~scope left_ast in
-      let* context, _, _ =
-        List.fold_left
-          (fun state (comp, right_ast) ->
-             let* context, left, left_ast = state in
-             let* context, right = compile_duration_expr ~context ~scope right_ast in
-             let* _ =
-               match left, right with
-               | Const cl, Const cr ->
-                 if Expr.do_rel Number.Rational.compare comp cl cr
-                 then Ok ()
-                 else Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
-               | Const cl, Var v ->
-                 Builder.duration builder (NumRelation (v, Expr.invert comp, Const cl));
-                 Ok ()
-               | Var v, x ->
-                 Builder.duration builder (NumRelation (v, comp, x));
-                 Ok ()
-             in
-             Ok (context, right, right_ast))
-          (Ok (context, left, left_ast))
-          rights
-      in
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, left = compile_duration_expr ~context ~scope left_ast in
+         let* context, _, _ =
+           List.fold_left
+             (fun state (comp, right_ast) ->
+                let* context, left, left_ast = state in
+                let* context, right = compile_duration_expr ~context ~scope right_ast in
+                let* _ =
+                  match left, right with
+                  | Const cl, Const cr ->
+                    if Expr.do_rel Number.Rational.compare comp cl cr
+                    then Ok ()
+                    else
+                      Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
+                  | Const cl, Var v ->
+                    Builder.duration builder (NumRelation (v, Expr.invert comp, Const cl));
+                    Ok ()
+                  | Var v, x ->
+                    Builder.duration builder (NumRelation (v, comp, x));
+                    Ok ()
+                in
+                Ok (context, right, right_ast))
+             (Ok (context, left, left_ast))
+             rights
+         in
+         Ok context)
     | IntRelation (left_ast, rights) ->
-      let* context, left = compile_int_expr ~context ~scope left_ast in
-      let* context, _, _ =
-        List.fold_left
-          (fun state (comp, right_ast) ->
-             let* context, left, left_ast = state in
-             let* context, right = compile_int_expr ~context ~scope right_ast in
-             let* _ =
-               match left, right with
-               | Const cl, Const cr ->
-                 if Expr.do_rel Int.compare comp cl cr
-                 then Ok ()
-                 else Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
-               | Const cl, Var v ->
-                 Builder.integer builder (NumRelation (v, Expr.invert comp, Const cl));
-                 Ok ()
-               | Var v, x ->
-                 Builder.integer builder (NumRelation (v, comp, x));
-                 Ok ()
-             in
-             Ok (context, right, right_ast))
-          (Ok (context, left, left_ast))
-          rights
-      in
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, left = compile_int_expr ~context ~scope left_ast in
+         let* context, _, _ =
+           List.fold_left
+             (fun state (comp, right_ast) ->
+                let* context, left, left_ast = state in
+                let* context, right = compile_int_expr ~context ~scope right_ast in
+                let* _ =
+                  match left, right with
+                  | Const cl, Const cr ->
+                    if Expr.do_rel Int.compare comp cl cr
+                    then Ok ()
+                    else
+                      Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
+                  | Const cl, Var v ->
+                    Builder.integer builder (NumRelation (v, Expr.invert comp, Const cl));
+                    Ok ()
+                  | Var v, x ->
+                    Builder.integer builder (NumRelation (v, comp, x));
+                    Ok ()
+                in
+                Ok (context, right, right_ast))
+             (Ok (context, left, left_ast))
+             rights
+         in
+         Ok context)
     | ClockRelation (left, comp, right) ->
-      let* context, left =
-        compile_clock_expr ~context ~scope ~builder ~result_variable:None left
-      in
-      let result_variable =
-        match comp with
-        | Coincidence -> Some left
-        | _ -> None
-      in
-      let* context, right =
-        compile_clock_expr ~context ~scope ~result_variable ~builder right
-      in
-      let* context, percent_var =
-        match comp with
-        | Subclocking (Some (Percent percentage)) ->
-          let* context, var =
-            compile_percentage ~context ~builder ~scope percentage (Loc.where stmt)
-          in
-          Ok (context, Some var)
-        | _ -> Ok (context, None)
-      in
-      let constr =
-        match comp with
-        | Coincidence -> Coincidence [ left; right ]
-        | Exclusion -> Exclusion ([ left; right ], None)
-        | Precedence -> Precedence { cause = left; conseq = right }
-        | Causality -> Causality { cause = left; conseq = right }
-        | Subclocking _ -> Subclocking { sub = left; super = right; dist = percent_var }
-        | Alternation -> Alternate { first = left; second = right }
-      in
-      Builder.logical builder constr;
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, left =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None left
+         in
+         let result_variable =
+           match comp with
+           | Coincidence -> Some left
+           | _ -> None
+         in
+         let* context, right =
+           compile_clock_expr ~context ~scope ~result_variable ~builder right
+         in
+         let* context, percent_var =
+           match comp with
+           | Subclocking (Some (Percent percentage)) ->
+             let* context, var =
+               compile_percentage ~context ~builder ~scope percentage (Loc.where stmt)
+             in
+             Ok (context, Some var)
+           | _ -> Ok (context, None)
+         in
+         let constr =
+           match comp with
+           | Coincidence -> Coincidence [ left; right ]
+           | Exclusion -> Exclusion ([ left; right ], None)
+           | Precedence -> Precedence { cause = left; conseq = right }
+           | Causality -> Causality { cause = left; conseq = right }
+           | Subclocking _ ->
+             Subclocking { sub = left; super = right; dist = percent_var }
+           | Alternation -> Alternate { first = left; second = right }
+         in
+         Builder.logical builder constr;
+         Ok context)
     | DiscreteProcess { var; values; ratios } ->
-      let values = Loc.unwrap values
-      and ratios = Loc.unwrap ratios in
-      Builder.probab builder
-      @@ DiscreteProcess
-           { name = Explicit (Loc.unwrap var); ratios = List.combine values ratios };
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (let values = Loc.unwrap values
+         and ratios = Loc.unwrap ratios in
+         Builder.probab builder
+         @@ DiscreteProcess
+              { name = Explicit (Loc.unwrap var); ratios = List.combine values ratios };
+         Ok context)
     | ContinuousProcess { var; dist } ->
-      Builder.probab builder
-      @@ ContinuousProcess
-           { name = Explicit (Loc.unwrap var)
-           ; dist = map_distribution compile_duration (Loc.unwrap dist)
-           };
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (Builder.probab builder
+         @@ ContinuousProcess
+              { name = Explicit (Loc.unwrap var)
+              ; dist = map_distribution compile_duration (Loc.unwrap dist)
+              };
+         Ok context)
     | Pool (n, pairs) ->
-      let alloc, dealloc = List.split pairs in
-      let* context, alloc = compile_clock_exprs ~context ~scope ~builder alloc in
-      let* context, dealloc = compile_clock_exprs ~context ~scope ~builder dealloc in
-      let pairs = List.combine alloc dealloc in
-      Builder.logical builder @@ Pool (n, pairs);
-      Ok context
+      error_recover
+        ~context
+        ~errors:[]
+        (let alloc, dealloc = List.split pairs in
+         let* context, alloc = compile_clock_exprs ~context ~scope ~builder alloc in
+         let* context, dealloc = compile_clock_exprs ~context ~scope ~builder dealloc in
+         let pairs = List.combine alloc dealloc in
+         Builder.logical builder @@ Pool (n, pairs);
+         Ok context)
     | Block { name; statements } ->
       compile_block
         ~scope:(List.append scope [ Loc.unwrap name ])
@@ -648,14 +732,14 @@ let into_module { assumptions; structure; assertions } =
         statements
   and compile_block ~scope ~context ~builder stmts =
     List.fold_left
-      (fun context v -> compile_stmt ~context ~scope ~builder v)
-      (Ok context)
+      (fun (context, errors) v ->
+         accumulate_errors ~errors @@ compile_stmt ~context ~scope ~builder v)
+      (context, [])
       stmts
   in
-  let compile_top_block name stmts context builder =
-    let* context = context in
+  let compile_top_block name stmts (context, errors) builder =
     let context = Context.next_root context name in
-    compile_block ~scope:[] ~context ~builder stmts
+    accumulate_errors ~errors @@ compile_block ~scope:[] ~context ~builder stmts
   in
   let compile_top_blocks name list =
     List.mapi
@@ -665,9 +749,15 @@ let into_module { assumptions; structure; assertions } =
       list
   in
   let context = Context.empty in
-  Mrtccsl.Language.Module.make_stateful
-    (compile_top_blocks "assume" assumptions)
-    (compile_top_block "structure" structure)
-    (compile_top_blocks "assert" assertions)
-    (Ok context)
+  let (context, errors), m =
+    Mrtccsl.Language.Module.make_stateful
+      (compile_top_blocks "assume" assumptions)
+      (compile_top_block "structure" structure)
+      (compile_top_blocks "assert" assertions)
+      (context, [])
+  in
+  let context, errors = finilize_errors (context, errors) in
+  context, m, errors
 ;;
+
+let finilize_errors (context, errors) = context, List.rev errors
