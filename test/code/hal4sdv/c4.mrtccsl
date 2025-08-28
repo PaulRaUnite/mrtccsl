@@ -27,7 +27,7 @@ assume {
         end = delay start by vars.controller.exec; 
     };
     actuator {
-        start = periodic 15s with jitter vars.actuator.j;
+        start = periodic 5s with jitter vars.actuator.j;
         end = delay start by vars.actuator.exec; 
     };
 }

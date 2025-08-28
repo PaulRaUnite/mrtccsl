@@ -1,0 +1,87 @@
+assume {
+    
+    duration : 0ms <= Camera_PERIOD_JITTER <= 0ms;
+    continuous process Camera_PERIOD_JITTER with normal(0s, 0ms);
+    
+    duration : 1ms <= Camera_EXEC <= 1ms;
+    continuous process Camera_EXEC with normal(1ms, 0ms);
+        
+
+    duration : 0ms <= Lidar_PERIOD_JITTER <= 0ms;
+    continuous process Lidar_PERIOD_JITTER with normal(0s, 0ms);
+    
+    duration : 1ms <= Lidar_EXEC <= 1ms;
+    continuous process Lidar_EXEC with normal(1ms, 0ms);
+        
+
+    duration : 0ms <= Radar_PERIOD_JITTER <= 0ms;
+    continuous process Radar_PERIOD_JITTER with normal(0s, 0ms);
+    
+    duration : 1ms <= Radar_EXEC <= 1ms;
+    continuous process Radar_EXEC with normal(1ms, 0ms);
+        
+
+    duration : 0ms <= Brake_PERIOD_JITTER <= 0ms;
+    continuous process Brake_PERIOD_JITTER with normal(0s, 0ms);
+    
+    duration : 1ms <= Brake_EXEC <= 1ms;
+    continuous process Brake_EXEC with normal(1ms, 0ms);
+        
+
+    duration : 1ms <= Alarm_EXEC <= 1ms;
+    continuous process Alarm_EXEC with normal(1ms, 0ms);
+
+    duration : 0ms <= Fusion_S3_PERIOD_JITTER <= 0ms;
+    continuous process Fusion_S3_PERIOD_JITTER with normal(0s, 0ms);
+    
+    duration : 1ms <= Fusion_S3_EXEC <= 1ms;
+    continuous process Fusion_S3_EXEC with normal(1ms, 0ms);
+        
+
+    duration : 1ms <= AEB_controler_S2_EXEC <= 1ms;
+    continuous process AEB_controler_S2_EXEC with normal(1ms, 0ms);
+
+} structure {
+    
+    Camera_START = periodic 5ms with jitter Camera_PERIOD_JITTER;
+    Camera_FINISH = delay Camera_START by Camera_EXEC;
+    
+    Camera_FINISH = Camera;
+        
+
+    Lidar_START = periodic 5ms with jitter Lidar_PERIOD_JITTER;
+    Lidar_FINISH = delay Lidar_START by Lidar_EXEC;
+    
+    Lidar_FINISH = Lidar;
+        
+
+    Radar_START = periodic 5ms with jitter Radar_PERIOD_JITTER;
+    Radar_FINISH = delay Radar_START by Radar_EXEC;
+    
+    Radar_FINISH = Radar;
+        
+
+    Brake_START = periodic 5ms with jitter Brake_PERIOD_JITTER;
+    Brake_FINISH = delay Brake_START by Brake_EXEC;
+    
+        
+
+    Alarm_START = Alarm;
+    Alarm_FINISH = delay Alarm_START by Alarm_EXEC;
+    
+            
+
+    Fusion_S3_START = periodic 5ms with jitter Fusion_S3_PERIOD_JITTER;
+    Fusion_S3_FINISH = delay Fusion_S3_START by Fusion_S3_EXEC;
+    
+    Fusion_S3_FINISH = Fusion_data;
+        
+
+    AEB_controler_S2_START = Fusion_data;
+    AEB_controler_S2_FINISH = delay AEB_controler_S2_START by AEB_controler_S2_EXEC;
+    
+    AEB_controler_S2_FINISH = Alarm;
+    AEB_controler_S2_FINISH = Brake;
+            
+
+}

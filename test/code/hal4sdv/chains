@@ -1,0 +1,2 @@
+sensor.start->sensor.end->controller.start->controller.end?actuator.start->actuator.end
+controller.end?actuator.start

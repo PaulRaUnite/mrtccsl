@@ -1,0 +1,76 @@
+assume {
+    
+    duration : -4ms <= Camera_PERIOD_JITTER <= 4ms;
+    continuous process Camera_PERIOD_JITTER with normal(0s, 2ms);
+    
+    duration : 1ms <= Camera_EXEC <= 9ms;
+    continuous process Camera_EXEC with normal(5ms, 2ms);
+        
+
+    duration : -4ms <= Lidar_PERIOD_JITTER <= 4ms;
+    continuous process Lidar_PERIOD_JITTER with normal(0s, 2ms);
+    
+    duration : 1ms <= Lidar_EXEC <= 9ms;
+    continuous process Lidar_EXEC with normal(5ms, 2ms);
+        
+
+    duration : -4ms <= FrontBrake_PERIOD_JITTER <= 4ms;
+    continuous process FrontBrake_PERIOD_JITTER with normal(0s, 2ms);
+    
+    duration : 1ms <= FrontBrake_EXEC <= 9ms;
+    continuous process FrontBrake_EXEC with normal(5ms, 2ms);
+        
+
+    duration : -4ms <= RearBrake_PERIOD_JITTER <= 4ms;
+    continuous process RearBrake_PERIOD_JITTER with normal(0s, 2ms);
+    
+    duration : 1ms <= RearBrake_EXEC <= 9ms;
+    continuous process RearBrake_EXEC with normal(5ms, 2ms);
+        
+
+    duration : 1ms <= AEBS_controler_s1_EXEC <= 5ms;
+    continuous process AEBS_controler_s1_EXEC with normal(3ms, 1ms);
+
+    duration : -2ms <= SecondControler_s2_PERIOD_JITTER <= 2ms;
+    continuous process SecondControler_s2_PERIOD_JITTER with normal(0s, 1ms);
+    
+    duration : 1ms <= SecondControler_s2_EXEC <= 5ms;
+    continuous process SecondControler_s2_EXEC with normal(3ms, 1ms);
+} structure {
+    
+    Camera_START = periodic 10ms with jitter Camera_PERIOD_JITTER;
+    Camera_FINISH = delay Camera_START by Camera_EXEC;
+    
+    Camera_FINISH = Camera;
+        
+
+    Lidar_START = periodic 10ms with jitter Lidar_PERIOD_JITTER;
+    Lidar_FINISH = delay Lidar_START by Lidar_EXEC;
+    
+    Lidar_FINISH = Lidar;
+        
+
+    FrontBrake_START = periodic 10ms with jitter FrontBrake_PERIOD_JITTER;
+    FrontBrake_FINISH = delay FrontBrake_START by FrontBrake_EXEC;
+    
+        
+
+    RearBrake_START = periodic 10ms with jitter RearBrake_PERIOD_JITTER;
+    RearBrake_FINISH = delay RearBrake_START by RearBrake_EXEC;
+    
+        
+
+    AEBS_controler_s1_START = Lidar;
+    AEBS_controler_s1_FINISH = delay AEBS_controler_s1_START by AEBS_controler_s1_EXEC;
+    
+    AEBS_controler_s1_FINISH = FrontBrake;
+    AEBS_controler_s1_FINISH = Alarm;
+            
+
+    SecondControler_s2_START = periodic 10ms with jitter SecondControler_s2_PERIOD_JITTER;
+    SecondControler_s2_FINISH = delay SecondControler_s2_START by SecondControler_s2_EXEC;
+    
+    SecondControler_s2_FINISH = RearBrake;
+        
+
+}

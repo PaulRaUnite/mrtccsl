@@ -7,8 +7,8 @@ assume {
             duration : 1s <= exec <= 3s;
         };
         controller {
-            continuous process exec with normal(3s, 0.5s);
-            duration : 2s <= exec <= 4s;
+            continuous process exec with normal(5s, 1.5s);
+            duration : 2s <= exec <= 8s;
         };
         actuator {
             continuous process j with normal(0s, 0.5s);
