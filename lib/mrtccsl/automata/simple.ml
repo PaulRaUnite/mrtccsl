@@ -1261,6 +1261,14 @@ module Export = struct
     val trace_to_csl : trace -> string
   end *)
 
+  type 'c task =
+    { name : string
+    ; start : 'c
+    ; finish : 'c
+    ; release : 'c
+    ; deadline : 'c
+    }
+
   module Make
       (C : sig
          include Interface.Stringable
@@ -1286,7 +1294,11 @@ module Export = struct
           |> Seq.filter (fun c ->
             not
               (List.exists
-                 (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d)
+                 (fun { release; start; finish; deadline; _ } ->
+                    C.compare c release = 0
+                    || C.compare c start = 0
+                    || C.compare c finish = 0
+                    || C.compare c deadline = 0)
                  tasks))
           |> Array.of_seq
         in
@@ -1297,7 +1309,7 @@ module Export = struct
         in
         let biggest_task_name =
           tasks
-          |> List.map (fun (name, _, _, _, _) -> String.length (C.to_string name))
+          |> List.map (fun { name; _ } -> String.length name)
           |> List.fold_left Int.max 0
         in
         let graph_prefix = Int.max biggest_task_name biggest_clock in
@@ -1356,24 +1368,26 @@ module Export = struct
             | None -> time_label
           in
           let step_len = String.length time_label + 1 in
-          let print_task ((name, r, s, f, d), (buf, executes)) =
-            let ready = L.mem r l
-            and start = L.mem s l
-            and finish = L.mem f l
-            and deadline = L.mem d l in
-            let executes = (executes || start) && not finish in
+          let print_task (({ release; start; finish; deadline; _ } as t), (buf, executes))
+            =
+            let release_present = L.mem release l
+            and start_present = L.mem start l
+            and finish_present = L.mem finish l
+            and deadline_present = L.mem deadline l in
+            let executes = (executes || start_present) && not finish_present in
             let symbol =
-              match ready, deadline with
+              match release_present, deadline_present with
               | true, true -> "╳"
               | true, false -> "("
               | false, true -> ")"
-              | false, false -> if start || finish || executes then "#" else "-"
+              | false, false ->
+                if start_present || finish_present || executes then "#" else "-"
             in
             Buffer.add_string buf symbol;
             if executes
             then Buffer.add_chars buf (step_len - 1) '#'
             else Buffer.add_chars buf (step_len - 1) '-';
-            (name, r, s, f, d), (buf, executes)
+            t, (buf, executes)
           in
           let task_state = List.map print_task task_state in
           let print_clock placed i c =
@@ -1405,8 +1419,8 @@ module Export = struct
         let total = Buffer.create 1024 in
         let _ =
           List.iter
-            (fun ((name, _, _, _, _), (buf, _)) ->
-               Printf.bprintf total "%*s |-" graph_prefix (C.to_string name);
+            (fun ({ name; _ }, (buf, _)) ->
+               Printf.bprintf total "%*s |-" graph_prefix name;
                Buffer.add_buffer total buf;
                Buffer.add_char total '\n';
                Buffer.add_chars total graph_prefix ' ';
@@ -1462,15 +1476,18 @@ module Export = struct
           |> List.filter (fun c ->
             not
               (List.exists
-                 (fun (_, r, s, f, d) -> c = r || c = s || c = f || c = d)
+                 (fun { release; start; finish; deadline; _ } ->
+                    C.compare c release = 0
+                    || C.compare c start = 0
+                    || C.compare c finish = 0
+                    || C.compare c deadline = 0)
                  tasks))
           |> Array.of_list
         in
         let width =
           List.fold_left
-            (fun off (name, _, _, _, _) ->
-               let s = C.to_string name in
-               Format.fprintf ch "%*s\n" (off + String.grapheme_length s + 1) s;
+            (fun off { name; _ } ->
+               Format.fprintf ch "%*s\n" (off + String.grapheme_length name + 1) name;
                off + 8)
             0
             tasks
@@ -1498,22 +1515,28 @@ module Export = struct
         let[@inline hint] serialize_record (tasks, clocks) (l, n) =
           let new_tasks =
             Array.map
-              (fun ((name, r, s, f, d), executes, constrains) ->
-                 let ready = L.mem r l
-                 and start = L.mem s l
-                 and finish = L.mem f l
-                 and deadline = L.mem d l in
-                 let now_executes = (executes || start) && not finish
-                 and now_constrains = (constrains || ready) && not deadline in
+              (fun (({ release; start; finish; deadline; _ } as t), executes, constrains) ->
+                 let release_present = L.mem release l
+                 and start_present = L.mem start l
+                 and finish_present = L.mem finish l
+                 and deadline_present = L.mem deadline l in
+                 let now_executes = (executes || start_present) && not finish_present
+                 and now_constrains =
+                   (constrains || release_present) && not deadline_present
+                 in
                  let _ =
                    match executes, now_executes with
                    | false, true -> Format.fprintf ch ".+."
                    | true, true ->
                      Format.fprintf
                        ch
-                       (if start then if finish then "###" else ".-." else "| |")
+                       (if start_present
+                        then if finish_present then "###" else ".-."
+                        else "| |")
                    | false, false ->
-                     Format.fprintf ch (if start && finish then "###" else " | ")
+                     Format.fprintf
+                       ch
+                       (if start_present && finish_present then "###" else " | ")
                    | true, false -> Format.fprintf ch "'+'"
                  in
                  Format.fprintf ch " ";
@@ -1523,13 +1546,17 @@ module Export = struct
                    | true, true ->
                      Format.fprintf
                        ch
-                       (if ready then if deadline then ":=:" else ".-." else ": :")
+                       (if release_present
+                        then if deadline_present then ":=:" else ".-."
+                        else ": :")
                    | false, false ->
-                     Format.fprintf ch (if ready && deadline then ".+." else " | ")
+                     Format.fprintf
+                       ch
+                       (if release_present && deadline_present then ".+." else " | ")
                    | true, false -> Format.fprintf ch "'+'"
                  in
                  Format.fprintf ch " ";
-                 (name, r, s, f, d), now_executes, now_constrains)
+                 t, now_executes, now_constrains)
               tasks
           in
           let horizontal = ref false in
@@ -1553,9 +1580,9 @@ module Export = struct
           let time_label = N.to_string n in
           Format.fprintf ch "+ %s\n" time_label;
           Array.iter
-            (fun ((_, r, _, _, d), executes, constrains) ->
-               let ready = L.mem r l
-               and deadline = L.mem d l in
+            (fun ({ release; deadline; _ }, executes, constrains) ->
+               let ready = L.mem release l
+               and deadline = L.mem deadline l in
                Format.fprintf ch (if executes then "| | " else " |  ");
                Format.fprintf
                  ch

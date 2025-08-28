@@ -2,26 +2,27 @@ open Language
 
 module Macro = struct
   open Language.Specification.Builder
+  open Automata.Simple.Export
 
   let task_names name =
     let start = Printf.sprintf "%s.s" name in
     let finish = Printf.sprintf "%s.f" name in
-    let ready = Printf.sprintf "%s.r" name in
+    let release = Printf.sprintf "%s.r" name in
     let deadline = Printf.sprintf "%s.d" name in
-    name, ready, start, finish, deadline
+    { name; release; start; finish; deadline }
   ;;
 
   let rigid_task name (exec_lower, exec_upper) builder =
     let exec_time = Printf.sprintf "%s.exec" name in
-    let _, _, start, finish, _ = task_names name in
+    let { start; finish; _ } = task_names name in
     logical builder @@ RTdelay { out = finish; arg = start; delay = Var exec_time };
     duration builder @@ NumRelation (exec_time, `MoreEq, Const exec_lower);
     duration builder @@ NumRelation (exec_time, `LessEq, Const exec_upper)
   ;;
 
   let task name exec_duration b =
-    let _, ready, start, _, _ = task_names name in
-    logical b @@ Causality { cause = ready; conseq = start };
+    let { release; start; _ } = task_names name in
+    logical b @@ Causality { cause = release; conseq = start };
     rigid_task name exec_duration b
   ;;
 
@@ -32,15 +33,11 @@ module Macro = struct
   ;;
 
   let rigid_periodic_task name exec_duration (period_lower, period_upper) offset b =
-    let _, _, start, _, _ = task_names name in
+    let { start; _ } = task_names name in
     let error = Printf.sprintf "%s.error" name in
     logical b
     @@ CumulPeriodic
-         { out = start
-         ; period = period_lower
-         ; error = Var error
-         ; offset = (const offset)
-         };
+         { out = start; period = period_lower; error = Var error; offset = const offset };
     duration b @@ NumRelation (error, `MoreEq, const 0);
     duration b @@ NumRelation (error, `LessEq, const (period_upper - period_lower));
     rigid_task name exec_duration b
@@ -53,11 +50,7 @@ module Macro = struct
     let error = Printf.sprintf "%s.error" name in
     logical b
     @@ CumulPeriodic
-         { out = timer
-         ; period = period_lower
-         ; error = Var error
-         ; offset =(const offset)
-         };
+         { out = timer; period = period_lower; error = Var error; offset = const offset };
     duration b @@ NumRelation (error, `MoreEq, const 0);
     duration b @@ NumRelation (error, `LessEq, const (period_upper - period_lower));
     logical b @@ Delay { out = deadline; arg = timer; delay = const 1; base = Some timer };
@@ -68,7 +61,7 @@ module Macro = struct
   let scheduling_pairs tasks =
     List.map
       (fun name ->
-         let _, _, start, finish, _ = task_names name in
+         let { start; finish; _ } = task_names name in
          start, finish)
       tasks
   ;;

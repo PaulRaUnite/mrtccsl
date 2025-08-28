@@ -155,32 +155,35 @@ let rec create_dir fn =
     Sys.mkdir fn 0o755)
 ;;
 
-let generate_trace
-      ~print_svgbob
-      ~print_trace
-      ?(debug = false)
-      ~steps
-      ~horizon
-      directory
-      system_spec
-      tasks
-      func_chain_spec
-      i
-  =
+type 'n generation_config =
+  { steps : int
+  ; horizon : 'n
+  }
+
+type 'n processing_config =
+  { print_svgbob : bool
+  ; print_cadp : bool
+  ; print_timed_cadp : 'n option
+  ; debug : bool
+  ; gen : 'n generation_config
+  ; directory : string
+  }
+
+let generate_trace ~config system_spec tasks func_chain_spec i =
   let strategy = ST.Solution.refuse_empty random_strat in
-  let basename = Printf.sprintf "%s/%i" directory i in
+  let basename = Printf.sprintf "%s/%i" config.directory i in
   let sem = Earliest
   and points_of_interest = points_of_interest func_chain_spec in
   let session, trace, deadlock, chains, _ =
     FnCh.functional_chains
-      ~debug
+      ~debug:config.debug
       ~sem
-      (strategy, steps, horizon)
+      (strategy, config.gen.steps, config.gen.horizon)
       system_spec
       func_chain_spec
   in
   Printf.printf "trace deadlocked: %b\n" deadlock;
-  if print_svgbob
+  if config.print_svgbob
   then (
     let clocks =
       List.sort_uniq String.compare (Language.Specification.clocks system_spec)
@@ -194,7 +197,7 @@ let generate_trace
       (Format.formatter_of_out_channel trace_file)
       trace;
     close_out trace_file);
-  if print_trace
+  if config.print_cadp
   then (
     let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
     Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace;
@@ -207,20 +210,10 @@ let generate_trace
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let process_config
-      ~bin_size
-      ~debug
-      ~print_svgbob
-      ~print_trace
-      ~directory
-      ~processor
-      ~horizon
-      ~steps
-      (name, m, tasks, chain)
-  =
+let run_simulation ~config ~bin_size ~processor (name, m, tasks, chain) =
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
-  let prefix = Filename.concat directory name in
+  let prefix = Filename.concat config.directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
   let _ =
@@ -238,16 +231,7 @@ let process_config
   in
   let reaction_times =
     processor
-    @@ generate_trace
-         ~debug
-         ~print_svgbob
-         ~print_trace
-         ~steps
-         ~horizon
-         prefix
-         spec
-         tasks
-         chain
+    @@ generate_trace ~config:{ config with directory = prefix } spec tasks chain
   in
   let points_of_interest = points_of_interest chain in
   let categories = categorization_points chain in
@@ -303,7 +287,8 @@ let () =
   and steps = ref 1000
   and horizon = ref 10_000.0
   and print_svgbob = ref false
-  and print_trace = ref false
+  and print_cadp_trace = ref false
+  and print_timed_cadp_trace = ref ""
   and inspect_deadlock = ref false
   and directory = ref ""
   and chain = ref ""
@@ -317,7 +302,10 @@ let () =
     ; "-o", Arg.Set_string directory, "Output directory path"
     ; "-fc", Arg.Set_string chain, "Functional chain specification, links are -> and ?"
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
-    ; "-cadp", Arg.Set print_trace, "Print CADP trace"
+    ; "-cadp", Arg.Set print_cadp_trace, "Print CADP trace"
+    ; ( "-tcadp"
+      , Arg.Set_string print_timed_cadp_trace
+      , "Print CADP trace with time advances" )
     ; ( "-inspect"
       , Arg.Set inspect_deadlock
       , "Collect and print debug information for deadlocked traces" )
@@ -375,15 +363,17 @@ let () =
         | Anonymous i -> Printf.sprintf "anon(%i)" i)
     in
     let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
-    process_config
+    run_simulation
       ~processor
       ~bin_size:(Number.Rational.from_pair (1, 10))
-      ~debug:!inspect_deadlock
-      ~print_svgbob:!print_svgbob
-      ~print_trace:!print_trace
-      ~directory:!directory
-      ~steps:!steps
-      ~horizon:(of_float !horizon)
+      ~config:
+        { debug = !inspect_deadlock
+        ; print_svgbob = !print_svgbob
+        ; print_cadp = !print_cadp_trace
+        ; print_timed_cadp = Fun.catch_to_opt of_decimal_string !print_timed_cadp_trace
+        ; gen = { horizon = of_float !horizon; steps = !steps }
+        ; directory = !directory
+        }
       (name, m, [], functional_chain))
   else (
     Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
