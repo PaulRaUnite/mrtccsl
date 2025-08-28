@@ -46,7 +46,7 @@ module Option = struct
     | None -> f ()
   ;;
 
-  let bind_else x f =
+  let bind_else f x =
     match x with
     | Some x -> x
     | None -> f ()
@@ -83,7 +83,9 @@ module Result = struct
 
   let unwrap ~msg = function
     | Ok x -> x
-    | Error e -> Format.printf "%a" e (); failwith msg
+    | Error e ->
+      Format.printf "%a" e ();
+      failwith msg
   ;;
 end
 
@@ -685,12 +687,18 @@ module Hashtbl = struct
   end
 
   let map kf vf tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> kf k, vf v) |> of_seq
+  let map_v f tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> k, f v) |> of_seq
 
   module Make (H : HashedType) = struct
     include Make (H)
 
     let entry f default key tbl =
       let v = find_opt tbl key |> Option.value ~default in
+      replace tbl key (f v)
+    ;;
+
+    let entry_mut f default key tbl =
+      let v = find_opt tbl key |> Option.bind_else default in
       replace tbl key (f v)
     ;;
 
@@ -711,6 +719,9 @@ module Hashtbl = struct
         tbl
       ;;
     end
+
+    let map kf vf tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> kf k, vf v) |> of_seq
+    let map_v f tbl = tbl |> to_seq |> Seq.map (fun (k, v) -> k, f v) |> of_seq
   end
 end
 

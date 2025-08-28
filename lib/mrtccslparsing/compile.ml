@@ -418,13 +418,13 @@ let into_module { assumptions; structure; assertions } =
       | CVariable v -> Context.resolve ~context ~scope ~expect:`Clock v
       | _ ->
         Option.bind_else
-          (Option.map (fun v -> Ok (context, v)) result_variable)
           (fun () ->
              Context.add_anon_variable
                ~context
                ~prefix:scope
                ~var_type:`Clock
                (Loc.where expr))
+          (Option.map (fun v -> Ok (context, v)) result_variable)
     in
     let out = result_variable in
     let* context =

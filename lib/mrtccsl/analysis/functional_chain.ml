@@ -277,6 +277,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     session, trace, not !cut, full_chains, dangling_chains
   ;;
 
+
   let reaction_times session pairs_to_compare chains =
     chains
     |> Iter.map (fun (t : chain_instance) ->

@@ -6,8 +6,12 @@ let truncated_guassian_rvs ~a ~b ~mu ~sigma =
   then mu
   else (
     let prob_l, prob_r = Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a, b) in
-    let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
-    Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma)
+    if Float.abs (prob_r -. prob_l) < 0.000001
+    then Random.float (b -. a) +. a
+    else (
+      let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
+      let result = Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma in
+      result))
 ;;
 
 (**Specifies the distribution of the time variable. *)
@@ -647,7 +651,7 @@ struct
         let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
         let g now =
           let labels =
-            match Heap.peek queue,  II.to_nonstrict (current_delay ()) with
+            match Heap.peek queue, II.to_nonstrict (current_delay ()) with
             | None, (0, 0) when diff_base -> [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
             | None, (0, 0) -> [ []; [ out; arg ] ]
             | None, (0, _) -> [ []; [ arg ]; [ out; arg; base ]; [ base ]; [ arg; base ] ]
@@ -945,6 +949,7 @@ struct
         in
         let a, b = Tuple.map2 N.to_float bounds in
         let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+        (* Printf.printf "%f %f %f %f %f\n" a b mu sigma sample; *)
         N.of_float sample
     | Exponential _ -> failwith "todo"
   ;;

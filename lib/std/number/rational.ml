@@ -72,3 +72,11 @@ let of_float v =
   then failwith "cannot represent infinity as rational"
   else of_float v
 ;;
+
+let[@inline] modulo x y : t * t =
+  let parts = div x y in
+  let nom = Mpqf.get_num parts
+  and denom = Mpqf.get_den parts in
+  let whole, rem = Mpzf.fdiv_qr nom denom in
+  mul (Mpqf.of_mpz whole) y, mul (Mpqf.of_mpz rem) y
+;;

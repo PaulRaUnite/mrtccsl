@@ -202,12 +202,13 @@ let generate_trace
   let reactions =
     FnCh.reaction_times session points_of_interest (Iter.of_dynarray chains)
   in
-  reactions
+  Iter.persistent reactions
 ;;
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
 let process_config
+      ~bin_size
       ~debug
       ~print_svgbob
       ~print_trace
@@ -254,6 +255,28 @@ let process_config
   let _ =
     FnCh.reaction_times_to_csv categories points_of_interest data_file reaction_times
   in
+  close_out data_file;
+  let data_file = open_out (Printf.sprintf "%s/reaction_time_hist.csv" prefix) in
+  let start, finish = chain_start_finish_clocks chain in
+  let module S = Stats.Make (String) (Number.Rational) in
+  let sample_points = categorization_points chain in
+  let misses_into_category map =
+    List.to_string
+      ~sep:"_"
+      (fun sample ->
+         let missed = Hashtbl.find_opt map sample in
+         let missed = Option.value ~default:0 missed in
+         Printf.sprintf "%s_%i" sample missed)
+      sample_points
+  in
+  let reaction_times =
+    Iter.map
+      (fun (misses, reaction_time) ->
+         misses_into_category misses, Hashtbl.find reaction_time (start, finish))
+      reaction_times
+  in
+  let histogram = S.histogram ~bin_size reaction_times in
+  S.to_csv (Format.formatter_of_out_channel data_file) histogram;
   close_out data_file
 ;;
 
@@ -354,6 +377,7 @@ let () =
     let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
     process_config
       ~processor
+      ~bin_size:(Number.Rational.from_pair (1, 10))
       ~debug:!inspect_deadlock
       ~print_svgbob:!print_svgbob
       ~print_trace:!print_trace

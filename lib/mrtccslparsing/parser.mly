@@ -77,7 +77,7 @@ non_empty_dangling_list(sep, X):
 
 %inline duration : 
 | value=DECIMAL ; scale=SECOND { Second { value ; scale=(Number.Rational.from_pair scale) } }
-| value=INT ; scale=SECOND {Second {value=Number.Rational.of_int value; scale=(Number.Rational.from_pair scale)}}
+| value=INT ; scale=SECOND { Second {value=Number.Rational.of_int value; scale=(Number.Rational.from_pair scale)}}
 
 %inline interval(X) :
 | LBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { Interval {left_strict=false; left; right; right_strict=false} }
