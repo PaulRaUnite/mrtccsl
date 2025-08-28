@@ -73,10 +73,10 @@ let of_float v =
   else of_float v
 ;;
 
-let[@inline] modulo x y : t * t =
+let[@inline] modulo x y : int * t * t =
   let parts = div x y in
   let nom = Mpqf.get_num parts
   and denom = Mpqf.get_den parts in
   let whole, rem = Mpzf.fdiv_qr nom denom in
-  mul (Mpqf.of_mpz whole) y, mul (Mpqf.of_mpz rem) y
+  Mpz.get_int whole, mul (Mpqf.of_mpz whole) y, mul (Mpqf.of_mpz rem) y
 ;;

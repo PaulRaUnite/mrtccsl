@@ -1274,7 +1274,11 @@ module Export = struct
          include Interface.Stringable
          include Interface.OrderedType with type t := t
        end)
-      (N : Num)
+      (N : sig
+         include Num
+
+         val modulo : t -> t -> int * t * t
+       end)
       (L : sig
              type t
              type elt
@@ -1447,7 +1451,39 @@ module Export = struct
           f
           (L.to_iter l)
       in
-      Iter.pp_seq ~sep:",STEP," serialize formatter trace
+      Iter.pp_seq ~sep:",STEP," serialize formatter trace;
+      Format.pp_print_flush formatter ()
+    ;;
+
+    let print_cadp formatter trace =
+      let serialize f (l, _) =
+        Iter.pp_seq
+          ~sep:","
+          (fun f v -> Format.fprintf f "%s" (C.to_string v))
+          f
+          (l |> L.to_iter |> Iter.shuffle)
+      in
+      Iter.pp_seq ~sep:"," serialize formatter trace;
+      Format.pp_print_flush formatter ()
+    ;;
+
+    let print_timed_cadp step formatter trace =
+      let previous_aligned = ref N.zero in
+      let serialize fmt (l, now) =
+        let n_steps, diff_aligned, _ = N.(modulo (now - !previous_aligned) step) in
+        let first = ref true in
+        Iter.pp_seq
+          ~sep:","
+          (fun fmt c ->
+             let advancement = if !first then n_steps else 0 in
+             Format.fprintf fmt "%s %i" (C.to_string c) advancement;
+             first := false)
+          fmt
+          (l |> L.to_iter |> Iter.shuffle);
+        previous_aligned := N.(!previous_aligned + diff_aligned)
+      in
+      Iter.pp_seq ~sep:"," serialize formatter trace;
+      Format.pp_print_flush formatter ()
     ;;
 
     let trace_to_vertical_svgbob ?(numbers = false) ~tasks clocks ch trace =

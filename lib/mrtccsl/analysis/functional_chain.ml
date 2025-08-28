@@ -97,7 +97,14 @@ let parse_chain str =
   Option.get r
 ;;
 
-module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
+module Make
+    (C : Automata.Simple.Hashed.ID)
+    (N : sig
+       include Automata.Simple.Num
+
+       val modulo : t -> t -> int * t * t
+     end) =
+struct
   module S = Automata.Simple.Hashed.WithSession (C) (N)
   module A = S.Inner
   module ST = Automata.Simple.Strategy (A)
@@ -277,7 +284,6 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     session, trace, not !cut, full_chains, dangling_chains
   ;;
 
-
   let reaction_times session pairs_to_compare chains =
     chains
     |> Iter.map (fun (t : chain_instance) ->
@@ -397,6 +403,10 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         (convert_trace session trace)
     ;;
 
-    let trace_to_csl session ch trace = Inner.print_csl ch (convert_trace session trace)
+    let trace_to_cadp session ch trace = Inner.print_cadp ch (convert_trace session trace)
+
+    let trace_to_timed_cadp session step ch trace =
+      Inner.print_timed_cadp step ch (convert_trace session trace)
+    ;;
   end
 end

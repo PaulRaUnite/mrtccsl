@@ -199,9 +199,19 @@ let generate_trace ~config system_spec tasks func_chain_spec i =
     close_out trace_file);
   if config.print_cadp
   then (
-    let trace_file = open_out (Printf.sprintf "%s.trace" basename) in
-    Export.trace_to_csl session (Format.formatter_of_out_channel trace_file) trace;
+    let trace_file = open_out (Printf.sprintf "%s.cadp" basename) in
+    Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace;
     close_out trace_file);
+  Option.iter
+    (fun step ->
+       let trace_file = open_out (Printf.sprintf "%s.tcadp" basename) in
+       Export.trace_to_timed_cadp
+         session
+         step
+         (Format.formatter_of_out_channel trace_file)
+         trace;
+       close_out trace_file)
+    config.print_timed_cadp;
   let reactions =
     FnCh.reaction_times session points_of_interest (Iter.of_dynarray chains)
   in
