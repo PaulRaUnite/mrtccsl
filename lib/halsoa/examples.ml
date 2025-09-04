@@ -102,7 +102,7 @@ module Make (N : Num) = struct
   ;;
 
   let useless_def_spec chain builder =
-    let open Mrtccsl.Analysis.FunctionalChain in
+    let open Mrtccsl.Analysis.FunctionalChain.Chain in
     let open Mrtccsl.Language.Specification.Builder in
     ignore
     @@ List.fold_left

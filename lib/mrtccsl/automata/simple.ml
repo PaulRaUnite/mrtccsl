@@ -1217,6 +1217,8 @@ module Hashed = struct
         let f = save session in
         map_dist_binding f Fun.id dist
       ;;
+
+      let clocks (_, clocks) = Dynarray.to_list clocks
     end
 
     module L = struct
@@ -1268,6 +1270,7 @@ module Export = struct
     ; release : 'c
     ; deadline : 'c
     }
+  [@@deriving map]
 
   module Make
       (C : sig

@@ -170,7 +170,7 @@ let system_tasks (components, hal) =
 
 (** Extract functional chains from signal paths. *)
 let signals_to_chain (components, hal) signal_path =
-  let open Mrtccsl.Analysis.FunctionalChain in
+  let open Mrtccsl.Analysis.FunctionalChain.Chain in
   let module H = Hashtbl.Make (String) in
   let policy_to_relation = function
     | `AbsoluteTimer _ | `CumulativeTimer _ -> `Sampling

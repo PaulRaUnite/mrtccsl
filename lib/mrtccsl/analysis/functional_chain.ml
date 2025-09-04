@@ -1,101 +1,107 @@
 open Prelude
-open Language
 
-type relation =
-  [ `Causality
-  | `Sampling
-  ]
-[@@deriving show, sexp]
+module Chain = struct
+  type relation =
+    [ `Causality
+    | `Sampling
+    ]
+  [@@deriving show, sexp]
 
-type 'c chain =
-  { first : 'c
-  ; rest : (relation * 'c) list
-  }
-[@@deriving map, show]
+  type 'c t =
+    { first : 'c
+    ; rest : (relation * 'c) list
+    }
+  [@@deriving map, show]
 
-type instruction =
-  [ relation
-  | `New
-  ]
-[@@deriving show, sexp]
+  let start_finish_clocks chain =
+    ( chain.first
+    , Option.value
+        ~default:chain.first
+        (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
+  ;;
 
-let last_clock { first; rest } =
-  Option.value ~default:first (List.last (List.map (fun (_, x) -> x) rest))
-;;
+  let links { first; rest } =
+    let _, links =
+      List.fold_left
+        (fun (prev, links) (_, next) -> next, (prev, next) :: links)
+        (first, [])
+        rest
+    in
+    List.rev links
+  ;;
 
-let instructions chain_spec =
-  let init = chain_spec.first, (`New : instruction) in
-  let rest_seq = chain_spec.rest |> List.map (fun (x, y) -> y, (x :> instruction)) in
-  init :: rest_seq
-;;
+  let spans_of_interest chain = start_finish_clocks chain :: links chain
 
-let chain_start_finish_clocks chain =
-  ( chain.first
-  , Option.value
-      ~default:chain.first
-      (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
-;;
-
-let pp_instructions pp f =
-  Format.fprintf f "[@[%a@]]"
-  @@ Format.pp_print_list
-       ~pp_sep:(fun f () -> Format.fprintf f "@;")
-       (fun f (s, i) -> Format.fprintf f "%a, %a" pp s pp_instruction i)
-;;
-
-let points_of_interest chain =
-  (* let _, sampling_links =
-    List.fold_left
-      (fun (prev, points) (rel, next) ->
-         let points =
-           match rel with
-           | `Sampling -> points @ [ prev, next ]
-           | _ -> points
-         in
-         next, points)
-      (chain.first, [])
+  let sampling_clocks chain =
+    List.filter_map
+      (fun (rel, next) ->
+         match rel with
+         | `Sampling -> Some next
+         | _ -> None)
       chain.rest
-  in
-  chain_start_finish_clocks chain :: sampling_links *)
-  [ chain_start_finish_clocks chain ]
-;;
+  ;;
 
-let categorization_points chain =
-  List.filter_map
-    (fun (rel, next) ->
-       match rel with
-       | `Sampling -> Some next
-       | _ -> None)
-    chain.rest
-;;
+  module Instruction = struct
+    type t =
+      [ relation
+      | `New
+      ]
+    [@@deriving show, sexp]
 
-let parse_chain str =
-  let causalities = String.split ~by:"->" str in
-  let with_sampling = List.map (String.split ~by:"?") causalities in
-  let r =
-    Seq.fold_left
-      (fun chain samples ->
-         Seq.fold_lefti
-           (fun chain i next ->
-              let r =
-                match chain with
-                | Some chain ->
-                  { chain with
-                    rest =
-                      List.append
-                        chain.rest
-                        [ (if i = 0 then `Causality, next else `Sampling, next) ]
-                  }
-                | None -> { first = next; rest = [] }
-              in
-              Some r)
-           chain
-           (List.to_seq samples))
-      None
-      (List.to_seq with_sampling)
-  in
-  Option.get r
-;;
+    let last_clock { first; rest } =
+      Option.value ~default:first (List.last (List.map (fun (_, x) -> x) rest))
+    ;;
+
+    let pp pp_f f =
+      Format.fprintf f "[@[%a@]]"
+      @@ Format.pp_print_list
+           ~pp_sep:(fun f () -> Format.fprintf f "@;")
+           (fun f (s, i) -> Format.fprintf f "%a, %a" pp_f s pp i)
+    ;;
+  end
+
+  let to_instructions chain_spec =
+    let init = chain_spec.first, (`New : Instruction.t) in
+    let rest_seq = chain_spec.rest |> List.map (fun (x, y) -> y, (x :> Instruction.t)) in
+    init :: rest_seq
+  ;;
+
+  let parse str =
+    let causalities = String.split ~by:"->" str in
+    let with_sampling = List.map (String.split ~by:"?") causalities in
+    let r =
+      Seq.fold_left
+        (fun chain samples ->
+           Seq.fold_lefti
+             (fun chain i next ->
+                let r =
+                  match chain with
+                  | Some chain ->
+                    { chain with
+                      rest =
+                        List.append
+                          chain.rest
+                          [ (if i = 0 then `Causality, next else `Sampling, next) ]
+                    }
+                  | None -> { first = next; rest = [] }
+                in
+                Some r)
+             chain
+             (List.to_seq samples))
+        None
+        (List.to_seq with_sampling)
+    in
+    Option.get r
+  ;;
+
+  let parse_with_name str =
+    match String.split ~by:":" str with
+    | [ name; chain ] -> name, parse chain
+    | _ ->
+      failwith
+        "wrong chain, should follow the template <name>:<chain link>((->|?)<chain link>)*"
+  ;;
+end
 
 module Make
     (C : Automata.Simple.Hashed.ID)
@@ -245,7 +251,7 @@ struct
   ;;
 
   let[@inline always] trace_to_chain sem chain trace =
-    let instructions = Array.of_list (instructions chain) in
+    let instructions = Array.of_list (Chain.to_instructions chain) in
     let len_instr = Array.length instructions in
     let full_chains, dangling_chains, _ =
       Iter.fold
@@ -262,8 +268,8 @@ struct
         ?(debug = false)
         ?(sem = All)
         (s, n, time)
-        (system_spec : _ Specification.t)
-        (chain : C.t chain)
+        (system_spec : _ Language.Specification.t)
+        (chain : C.t Chain.t)
     =
     let session = create () in
     let env = A.of_spec ~debug (with_spec session system_spec) in
@@ -271,7 +277,7 @@ struct
       A.gen_trace s env |> A.Trace.take ~steps:n |> A.Trace.until ~horizon:time
     in
     let trace = A.Trace.persist ~size_hint:n trace in
-    let session_chain = map_chain (to_offset session) chain in
+    let session_chain = Chain.map (to_offset session) chain in
     let full_chains, dangling_chains =
       trace_to_chain sem session_chain (A.Trace.to_iter trace)
     in
@@ -284,22 +290,8 @@ struct
     session, trace, not !cut, full_chains, dangling_chains
   ;;
 
-  let reaction_times session pairs_to_compare chains =
-    chains
-    |> Iter.map (fun (t : chain_instance) ->
-      ( t.misses
-        |> CMap.to_seq
-        |> Seq.map (fun (k, v) -> of_offset session k, v)
-        |> Hashtbl.of_seq
-      , pairs_to_compare
-        |> List.to_seq
-        |> Seq.map
-             N.(
-               fun (source, target) ->
-                 ( (source, target)
-                 , CMap.find (to_offset session target) t.trace
-                   - CMap.find (to_offset session source) t.trace ))
-        |> Hashtbl.of_seq ))
+  let reaction_time_of_span ({ trace; _ } : chain_instance) (first, last) : N.t =
+    N.(CMap.find last trace - CMap.find first trace)
   ;;
 
   let statistics category chains =
@@ -346,19 +338,20 @@ struct
       iter
   ;;
 
-  let reaction_times_to_csv categories pairs_to_print ch iter =
+  let reaction_times_to_csv session categories pairs_to_print ch iter =
     Printf.fprintf
       ch
       "%s\n"
       (List.to_string
          ~sep:","
          Fun.id
-         (List.map C.to_string categories
-          @ List.map
-              (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
-              pairs_to_print));
+         (List.map
+            (fun (f, s) ->
+               Printf.sprintf "%s->%s" (of_offset session f) (of_offset session s))
+            pairs_to_print
+          @ List.map (of_offset session) categories));
     Iter.iter
-      (fun (misses, times) ->
+      (fun ({ misses; _ } as chain : chain_instance) ->
          Printf.fprintf
            ch
            "%s\n"
@@ -366,17 +359,23 @@ struct
               ~sep:","
               Fun.id
               (List.map
-                 (fun h ->
-                    let v = Option.value ~default:0 (Hashtbl.find_opt misses h) in
-                    Int.to_string v)
-                 categories
-               @ List.map (fun k -> N.to_string (Hashtbl.find times k)) pairs_to_print)))
+                 (fun span -> N.to_string @@ reaction_time_of_span chain span)
+                 pairs_to_print
+               @ List.map
+                   (fun h ->
+                      let v = Option.value ~default:0 (CMap.find_opt h misses) in
+                      Int.to_string v)
+                   categories)))
       iter
   ;;
 
   module Export = struct
     module Set = Set.Make (String)
     module Inner = Automata.Simple.Export.Make (String) (N) (Set)
+
+    let convert_tasks session tasks =
+      List.map (Automata.Simple.Export.map_task @@ of_offset session) tasks
+    ;;
 
     let convert_trace session trace =
       Iter.map
@@ -388,7 +387,7 @@ struct
       Inner.trace_to_svgbob
         ?numbers
         ?precision
-        ~tasks
+        ~tasks:(convert_tasks session tasks)
         clocks
         ch
         (convert_trace session trace)
@@ -397,7 +396,7 @@ struct
     let trace_to_vertical_svgbob ?numbers ~tasks session clocks channel trace =
       Inner.trace_to_vertical_svgbob
         ?numbers
-        ~tasks
+        ~tasks:(convert_tasks session tasks)
         clocks
         channel
         (convert_trace session trace)

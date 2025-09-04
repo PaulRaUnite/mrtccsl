@@ -1,10 +1,4 @@
 (executable
- (public_name funchainstat)
- (name funchainstat)
- (modules funchainstat)
- (libraries mrtccsl std domainslib))
-
-(executable
  (public_name reaction)
  (name reaction)
  (modules reaction)

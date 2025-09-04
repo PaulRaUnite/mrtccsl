@@ -99,60 +99,17 @@ let random_strat =
   candidates
 ;; *)
 
-let parallel_reaction_times
-      ~sem
-      ?(with_partial = false)
-      params
-      system_spec
-      func_chain_spec
-      runs
-  =
-  let _, _, horizon = params in
-  let start, finish = chain_start_finish_clocks func_chain_spec in
-  let pool = Domainslib.Task.setup_pool ~num_domains:8 () in
-  let body _ =
-    let session, _, _, full_chains, partial_chains =
-      FnCh.functional_chains ~sem params system_spec func_chain_spec
-    in
-    let full_reaction_times =
-      FnCh.reaction_times session [ start, finish ] (Iter.of_dynarray full_chains)
-    in
-    if with_partial
-    then
-      partial_chains
-      |> Iter.of_array
-      |> Iter.flat_map Queue.to_iter
-      |> Iter.map (fun (t : partial_chain) ->
-        ( t.misses
-          |> A.CMap.to_seq
-          |> Seq.map (fun (k, v) -> S.Session.of_offset session k, v)
-          |> Hashtbl.of_seq
-        , [ start, finish ]
-          |> List.to_seq
-          |> Seq.map (fun (source, target) ->
-            ( (source, target)
-            , CMap.value ~default:horizon (S.Session.to_offset session target) t.trace
-              - CMap.find (S.Session.to_offset session source) t.trace ))
-          |> Hashtbl.of_seq ))
-    else full_reaction_times
-  in
-  Domainslib.Task.run pool (fun _ ->
-    Domainslib.Task.parallel_for_reduce
-      ~chunk_size:1
-      ~start:0
-      ~finish:runs
-      ~body
-      pool
-      Iter.append
-      Iter.empty)
-;;
-
 let rec create_dir fn =
   if not (Sys.file_exists fn)
   then (
     let parent_dir = Filename.dirname fn in
     create_dir parent_dir;
     Sys.mkdir fn 0o755)
+;;
+
+let write_file ~filename f =
+  let file = open_out filename in
+  Fun.protect ~finally:(fun () -> close_out file) (fun () -> f file)
 ;;
 
 type 'n generation_config =
@@ -169,58 +126,54 @@ type 'n processing_config =
   ; directory : string
   }
 
-let generate_trace ~config system_spec tasks func_chain_spec i =
+let generate_trace ~config system_spec _i =
   let strategy = ST.Solution.refuse_empty random_strat in
-  let basename = Printf.sprintf "%s/%i" config.directory i in
-  let sem = Earliest
-  and points_of_interest = points_of_interest func_chain_spec in
-  let session, trace, deadlock, chains, _ =
-    FnCh.functional_chains
-      ~debug:config.debug
-      ~sem
-      (strategy, config.gen.steps, config.gen.horizon)
-      system_spec
-      func_chain_spec
+  let env = A.of_spec ~debug:config.debug system_spec in
+  let trace, cut =
+    A.gen_trace strategy env
+    |> A.Trace.take ~steps:config.gen.steps
+    |> A.Trace.until ~horizon:config.gen.horizon
   in
+  let trace = A.Trace.persist ~size_hint:config.gen.steps trace in
+  let deadlock = not !cut in
   Printf.printf "trace deadlocked: %b\n" deadlock;
+  trace
+;;
+
+let process_trace ~config ~session chain tasks i trace =
+  let basename = Printf.sprintf "%s/%i" config.directory i in
   if config.print_svgbob
   then (
-    let clocks =
-      List.sort_uniq String.compare (Language.Specification.clocks system_spec)
-    in
-    let trace_file = open_out (Printf.sprintf "./%s.svgbob" basename) in
-    Export.trace_to_vertical_svgbob
-      ~numbers:false
-      ~tasks
-      session
-      clocks
-      (Format.formatter_of_out_channel trace_file)
-      trace;
-    close_out trace_file);
+    let clocks = FnCh.S.Session.clocks session in
+    write_file ~filename:(Printf.sprintf "./%s.svgbob" basename) (fun trace_file ->
+      Export.trace_to_vertical_svgbob
+        ~numbers:false
+        ~tasks
+        session
+        clocks
+        (Format.formatter_of_out_channel trace_file)
+        trace));
   if config.print_cadp
-  then (
-    let trace_file = open_out (Printf.sprintf "%s.cadp" basename) in
-    Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace;
-    close_out trace_file);
+  then
+    write_file ~filename:(Printf.sprintf "%s.cadp" basename) (fun trace_file ->
+      Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace);
   Option.iter
     (fun step ->
-       let trace_file = open_out (Printf.sprintf "%s.tcadp" basename) in
-       Export.trace_to_timed_cadp
-         session
-         step
-         (Format.formatter_of_out_channel trace_file)
-         trace;
-       close_out trace_file)
+       write_file ~filename:(Printf.sprintf "%s.tcadp" basename) (fun trace_file ->
+         Export.trace_to_timed_cadp
+           session
+           step
+           (Format.formatter_of_out_channel trace_file)
+           trace))
     config.print_timed_cadp;
-  let reactions =
-    FnCh.reaction_times session points_of_interest (Iter.of_dynarray chains)
-  in
-  Iter.persistent reactions
+  let semantics = Earliest in
+  let chain_instances, _ = trace_to_chain semantics chain (A.Trace.to_iter trace) in
+  chain_instances
 ;;
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let run_simulation ~config ~bin_size ~processor (name, m, tasks, chain) =
+let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let prefix = Filename.concat config.directory name in
@@ -239,39 +192,55 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chain) =
             Format.pp_print_string state s)
          spec)
   in
-  let reaction_times =
-    processor
-    @@ generate_trace ~config:{ config with directory = prefix } spec tasks chain
+  let open FnCh.S.Session in
+  let session = create () in
+  let spec = with_spec session spec in
+  let chains =
+    List.map (fun (name, chain) -> name, Chain.map (to_offset session) chain) chains
   in
-  let points_of_interest = points_of_interest chain in
-  let categories = categorization_points chain in
-  let data_file = open_out (Printf.sprintf "%s/reaction_times.csv" prefix) in
-  let _ =
-    FnCh.reaction_times_to_csv categories points_of_interest data_file reaction_times
+  let tasks = List.map (Automata.Simple.Export.map_task @@ to_offset session) tasks in
+  let traces = processor @@ generate_trace ~config spec in
+  let process_chain (chain_name, chain) =
+    let chain_instances =
+      traces
+      |> List.mapi
+           (process_trace ~config:{ config with directory = prefix } ~session chain tasks)
+      |> List.map Dynarray.to_iter
+      |> List.fold_left Iter.append Iter.empty
+    in
+    let spans_to_consider = Chain.spans_of_interest chain in
+    let categories = Chain.sampling_clocks chain in
+    let make_histogram span =
+      let module S = Stats.Make (String) (Number.Rational) in
+      let misses_into_category map =
+        List.to_string
+          ~sep:"_"
+          (fun sample ->
+             let missed = CMap.find_opt sample map in
+             let missed = Option.value ~default:0 missed in
+             Printf.sprintf "%s_%i" (of_offset session sample) missed)
+          categories
+      in
+      let reaction_times =
+        Iter.map
+          (fun ({ misses; _ } as chain : chain_instance) ->
+             misses_into_category misses, reaction_time_of_span chain span)
+          chain_instances
+      in
+      let histogram = S.histogram ~bin_size reaction_times in
+      write_file
+        ~filename:
+          (Printf.sprintf
+             "%s/%s_%s_%s_reaction_time_hist.csv"
+             prefix
+             chain_name
+             (of_offset session (fst span))
+             (of_offset session (snd span)))
+        (fun data_file -> S.to_csv (Format.formatter_of_out_channel data_file) histogram)
+    in
+    List.iter make_histogram spans_to_consider
   in
-  close_out data_file;
-  let data_file = open_out (Printf.sprintf "%s/reaction_time_hist.csv" prefix) in
-  let start, finish = chain_start_finish_clocks chain in
-  let module S = Stats.Make (String) (Number.Rational) in
-  let sample_points = categorization_points chain in
-  let misses_into_category map =
-    List.to_string
-      ~sep:"_"
-      (fun sample ->
-         let missed = Hashtbl.find_opt map sample in
-         let missed = Option.value ~default:0 missed in
-         Printf.sprintf "%s_%i" sample missed)
-      sample_points
-  in
-  let reaction_times =
-    Iter.map
-      (fun (misses, reaction_time) ->
-         misses_into_category misses, Hashtbl.find reaction_time (start, finish))
-      reaction_times
-  in
-  let histogram = S.histogram ~bin_size reaction_times in
-  S.to_csv (Format.formatter_of_out_channel data_file) histogram;
-  close_out data_file
+  List.iter process_chain chains
 ;;
 
 let parse_tasks s =
@@ -284,6 +253,20 @@ let parse_tasks s =
        , Printf.sprintf "%s.f" name
        , Printf.sprintf "%s.d" name ))
     names
+;;
+
+let read_whole_file filename =
+  (* open_in_bin works correctly on Unix and Windows *)
+  let ch = open_in_bin filename in
+  let s = really_input_string ch (in_channel_length ch) in
+  close_in ch;
+  s
+;;
+
+let parse_chain_file filename =
+  let content = read_whole_file filename in
+  let chains = String.split ~by:"\n" content in
+  List.map Chain.parse_with_name chains
 ;;
 
 let () =
@@ -301,7 +284,7 @@ let () =
   and print_timed_cadp_trace = ref ""
   and inspect_deadlock = ref false
   and directory = ref ""
-  and chain = ref ""
+  and chain_file = ref ""
   and tasks = ref "" in
   let speclist =
     [ "--traces", Arg.Set_int traces, "Number of traces to generate"
@@ -310,7 +293,9 @@ let () =
     ; "--steps", Arg.Set_int steps, "Max steps of simulation"
     ; "--tasks", Arg.Set_string tasks, "Tasks specification"
     ; "-o", Arg.Set_string directory, "Output directory path"
-    ; "-fc", Arg.Set_string chain, "Functional chain specification, links are -> and ?"
+    ; ( "-fc"
+      , Arg.Set_string chain_file
+      , "Path to functional chain specifications, links are -> and ?" )
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
     ; "-cadp", Arg.Set print_cadp_trace, "Print CADP trace"
     ; ( "-tcadp"
@@ -328,9 +313,9 @@ let () =
   if !cores < 1 then invalid_arg "number of cores should be positive";
   if !steps < 1 then invalid_arg "number of steps should be positive";
   if !horizon <= 0.0 then invalid_arg "horizon should be positive";
-  if !chain = "" then invalid_arg "empty chain";
+  if !chain_file = "" then invalid_arg "empty chain filename";
   if String.is_empty !specification
-  then invalid_arg "specification filepath cannot be emtpy";
+  then invalid_arg "specification filepath cannot be empty";
   if String.is_empty !directory then invalid_arg "output directory path cannot be emtpy";
   let processor =
     if !cores <> 1
@@ -344,15 +329,15 @@ let () =
             ~chunk_size:1
             ~start:0
             ~finish:(Int.pred !traces)
-            ~body:f
+            ~body:(fun v -> [ f v ])
             pool
-            Iter.append
-            Iter.empty))
+            List.append
+            []))
     else
       fun f ->
         Iter.int_range ~start:0 ~stop:(Int.pred !traces)
         |> Iter.map f
-        |> Iter.fold Iter.append Iter.empty
+        |> Iter.fold (Fun.flip List.cons) []
   in
   Ocolor_format.prettify_formatter Format.std_formatter;
   let ast =
@@ -361,7 +346,7 @@ let () =
       fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
     |> Result.unwrap ~msg:"Failed in parsing."
   in
-  let functional_chain = parse_chain !chain in
+  let functional_chains = parse_chain_file !chain_file in
   let name = Filename.basename !specification in
   let context, m, errors = Mrtccslparsing.Compile.into_module ast in
   if List.is_empty errors
@@ -384,7 +369,7 @@ let () =
         ; gen = { horizon = of_float !horizon; steps = !steps }
         ; directory = !directory
         }
-      (name, m, [], functional_chain))
+      (name, m, [], functional_chains))
   else (
     Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
     List.iter (Mrtccslparsing.Compile.print_compile_error Format.std_formatter) errors;
