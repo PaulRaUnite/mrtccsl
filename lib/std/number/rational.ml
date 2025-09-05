@@ -73,10 +73,53 @@ let of_float v =
   else of_float v
 ;;
 
-let[@inline] modulo x y : int * t * t =
-  let parts = div x y in
+(** [modulo_floor x ~divisor] returns [int(x/divisor), int(x/divisor)*divisor, rem(x/divisor)*divisor]*)
+let[@inline] modulo_floor x ~divisor : int * t * t =
+  let parts = div x divisor in
   let nom = Mpqf.get_num parts
   and denom = Mpqf.get_den parts in
   let whole, rem = Mpzf.fdiv_qr nom denom in
-  Mpz.get_int whole, mul (Mpqf.of_mpz whole) y, mul (Mpqf.of_mpz rem) y
+  Mpz.get_int whole, mul (Mpqf.of_mpz whole) divisor, mul (Mpqf.of_mpz2 rem denom) divisor
+;;
+
+let%test_unit "correct modulo floor" =
+  [%test_eq: _] (modulo_floor (of_int 1) ~divisor:(of_frac 1 2)) (2, of_int 1, of_int 0)
+;;
+
+(** [modulo_ceil x ~divisor] returns [int(x/divisor)+1, (int(x/divisor)+1)*divisor, -rem(x/divisor)*divisor]*)
+let[@inline] modulo_ceil x ~divisor : int * t * t =
+  let parts = div x divisor in
+  let nom = Mpzf.add_int (Mpqf.get_num parts) 1
+  and denom = Mpqf.get_den parts in
+  let whole, rem = Mpzf.cdiv_qr nom denom in
+  Mpz.get_int whole, Mpqf.of_mpz whole * divisor, Mpqf.of_mpz2 rem denom * divisor
+;;
+
+let%test_unit "correct modulo ceil" =
+  [%test_eq: _] (modulo_ceil (of_int 1) ~divisor:(of_frac 1 2)) (2, of_int 1, of_int 0)
+;;
+
+(** [modulo_around x ~divisor] returns [int(x/divisor)+1, (int(x/divisor)+1)*divisor, -rem(x/divisor)*divisor]*)
+let[@inline] modulo_near x ~divisor : int * t * t =
+  let divisor = div divisor (of_int 2) in
+  let parts = div x divisor in
+  let nom = Mpzf.add_int (Mpqf.get_num parts) 1
+  and denom = Mpqf.get_den parts in
+  let whole, rem = Mpzf.fdiv_qr nom denom in
+  let whole_int = Mpz.get_int whole in
+  let whole_int, rem =
+    if whole_int mod 2 = 0
+    then Int.div whole_int 2, rem
+    else Int.succ (Int.div whole_int 2), Mpzf.neg rem
+  in
+  whole_int, Mpqf.of_mpz whole * divisor, Mpqf.of_mpz rem * divisor
+;;
+
+let%test_unit "correct modulo ceil" =
+  [%test_eq: _]
+    (modulo_near (of_frac 5 4) ~divisor:(of_int 1))
+    (2, of_int 1, of_frac 1 4);
+  [%test_eq: _]
+    (modulo_near (of_frac 3 4) ~divisor:(of_int 1))
+    (2, of_int 1, of_frac (-1) 4)
 ;;
