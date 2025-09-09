@@ -2,7 +2,7 @@ open Language
 
 module Macro = struct
   open Language.Specification.Builder
-  open Automata.Simple.Export
+  open Automata.Export
 
   let task_names name =
     let start = Printf.sprintf "%s.s" name in

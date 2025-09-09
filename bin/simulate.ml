@@ -218,7 +218,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   let chains =
     List.map (fun (name, chain) -> name, Chain.map (to_offset session) chain) chains
   in
-  let tasks = List.map (Automata.Simple.Export.map_task @@ to_offset session) tasks in
+  let tasks = List.map (Automata.Export.map_task @@ to_offset session) tasks in
   let traces = processor @@ generate_trace ~config spec in
   let process_chain (chain_name, chain) =
     let chain_instances =
