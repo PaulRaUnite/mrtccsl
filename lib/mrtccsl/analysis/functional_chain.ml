@@ -103,14 +103,7 @@ module Chain = struct
   ;;
 end
 
-module Make
-    (C : Automata.Simple.Hashed.ID)
-    (N : sig
-       include Automata.Simple.Num
-
-       val modulo : t -> t -> int * t * t
-     end) =
-struct
+module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   module S = Automata.Simple.Hashed.WithSession (C) (N)
   module A = S.Inner
   module ST = Automata.Simple.Strategy (A)
@@ -404,8 +397,8 @@ struct
 
     let trace_to_cadp session ch trace = Inner.print_cadp ch (convert_trace session trace)
 
-    let trace_to_timed_cadp session step ch trace =
-      Inner.print_timed_cadp step ch (convert_trace session trace)
+    let trace_to_timed_cadp session round_to ch trace =
+      Inner.print_timed_cadp round_to ch (convert_trace session trace)
     ;;
   end
 end

@@ -112,6 +112,24 @@ let write_file ~filename f =
   Fun.protect ~finally:(fun () -> close_out file) (fun () -> f file)
 ;;
 
+type rounding =
+  | Near
+  | Floor
+  | Ceil
+
+let of_rounding = function
+  | Near -> modulo_near
+  | Floor -> modulo_floor
+  | Ceil -> modulo_ceil
+;;
+
+let parse_rounding = function
+  | "near" -> Near
+  | "floor" -> Floor
+  | "ceil" -> Ceil
+  | s -> invalid_arg (Printf.sprintf "parsing rounding, unexpected string: %s" s)
+;;
+
 type 'n generation_config =
   { steps : int
   ; horizon : 'n
@@ -124,6 +142,7 @@ type 'n processing_config =
   ; debug : bool
   ; gen : 'n generation_config
   ; directory : string
+  ; rounding : rounding
   }
 
 let generate_trace ~config system_spec _i =
@@ -159,10 +178,11 @@ let process_trace ~config ~session chain tasks i trace =
       Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace);
   Option.iter
     (fun step ->
+       let modulo = of_rounding config.rounding in
        write_file ~filename:(Printf.sprintf "%s.tcadp" basename) (fun trace_file ->
          Export.trace_to_timed_cadp
            session
-           step
+           (modulo ~divisor:step)
            (Format.formatter_of_out_channel trace_file)
            trace))
     config.print_timed_cadp;
@@ -227,7 +247,13 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
              misses_into_category misses, reaction_time_of_span chain span)
           chain_instances
       in
-      let histogram = S.histogram ~bin_size reaction_times in
+      let histogram =
+        S.histogram
+          (fun x ->
+             let _, closest_whole, _ = modulo_floor x ~divisor:bin_size in
+             closest_whole)
+          reaction_times
+      in
       write_file
         ~filename:
           (Printf.sprintf
@@ -285,7 +311,8 @@ let () =
   and inspect_deadlock = ref false
   and directory = ref ""
   and chain_file = ref ""
-  and tasks = ref "" in
+  and tasks = ref ""
+  and rounding = ref "near" in
   let speclist =
     [ "--traces", Arg.Set_int traces, "Number of traces to generate"
     ; "--cores", Arg.Set_int cores, "Number of cores to use"
@@ -304,6 +331,7 @@ let () =
     ; ( "-inspect"
       , Arg.Set inspect_deadlock
       , "Collect and print debug information for deadlocked traces" )
+    ; "-rounding", Arg.Set_string rounding, "near|floor|ceil"
     ]
   in
   let specification = ref "" in
@@ -368,6 +396,7 @@ let () =
         ; print_timed_cadp = Fun.catch_to_opt of_decimal_string !print_timed_cadp_trace
         ; gen = { horizon = of_float !horizon; steps = !steps }
         ; directory = !directory
+        ; rounding = parse_rounding !rounding
         }
       (name, m, [], functional_chains))
   else (

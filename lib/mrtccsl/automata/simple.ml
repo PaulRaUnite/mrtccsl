@@ -1277,11 +1277,7 @@ module Export = struct
          include Interface.Stringable
          include Interface.OrderedType with type t := t
        end)
-      (N : sig
-         include Num
-
-         val modulo : t -> t -> int * t * t
-       end)
+      (N : Num)
       (L : sig
              type t
              type elt
@@ -1470,10 +1466,10 @@ module Export = struct
       Format.pp_print_flush formatter ()
     ;;
 
-    let print_timed_cadp step formatter trace =
+    let print_timed_cadp round_to formatter trace =
       let previous_aligned = ref N.zero in
       let serialize fmt (l, now) =
-        let n_steps, diff_aligned, _ = N.(modulo (now - !previous_aligned) step) in
+        let n_steps, diff_aligned, _ = round_to N.(now - !previous_aligned) in
         let first = ref true in
         Iter.pp_seq
           ~sep:","

@@ -10,7 +10,6 @@ module Make
        include Map.OrderedType with type t := t
        include Interface.Stringable with type t := t
 
-       val modulo : t -> t -> int * t * t
        val from_pair : int * int -> t
      end) =
 struct
@@ -24,11 +23,7 @@ struct
     ; total : int
     }
 
-  let histogram ~bin_size (reaction_times : ('key * Num.t) Iter.t) : t =
-    let round_to n =
-      let _, whole, _ = Num.modulo n bin_size in
-      whole
-    in
+  let histogram round_to (reaction_times : ('key * Num.t) Iter.t) : t =
     let inc_category k categories = Categories.entry Int.succ ~default:0 k categories in
     let categories, bins, total =
       Iter.fold
