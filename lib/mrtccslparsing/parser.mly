@@ -125,7 +125,7 @@ int_expr0 :
 | X { Loc.make $symbolstartpos $endpos @@ InlineExpr $1 }
 | interval(X)  { Loc.make $symbolstartpos $endpos @@ InlineInterval $1 }
 
-offset : OFFSET ; duration {$2}
+offset : OFFSET ; duration_expr {$2}
 skip : SKIP ; inline_relation(int_expr) {$2}
 
 clock_expr : clock_expr0 {Loc.make $symbolstartpos $endpos $1}

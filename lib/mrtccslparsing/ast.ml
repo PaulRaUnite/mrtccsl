@@ -89,12 +89,12 @@ and clock_expr' =
   | CPeriodJitter of
       { period : duration
       ; error : duration_expr inline_relation
-      ; offset : duration option
+      ; offset : duration_expr option
       }
   | CPeriodDrift of
       { period : duration
       ; error : duration_expr inline_relation
-      ; offset : duration option
+      ; offset : duration_expr option
       }
   | CTimeDelay of
       { arg : clock_expr

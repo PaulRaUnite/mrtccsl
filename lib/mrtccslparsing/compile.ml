@@ -510,16 +510,15 @@ let into_module { assumptions; structure; assertions } =
         let* context, error =
           compile_duration_inline_relation ~context ~scope ~builder error
         in
+        let* context, offset =
+          map_context_opt_result ~context (compile_duration_expr ~scope) offset
+        in
         Builder.logical builder
         @@ AbsPeriodic
              { out
              ; period
              ; error
-             ; offset =
-                 Option.map_or
-                   ~default:(const Rational.zero)
-                   (compile_duration >> const)
-                   offset
+             ; offset = Option.value ~default:(const Rational.zero) offset
              };
         Ok context
       | CPeriodDrift { period; error; offset } ->
@@ -527,16 +526,15 @@ let into_module { assumptions; structure; assertions } =
         let* context, error =
           compile_duration_inline_relation ~context ~scope ~builder error
         in
+        let* context, offset =
+          map_context_opt_result ~context (compile_duration_expr ~scope) offset
+        in
         Builder.logical builder
         @@ CumulPeriodic
              { out
              ; period
              ; error
-             ; offset =
-                 Option.map_or
-                   ~default:(const Rational.zero)
-                   (compile_duration >> const)
-                   offset
+             ; offset = Option.value ~default:(const Rational.zero) offset
              };
         Ok context
       | CTimeDelay { arg; delay } ->
