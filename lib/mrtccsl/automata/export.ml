@@ -198,7 +198,8 @@ struct
     Format.pp_print_flush formatter ()
   ;;
 
-  let print_timed_cadp round_to formatter trace =
+  let print_timed_cadp round_to order_hints formatter trace =
+    
     let previous_aligned = ref N.zero in
     let serialize fmt (l, now) =
       let n_steps, diff_aligned, _ = round_to N.(now - !previous_aligned) in
@@ -210,7 +211,7 @@ struct
            Format.fprintf fmt "%s %i" (C.to_string c) advancement;
            first := false)
         fmt
-        (l |> L.to_iter |> Iter.shuffle);
+        (l |> L.to_iter |> Microstep.arrange_randomly order_hints |> Iter.of_list);
       previous_aligned := N.(!previous_aligned + diff_aligned)
     in
     Iter.pp_seq ~sep:"," serialize formatter trace;

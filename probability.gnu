@@ -23,6 +23,6 @@ print(filename)
 stats filename name "D" nooutput;
 
 set nokey
+set xtics 1
 
-print(D_column_header)
-plot for [j=2:D_columns] filename using j;
+plot for [j=2:D_columns] filename using j:xtic(1);

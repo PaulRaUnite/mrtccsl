@@ -397,8 +397,8 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
 
     let trace_to_cadp session ch trace = Inner.print_cadp ch (convert_trace session trace)
 
-    let trace_to_timed_cadp session round_to ch trace =
-      Inner.print_timed_cadp round_to ch (convert_trace session trace)
+    let trace_to_timed_cadp session round_to order_hints ch trace =
+      Inner.print_timed_cadp round_to order_hints ch (convert_trace session trace)
     ;;
   end
 end

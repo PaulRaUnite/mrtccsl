@@ -159,7 +159,7 @@ let generate_trace ~config system_spec _i =
   trace
 ;;
 
-let process_trace ~config ~session chain tasks i trace =
+let process_trace ~config ~session order_hints chain tasks i trace =
   let basename = Printf.sprintf "%s/%i" config.directory i in
   if config.print_svgbob
   then (
@@ -183,6 +183,7 @@ let process_trace ~config ~session chain tasks i trace =
          Export.trace_to_timed_cadp
            session
            (modulo ~divisor:step)
+           order_hints
            (Format.formatter_of_out_channel trace_file)
            trace))
     config.print_timed_cadp;
@@ -196,6 +197,7 @@ module Opt = Mrtccsl.Optimization.Order.Make (String)
 let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
+  let order_hints = Ccsl.MicroStep.derive_order spec.logical in
   let prefix = Filename.concat config.directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
@@ -224,7 +226,12 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
     let chain_instances =
       traces
       |> List.mapi
-           (process_trace ~config:{ config with directory = prefix } ~session chain tasks)
+           (process_trace
+              ~config:{ config with directory = prefix }
+              ~session
+              order_hints
+              chain
+              tasks)
       |> List.map Dynarray.to_iter
       |> List.fold_left Iter.append Iter.empty
     in

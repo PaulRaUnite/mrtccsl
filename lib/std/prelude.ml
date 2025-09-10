@@ -538,6 +538,16 @@ module List = struct
     in
     aux accu [] l
   ;;
+
+  let rec insert list x index =
+    match list with
+    | [] -> [ x ]
+    | h :: tail ->
+      (match index with
+       | 0 -> x :: list
+       | index when index > 0 -> h :: insert tail x (index - 1)
+       | _ -> invalid_arg "index cannot be less than 0")
+  ;;
 end
 
 module String = struct
