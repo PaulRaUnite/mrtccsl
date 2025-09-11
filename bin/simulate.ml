@@ -109,7 +109,11 @@ let rec create_dir fn =
 
 let write_file ~filename f =
   let file = open_out filename in
-  Fun.protect ~finally:(fun () -> close_out file) (fun () -> f file)
+  Fun.protect
+    ~finally:(fun () ->
+      flush file;
+      close_out file)
+    (fun () -> f file)
 ;;
 
 type rounding =
@@ -154,24 +158,23 @@ let generate_trace ~config system_spec _i =
     |> A.Trace.until ~horizon:config.gen.horizon
   in
   let trace = A.Trace.persist ~size_hint:config.gen.steps trace in
-  let deadlock = not !cut in
+  let deadlock = Iter.length trace <> config.gen.steps && not !cut in
   Printf.printf "trace deadlocked: %b\n" deadlock;
   trace
 ;;
 
-let process_trace ~config ~session order_hints chain tasks i trace =
+let process_trace ~config ~session order_hints chain clocks tasks i trace =
   let basename = Printf.sprintf "%s/%i" config.directory i in
   if config.print_svgbob
-  then (
-    let clocks = FnCh.S.Session.clocks session in
-    write_file ~filename:(Printf.sprintf "./%s.svgbob" basename) (fun trace_file ->
+  then
+    write_file ~filename:(Printf.sprintf "%s.svgbob" basename) (fun trace_file ->
       Export.trace_to_vertical_svgbob
         ~numbers:false
         ~tasks
         session
         clocks
         (Format.formatter_of_out_channel trace_file)
-        trace));
+        trace);
   if config.print_cadp
   then
     write_file ~filename:(Printf.sprintf "%s.cadp" basename) (fun trace_file ->
@@ -198,6 +201,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let order_hints = Ccsl.MicroStep.derive_order spec.logical in
+  let clocks = Ccsl.Language.Specification.clocks spec in
   let prefix = Filename.concat config.directory name in
   let _ = print_endline prefix in
   let _ = create_dir prefix in
@@ -223,6 +227,10 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   let tasks = List.map (Automata.Export.map_task @@ to_offset session) tasks in
   let traces = processor @@ generate_trace ~config spec in
   let process_chain (chain_name, chain) =
+    (* Format.printf
+      "%a\n"
+      (Chain.pp (fun fmt v -> Format.pp_print_string fmt (of_offset session v)))
+      chain; *)
     let chain_instances =
       traces
       |> List.mapi
@@ -231,6 +239,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
               ~session
               order_hints
               chain
+              clocks
               tasks)
       |> List.map Dynarray.to_iter
       |> List.fold_left Iter.append Iter.empty
@@ -254,6 +263,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
              misses_into_category misses, reaction_time_of_span chain span)
           chain_instances
       in
+      let reaction_times = Iter.persistent reaction_times in
       let histogram =
         S.histogram
           (fun x ->
@@ -299,7 +309,7 @@ let read_whole_file filename =
 let parse_chain_file filename =
   let content = read_whole_file filename in
   let chains = String.split ~by:"\n" content in
-  List.map Chain.parse_with_name chains
+  chains |> List.filter (not << String.is_empty) |> List.map Chain.parse_with_name
 ;;
 
 let () =

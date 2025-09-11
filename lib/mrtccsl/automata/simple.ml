@@ -5,13 +5,15 @@ let truncated_guassian_rvs ~a ~b ~mu ~sigma =
   if Float.equal sigma 0.0
   then mu
   else (
+    let factor = 1000.0 in
+    let a, b, mu, sigma = factor *. a, factor *. b, factor *. mu, factor *. sigma in
     let prob_l, prob_r = Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a, b) in
     if Float.abs (prob_r -. prob_l) < 0.000001
     then Random.float (b -. a) +. a
     else (
       let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
       let result = Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma in
-      result))
+      result /. factor))
 ;;
 
 (**Specifies the distribution of the time variable. *)
@@ -1218,7 +1220,7 @@ module Hashed = struct
         map_dist_binding f Fun.id dist
       ;;
 
-      let clocks (_, clocks) = Dynarray.to_list clocks
+      let identifiers (_, clocks) = Dynarray.to_list clocks
     end
 
     module L = struct

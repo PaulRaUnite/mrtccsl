@@ -99,7 +99,7 @@ module Chain = struct
     | [ name; chain ] -> name, parse chain
     | _ ->
       failwith
-        "wrong chain, should follow the template <name>:<chain link>((->|?)<chain link>)*"
+        (Printf.sprintf "invalid chain \"%s\", should follow the template <name>:<chain link>((->|?)<chain link>)*" str)
   ;;
 end
 

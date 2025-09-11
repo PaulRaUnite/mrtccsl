@@ -42,6 +42,7 @@ struct
   ;;
 
   let to_csv fmt { bins; categories; _ } =
+    (* Printf.printf "number of bins: %i\n" (Bins.cardinal bins) ; *)
     let pp_category = fun fmt c -> Format.fprintf fmt "%s" (Category.to_string c) in
     let pp_num fmt n = Format.fprintf fmt "%s" (Num.to_string n) in
     let pp_sep fmt () = Format.pp_print_string fmt "," in
@@ -64,6 +65,7 @@ struct
            Format.pp_print_seq ~pp_sep pp_num fmt (Seq.map snd (Categories.to_seq map))
          in
          Format.fprintf fmt "%a,%a,%a\n" pp_num bin pp_num sum pp_map cats)
-      bins
+      bins;
+    Format.pp_print_flush fmt ()
   ;;
 end
