@@ -263,7 +263,6 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
              misses_into_category misses, reaction_time_of_span chain span)
           chain_instances
       in
-      let reaction_times = Iter.persistent reaction_times in
       let histogram =
         S.histogram
           (fun x ->
@@ -324,7 +323,8 @@ let () =
   and horizon = ref 10_000.0
   and print_svgbob = ref false
   and print_cadp_trace = ref false
-  and print_timed_cadp_trace = ref ""
+  and print_tcadp_trace = ref false
+  and scale = ref ""
   and inspect_deadlock = ref false
   and directory = ref ""
   and chain_file = ref ""
@@ -342,9 +342,8 @@ let () =
       , "Path to functional chain specifications, links are -> and ?" )
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
     ; "-cadp", Arg.Set print_cadp_trace, "Print CADP trace"
-    ; ( "-tcadp"
-      , Arg.Set_string print_timed_cadp_trace
-      , "Print CADP trace with time advances" )
+    ; "--scale", Arg.Set_string scale, "Set scale for histogram and timed CADP"
+    ; "-tcadp", Arg.Set print_tcadp_trace, "Print CADP trace with time advances"
     ; ( "-inspect"
       , Arg.Set inspect_deadlock
       , "Collect and print debug information for deadlocked traces" )
@@ -396,6 +395,7 @@ let () =
   let context, m, errors = Mrtccslparsing.Compile.into_module ast in
   if List.is_empty errors
   then (
+    let scale = if !scale = "" then None else Some (of_decimal_string !scale) in
     let v2s =
       Mrtccslparsing.Compile.(
         function
@@ -405,12 +405,12 @@ let () =
     let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
     run_simulation
       ~processor
-      ~bin_size:(Number.Rational.from_pair (1, 10))
+      ~bin_size:(Option.value ~default:(Number.Rational.from_pair (1, 1000)) scale)
       ~config:
         { debug = !inspect_deadlock
         ; print_svgbob = !print_svgbob
         ; print_cadp = !print_cadp_trace
-        ; print_timed_cadp = Fun.catch_to_opt of_decimal_string !print_timed_cadp_trace
+        ; print_timed_cadp = (if !print_tcadp_trace then scale else None)
         ; gen = { horizon = of_float !horizon; steps = !steps }
         ; directory = !directory
         ; rounding = parse_rounding !rounding
