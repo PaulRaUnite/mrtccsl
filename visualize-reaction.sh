@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+unset GTK_PATH;
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 cd $1

@@ -1,28 +1,27 @@
+
 clear
 reset
 set border 3
 set datafile separator ','
 
-set output sprintf("%s.pdf", filename)
-set terminal pdf
+set output sprintf("%s.svg", filename)
+set terminal svg size 1000,500 enhanced font "Helvetica,20" background rgb "white"
 set datafile missing NaN
 set datafile columnheaders
 
-# Add a vertical dotted line at x=0 to show centre (mean) of distribution.
-set yzeroaxis
-
 # Each bar is half the (visual) width of its x-range.
-set boxwidth 0.9 relative
+set boxwidth 0.5 relative
 set style data histograms
 set style histogram rowstacked
 set style fill solid 1.0
 
-set ylabel "probability"
+# set ylabel "probability"
 
-print(filename)
-stats filename name "D" nooutput;
+print(filename);
+stats filename name "D" nooutput
 
-set nokey
-set xtics 1
+# set nokey
+unset border
+set xtics auto
 
-plot for [j=2:D_columns] filename using j:xtic(1);
+plot for [j=3:D_columns] filename using j title sprintf("missed %i", j-3);
