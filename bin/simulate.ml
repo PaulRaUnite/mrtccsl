@@ -149,7 +149,7 @@ type 'n processing_config =
   ; rounding : rounding
   }
 
-let generate_trace ~config system_spec _i =
+let generate_trace ~config ~session system_spec order_hints clocks tasks i =
   let strategy = ST.Solution.refuse_empty random_strat in
   let env = A.of_spec ~debug:config.debug system_spec in
   let trace, cut =
@@ -160,10 +160,6 @@ let generate_trace ~config system_spec _i =
   let trace = A.Trace.persist ~size_hint:config.gen.steps trace in
   let deadlock = Iter.length trace <> config.gen.steps && not !cut in
   Printf.printf "trace deadlocked: %b\n" deadlock;
-  trace
-;;
-
-let process_trace ~config ~session order_hints chain clocks tasks i trace =
   let basename = Printf.sprintf "%s/%i" config.directory i in
   if config.print_svgbob
   then
@@ -190,6 +186,10 @@ let process_trace ~config ~session order_hints chain clocks tasks i trace =
            (Format.formatter_of_out_channel trace_file)
            trace))
     config.print_timed_cadp;
+  trace
+;;
+
+let trace_to_chains chain trace =
   let semantics = Earliest in
   let chain_instances, _ = trace_to_chain semantics chain (A.Trace.to_iter trace) in
   chain_instances
@@ -225,7 +225,16 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
     List.map (fun (name, chain) -> name, Chain.map (to_offset session) chain) chains
   in
   let tasks = List.map (Automata.Export.map_task @@ to_offset session) tasks in
-  let traces = processor @@ generate_trace ~config spec in
+  let traces =
+    processor
+    @@ generate_trace
+         ~config:{ config with directory = prefix }
+         ~session
+         spec
+         order_hints
+         clocks
+         tasks
+  in
   let process_chain (chain_name, chain) =
     (* Format.printf
       "%a\n"
@@ -233,14 +242,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
       chain; *)
     let chain_instances =
       traces
-      |> List.mapi
-           (process_trace
-              ~config:{ config with directory = prefix }
-              ~session
-              order_hints
-              chain
-              clocks
-              tasks)
+      |> List.map (trace_to_chains chain)
       |> List.map Dynarray.to_iter
       |> List.fold_left Iter.append Iter.empty
     in
@@ -267,6 +269,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
         S.histogram
           (fun x ->
              let _, closest_whole, _ = modulo_floor x ~divisor:bin_size in
+             (* Printf.printf "%s\n" (Number.Rational.to_string closest_whole); *)
              closest_whole)
           reaction_times
       in
