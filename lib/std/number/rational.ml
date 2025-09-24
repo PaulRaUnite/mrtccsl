@@ -28,7 +28,7 @@ let t_of_sexp sexp =
 ;;
 
 (*TODO: lossy convertion, but low priority*)
-let t_to_string x = Float.to_string (to_float x)
+let t_to_string x = Printf.sprintf "%f" (to_float x)
 let to_string = t_to_string
 
 let round_up step x y =
