@@ -388,7 +388,14 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
 
   module Export = struct
     module Set = Set.Make (String)
-    module Inner = Automata.Trace.Make (String) (N) (Set)
+
+    module Inner =
+      Automata.Trace.Make
+        (N)
+        (struct
+          include Set
+          module E = String
+        end)
 
     let convert_tasks session tasks =
       List.map (Automata.Trace.map_task @@ of_offset session) tasks
@@ -434,6 +441,30 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         ~serialize:(Inner.Serialize.respect_microstep order_hints)
         ch
         (convert_trace session trace)
+    ;;
+
+    let read_csv session ch =
+      Inner.CSV.read ch
+      |> Iter.map (fun Trace.{ time; label } ->
+        ( label
+          |> Set.to_iter
+          |> Iter.map (C.of_string >> to_offset session)
+          |> A.L.of_iter
+        , time ))
+    ;;
+
+    let write_csv session ch clocks trace =
+      let clock_to_string = of_offset session >> C.to_string in
+      let trace =
+        Iter.map
+          (fun (label, time) ->
+             let label =
+               label |> A.L.to_iter |> Iter.map clock_to_string |> Set.of_iter
+             in
+             Trace.{ label; time })
+          trace
+      and clocks = List.map clock_to_string clocks in
+      Inner.CSV.write ch clocks trace
     ;;
   end
 end

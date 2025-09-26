@@ -22,3 +22,4 @@ let from_int = Fun.id
 include Interface.Number.Operators.Make (Int)
 
 let to_rational = Rational.of_int
+let of_string = int_of_string

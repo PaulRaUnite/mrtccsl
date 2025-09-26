@@ -23,6 +23,7 @@ module type ID = sig
   open Interface
   include OrderedType
   include Stringable with type t := t
+  include Parseble with type t := t
   include Sexplib0.Sexpable.S with type t := t
 end
 
@@ -30,6 +31,7 @@ module type Num = sig
   include Interval.Num
   include Interface.ExpOrder.S with type t := t
   include Interface.Stringable with type t := t
+  include Interface.Parseble with type t := t
   include Interface.OrderedType with type t := t
 
   val zero : t

@@ -126,6 +126,7 @@ type 'n processing_config =
   { print_svgbob : bool
   ; print_cadp : bool
   ; print_timed_cadp : 'n option
+  ; print_native : bool
   ; debug : bool
   ; gen : 'n generation_config
   ; output_dir : string
@@ -144,6 +145,14 @@ let generate_trace ~config ~session system_spec order_hints clocks tasks i =
   let deadlock = Iter.length trace <> config.gen.steps && not !cut in
   Printf.printf "trace deadlocked: %b\n" deadlock;
   let basename = Printf.sprintf "%s/%i" config.output_dir i in
+  if config.print_native
+  then
+    Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
+      FnCh.Export.write_csv
+        session
+        ch
+        (List.map (S.Session.to_offset session) clocks)
+        trace);
   if config.print_svgbob
   then
     Sys.write_file ~filename:(Printf.sprintf "%s.svgbob" basename) (fun trace_file ->
@@ -379,6 +388,7 @@ let () =
         ; gen = { horizon = of_float !horizon; steps = !steps }
         ; output_dir = !directory
         ; rounding = parse_rounding !rounding
+        ; print_native = true
         }
       (name, m, [], functional_chains))
   else (

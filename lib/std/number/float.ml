@@ -29,3 +29,4 @@ let of_int = float_of_int
 let to_int = int_of_float
 let of_float x = x
 let to_float x = x
+let of_string = float_of_string

@@ -4,6 +4,12 @@ module type Stringable = sig
   val to_string : t -> string
 end
 
+module type Parseble = sig
+  type t
+
+  val of_string : string -> t
+end
+
 module type Debug = sig
   include Sexplib0.Sexpable.S
   include Stringable with type t := t

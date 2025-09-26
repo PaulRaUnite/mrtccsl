@@ -558,6 +558,7 @@ module String = struct
   let to_string = Fun.id
   let init_char n c = init n (fun _ -> c)
   let grapheme_length = Uuseg_string.fold_utf_8 `Grapheme_cluster (fun x _ -> x + 1) 0
+  let of_string = Fun.id
 end
 
 module Buffer = struct
@@ -1219,3 +1220,5 @@ module Sys = struct
       (fun () -> f file)
   ;;
 end
+
+let failwithf f = Printf.ksprintf failwith f

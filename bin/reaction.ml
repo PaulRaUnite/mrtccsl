@@ -11,13 +11,7 @@ let extract_reaction trace_streams reactions_dir histogram_param chains =
   let session = S.Session.create () in
   let to_inner = S.Session.to_offset session in
   let to_outer = S.Session.of_offset session in
-  let channel_to_trace ch =
-    let parse line =
-      Scanf.sscanf line " %s %f" (fun s t ->
-        A.L.singleton (S.Session.save session s), Number.Rational.of_float t)
-    in
-    ch |> In_channel.lines_seq |> Seq.map parse |> Dynarray.of_seq
-  in
+  let channel_to_trace ch = FnCh.Export.read_csv session ch |> Dynarray.of_iter in
   let traces = List.map channel_to_trace trace_streams in
   let process_chain (chain_name, chain) =
     let chain = Chain.map to_inner chain in
@@ -88,7 +82,8 @@ let reactions_list_arg =
     & info
         [ "l"; "list" ]
         ~doc:
-          "Directory where CSV lists of reaction times categorized by misses will be placed.")
+          "Directory where CSV lists of reaction times categorized by misses will be \
+           placed.")
 ;;
 
 let histogram_arg =
@@ -98,7 +93,8 @@ let histogram_arg =
     & info
         [ "h"; "hist" ]
         ~doc:
-          "Directory where CSV histograms of reaction times, categorized by misses and collected using scale, will be placed."
+          "Directory where CSV histograms of reaction times, categorized by misses and \
+           collected using scale, will be placed."
         ~docv:"HIST")
 ;;
 
@@ -116,8 +112,7 @@ let cmd =
        "reaction"
        ~version
        ~doc:"Compute reaction times of traces using functional chain specification"
-       ~man
-       )
+       ~man)
   @@ Term.ret
   @@
   let+ traces = trace_arg

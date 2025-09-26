@@ -13,7 +13,8 @@
   std
   iter
   owl
-  bitvectorset)
+  bitvectorset
+  csv)
  (preprocess
   (pps
    ppx_inline_test

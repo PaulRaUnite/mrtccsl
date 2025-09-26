@@ -9,21 +9,53 @@ type 'c task =
   }
 [@@deriving map]
 
-module Make
-    (C : sig
-       include Interface.Stringable
-       include Interface.OrderedType with type t := t
-     end)
-    (N : Simple.Num)
-    (L : sig
-           type t
-           type elt
+module type Container = sig
+  type 'a t
+end
 
-           val mem : elt -> t -> bool
-           val to_iter : t -> (elt -> unit) -> unit
-         end
-         with type elt = C.t) =
-struct
+module type Element = sig
+  include Interface.Stringable
+  include Interface.OrderedType with type t := t
+  include Interface.Parseble with type t := t
+end
+
+module type Label = sig
+  module E : Element
+
+  type t
+  type elt := E.t
+
+  val mem : elt -> t -> bool
+  val to_iter : t -> (elt -> unit) -> unit
+  val of_iter : elt Iter.t -> t
+end
+
+module type Timestamp = sig
+  type t
+
+  val ( + ) : t -> t -> t
+  val ( - ) : t -> t -> t
+  val zero : t
+
+  include Interface.Stringable with type t := t
+  include Interface.Parseble with type t := t
+end
+
+(* module Make (C : Container) (L : Label) (T : Timestamp) = struct
+  type t = L.t C.t
+
+  module Export = struct end
+  module Import = struct end
+end *)
+
+type ('l, 'n) step =
+  { label : 'l
+  ; time : 'n
+  }
+
+module Make (N : Timestamp) (L : Label) = struct
+  type nonrec step = (L.t, N.t) step
+
   module Svgbob = struct
     let print_horizontal ?(numbers = false) ?precision ~tasks clocks formatter trace =
       if List.is_empty clocks
@@ -36,14 +68,14 @@ struct
             not
               (List.exists
                  (fun { release; start; finish; deadline; _ } ->
-                    C.compare c release = 0
-                    || C.compare c start = 0
-                    || C.compare c finish = 0
-                    || C.compare c deadline = 0)
+                    L.E.compare c release = 0
+                    || L.E.compare c start = 0
+                    || L.E.compare c finish = 0
+                    || L.E.compare c deadline = 0)
                  tasks))
           |> Array.of_seq
         in
-        let clock_strs = Array.map C.to_string clocks in
+        let clock_strs = Array.map L.E.to_string clocks in
         let len = Array.length clocks in
         let biggest_clock =
           clock_strs |> Array.to_seq |> Seq.map String.length |> Seq.fold_left Int.max 0
@@ -90,9 +122,9 @@ struct
         in
         let module TMap =
           Map.Make (struct
-            type t = C.t * C.t * C.t * C.t
+            type t = L.E.t * L.E.t * L.E.t * L.E.t
 
-            let compare = Tuple.compare_same4 C.compare
+            let compare = Tuple.compare_same4 L.E.compare
           end)
         in
         let serialize_label task_state (l, n') =
@@ -207,10 +239,10 @@ struct
             not
               (List.exists
                  (fun { release; start; finish; deadline; _ } ->
-                    C.compare c release = 0
-                    || C.compare c start = 0
-                    || C.compare c finish = 0
-                    || C.compare c deadline = 0)
+                    L.E.compare c release = 0
+                    || L.E.compare c start = 0
+                    || L.E.compare c finish = 0
+                    || L.E.compare c deadline = 0)
                  tasks))
           |> Array.of_list
         in
@@ -225,7 +257,7 @@ struct
         let width =
           Array.fold_left
             (fun off clock ->
-               let s = C.to_string clock in
+               let s = L.E.to_string clock in
                Format.fprintf ch "%*s\n" (off + String.grapheme_length s) s;
                off + 2)
             width
@@ -377,11 +409,60 @@ struct
       let tag_state = init_tagger () in
       let pp_step f (label, now) =
         let serialization = serialize label in
-        let serialization = tag tag_state now @@ Iter.map C.to_string serialization in
+        let serialization = tag tag_state now @@ Iter.map L.E.to_string serialization in
         Iter.pp_seq ~sep:"," Format.pp_print_string f serialization
       in
       Iter.pp_seq ~sep:(Option.value ~default:"," step_sep) pp_step formatter trace;
       Format.pp_print_flush formatter ()
+    ;;
+  end
+
+  module CSV = struct
+    let timestamp_column = "t"
+
+    let read ch =
+      Csv.of_channel ~has_header:true ch
+      |> Csv.Rows.iter
+      |> Iter.from_labelled_iter
+      |> Iter.map (fun row ->
+        let timestamp = N.of_string (Csv.Row.find row timestamp_column) in
+        let label =
+          row
+          |> Csv.Row.to_assoc
+          |> Iter.of_list
+          |> Iter.filter_map (fun (name, value) ->
+            if
+              name = timestamp_column
+              || String.contains name '{'
+              || String.contains name '}'
+            then None
+            else (
+              match value with
+              | "0" -> None
+              | "1" -> Some name
+              | str -> failwithf "incorrect value in column %s: %s" name str))
+          |> Iter.map L.E.of_string
+          |> L.of_iter
+        in
+        { label; time = timestamp })
+    ;;
+
+    let write ch clocks trace =
+      let out = Csv.to_channel ~quote_all:false ch in
+      let clock_strs = List.map L.E.to_string clocks in
+      Csv.output_record out (timestamp_column :: clock_strs);
+      Iter.iter
+        (fun step ->
+           let presence =
+             clocks
+             |> List.map (fun clock -> L.mem clock step.label)
+             |> List.map (function
+               | true -> "1"
+               | false -> "0")
+           in
+           let timestamp = N.to_string step.time in
+           Csv.output_record out (timestamp :: presence))
+        trace
     ;;
   end
 end
