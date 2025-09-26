@@ -105,9 +105,7 @@ module Chain = struct
            str)
   ;;
 
-  let parse_from_channel ch =
-    ch |> In_channel.lines_seq |> Seq.map parse_with_name
-  ;;
+  let parse_from_channel ch = ch |> In_channel.lines_seq |> Seq.map parse_with_name
 end
 
 module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
@@ -403,7 +401,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     ;;
 
     let trace_to_svgbob ?numbers ?precision ~tasks session clocks ch trace =
-      Inner.trace_to_svgbob
+      Inner.Svgbob.print_horizontal
         ?numbers
         ?precision
         ~tasks:(convert_tasks session tasks)
@@ -413,7 +411,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     ;;
 
     let trace_to_vertical_svgbob ?numbers ~tasks session clocks channel trace =
-      Inner.trace_to_vertical_svgbob
+      Inner.Svgbob.print_vertical
         ?numbers
         ~tasks:(convert_tasks session tasks)
         clocks
@@ -421,10 +419,21 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         (convert_trace session trace)
     ;;
 
-    let trace_to_cadp session ch trace = Inner.print_cadp ch (convert_trace session trace)
+    let trace_to_cadp session ch trace =
+      Inner.CSL.print
+        ~step_sep:",STEP,"
+        ~tagger:Inner.Tag.none
+        ~serialize:Inner.Serialize.random
+        ch
+        (convert_trace session trace)
+    ;;
 
     let trace_to_timed_cadp session round_to order_hints ch trace =
-      Inner.print_timed_cadp round_to order_hints ch (convert_trace session trace)
+      Inner.CSL.print
+        ~tagger:(Inner.Tag.tag_round_timestamp round_to)
+        ~serialize:(Inner.Serialize.respect_microstep order_hints)
+        ch
+        (convert_trace session trace)
     ;;
   end
 end
