@@ -17,7 +17,7 @@ struct
   module CategorySet = Set.Make (Category)
   module Bins = Map.Make (Num)
 
-  type t =
+  type t = (* TODO: separate normalized and non-normalized histograms? *)
     { bins : Num.t Categories.t Bins.t
     ; categories : CategorySet.t
     ; total : int
@@ -41,7 +41,7 @@ struct
     { bins = normalized_bins; categories; total }
   ;;
 
-  let to_csv fmt { bins; categories; _ } =
+  let to_csv { bins; categories; _ } fmt =
     (* Printf.printf "number of bins: %i\n" (Bins.cardinal bins) ; *)
     let pp_category = fun fmt c -> Format.fprintf fmt "%s" (Category.to_string c) in
     let pp_num fmt n = Format.fprintf fmt "%s" (Num.to_string n) in

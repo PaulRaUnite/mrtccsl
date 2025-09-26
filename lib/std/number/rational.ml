@@ -124,7 +124,7 @@ let%test_unit "correct modulo ceil" =
     (-2, of_int (-1), of_frac (-1) 4)
 ;;
 
-(** [modulo_around x ~divisor] returns closest whole number dividend.*)
+(** [modulo_near x ~divisor] returns closest whole number dividend.*)
 let[@inline] modulo_near x ~divisor : int * t * t =
   let divisor = div divisor (of_int 2) in
   let parts = div x divisor in
@@ -177,3 +177,12 @@ let%test_unit "correct modulo near-" =
     (modulo_near (of_frac (-9) 4) ~divisor:(of_int 1))
     (-2, of_int (-2), of_frac (-1) 4)
 ;;
+
+let round_with modulo bin_size x =
+  let _, closest_whole, _ = modulo x ~divisor:bin_size in
+  closest_whole
+;;
+
+let round_near = round_with modulo_near
+let round_floor = round_with modulo_floor
+let round_ceil = round_with modulo_ceil

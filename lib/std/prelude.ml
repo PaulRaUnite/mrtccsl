@@ -1184,3 +1184,38 @@ end = struct
   let exists = Dynarray.exists
   let length = Dynarray.length
 end
+
+module In_channel = struct
+  include In_channel
+
+  let lines_seq ch =
+    Seq.unfold
+      (fun ch ->
+         let* line = In_channel.input_line ch in
+         Some (line, ch))
+      ch
+  ;;
+end
+
+module Sys = struct
+  include Sys
+
+  let rec create_dir fn =
+    if not (Sys.file_exists fn)
+    then (
+      let parent_dir = Filename.dirname fn in
+      create_dir parent_dir;
+      Sys.mkdir fn 0o755)
+  ;;
+
+  let write_file ~filename f =
+    let parent = Filename.dirname filename in
+    create_dir parent;
+    let file = open_out filename in
+    Fun.protect
+      ~finally:(fun () ->
+        flush file;
+        close_out file)
+      (fun () -> f file)
+  ;;
+end

@@ -99,23 +99,6 @@ let random_strat =
   candidates
 ;; *)
 
-let rec create_dir fn =
-  if not (Sys.file_exists fn)
-  then (
-    let parent_dir = Filename.dirname fn in
-    create_dir parent_dir;
-    Sys.mkdir fn 0o755)
-;;
-
-let write_file ~filename f =
-  let file = open_out filename in
-  Fun.protect
-    ~finally:(fun () ->
-      flush file;
-      close_out file)
-    (fun () -> f file)
-;;
-
 type rounding =
   | Near
   | Floor
@@ -145,7 +128,7 @@ type 'n processing_config =
   ; print_timed_cadp : 'n option
   ; debug : bool
   ; gen : 'n generation_config
-  ; directory : string
+  ; output_dir : string
   ; rounding : rounding
   }
 
@@ -160,10 +143,10 @@ let generate_trace ~config ~session system_spec order_hints clocks tasks i =
   let trace = A.Trace.persist ~size_hint:config.gen.steps trace in
   let deadlock = Iter.length trace <> config.gen.steps && not !cut in
   Printf.printf "trace deadlocked: %b\n" deadlock;
-  let basename = Printf.sprintf "%s/%i" config.directory i in
+  let basename = Printf.sprintf "%s/%i" config.output_dir i in
   if config.print_svgbob
   then
-    write_file ~filename:(Printf.sprintf "%s.svgbob" basename) (fun trace_file ->
+    Sys.write_file ~filename:(Printf.sprintf "%s.svgbob" basename) (fun trace_file ->
       Export.trace_to_vertical_svgbob
         ~numbers:false
         ~tasks
@@ -173,12 +156,12 @@ let generate_trace ~config ~session system_spec order_hints clocks tasks i =
         trace);
   if config.print_cadp
   then
-    write_file ~filename:(Printf.sprintf "%s.cadp" basename) (fun trace_file ->
+    Sys.write_file ~filename:(Printf.sprintf "%s.cadp" basename) (fun trace_file ->
       Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace);
   Option.iter
     (fun step ->
        let modulo = of_rounding config.rounding in
-       write_file ~filename:(Printf.sprintf "%s.tcadp" basename) (fun trace_file ->
+       Sys.write_file ~filename:(Printf.sprintf "%s.tcadp" basename) (fun trace_file ->
          Export.trace_to_timed_cadp
            session
            (modulo ~divisor:step)
@@ -197,14 +180,13 @@ let trace_to_chains chain trace =
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
+let run_simulation ~config ~bin_size ~processor (_, m, tasks, chains) =
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let order_hints = Ccsl.MicroStep.derive_order spec.logical in
   let clocks = Ccsl.Language.Specification.clocks spec in
-  let prefix = Filename.concat config.directory name in
-  let _ = print_endline prefix in
-  let _ = create_dir prefix in
+  let _ = print_endline config.output_dir in
+  let _ = Sys.create_dir config.output_dir in
   let _ =
     print_endline
       (Language.Specification.show
@@ -226,14 +208,7 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
   in
   let tasks = List.map (Automata.Export.map_task @@ to_offset session) tasks in
   let traces =
-    processor
-    @@ generate_trace
-         ~config:{ config with directory = prefix }
-         ~session
-         spec
-         order_hints
-         clocks
-         tasks
+    processor @@ generate_trace ~config ~session spec order_hints clocks tasks
   in
   let process_chain (chain_name, chain) =
     (* Format.printf
@@ -250,38 +225,19 @@ let run_simulation ~config ~bin_size ~processor (name, m, tasks, chains) =
     let categories = Chain.sampling_clocks chain in
     let make_histogram span =
       let module S = Stats.Make (String) (Number.Rational) in
-      let misses_into_category map =
-        List.to_string
-          ~sep:"_"
-          (fun sample ->
-             let missed = CMap.find_opt sample map in
-             let missed = Option.value ~default:0 missed in
-             Printf.sprintf "%s_%i" (of_offset session sample) missed)
-          categories
-      in
-      let reaction_times =
-        Iter.map
-          (fun ({ misses; _ } as chain : chain_instance) ->
-             misses_into_category misses, reaction_time_of_span chain span)
-          chain_instances
+      let tagged_reaction_times =
+        FnCh.categorized_reaction_times session categories span chain_instances
       in
       let histogram =
-        S.histogram
-          (fun x ->
-             let _, closest_whole, _ = modulo_floor x ~divisor:bin_size in
-             (* Printf.printf "%s\n" (Number.Rational.to_string closest_whole); *)
-             closest_whole)
-          reaction_times
+        S.histogram (Number.Rational.round_floor bin_size) tagged_reaction_times
       in
-      write_file
-        ~filename:
-          (Printf.sprintf
-             "%s/%s_%s_%s_reaction_time_hist.csv"
-             prefix
-             chain_name
-             (of_offset session (fst span))
-             (of_offset session (snd span)))
-        (fun data_file -> S.to_csv (Format.formatter_of_out_channel data_file) histogram)
+      let filename =
+        Name_convention.histogram_name
+          config.output_dir
+          chain_name
+          (Tuple.map2 (of_offset session) span)
+      in
+      Sys.write_file ~filename (Format.formatter_of_out_channel >> S.to_csv histogram)
     in
     List.iter make_histogram spans_to_consider
   in
@@ -318,7 +274,7 @@ let () =
   let _ = Random.self_init () in
   let usage_msg =
     "simulate [--traces <traces>] [--cores <cores>] [--horizon <trace horizon>] [-bob] \
-     [-cadp] [--tasks <tasks>] <specification> -o <dir> -fc <functional chain>"
+     [-cadp] [--tasks <tasks>] <specification> <functional chain> -o <dir>"
   in
   let traces = ref 1
   and cores = ref 1
@@ -330,7 +286,6 @@ let () =
   and scale = ref ""
   and inspect_deadlock = ref false
   and directory = ref ""
-  and chain_file = ref ""
   and tasks = ref ""
   and rounding = ref "near" in
   let speclist =
@@ -340,9 +295,6 @@ let () =
     ; "--steps", Arg.Set_int steps, "Max steps of simulation"
     ; "--tasks", Arg.Set_string tasks, "Tasks specification"
     ; "-o", Arg.Set_string directory, "Output directory path"
-    ; ( "-fc"
-      , Arg.Set_string chain_file
-      , "Path to functional chain specifications, links are -> and ?" )
     ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
     ; "-cadp", Arg.Set print_cadp_trace, "Print CADP trace"
     ; "--scale", Arg.Set_string scale, "Set scale for histogram and timed CADP"
@@ -353,16 +305,26 @@ let () =
     ; "-rounding", Arg.Set_string rounding, "near|floor|ceil"
     ]
   in
-  let specification = ref "" in
-  let _ = Arg.parse speclist (fun file -> specification := file) usage_msg in
+  let positional = ref [] in
+  let _ =
+    Arg.parse
+      speclist
+      (fun file -> positional := List.append !positional [ file ])
+      usage_msg
+  in
   let recommended_cores = Stdlib.Domain.recommended_domain_count () in
   if !traces < 1 then invalid_arg "number of traces should be positive";
   if !cores < 1 then invalid_arg "number of cores should be positive";
   if !steps < 1 then invalid_arg "number of steps should be positive";
   if !horizon <= 0.0 then invalid_arg "horizon should be positive";
-  if !chain_file = "" then invalid_arg "empty chain filename";
-  if String.is_empty !specification
-  then invalid_arg "specification filepath cannot be empty";
+  let specification, chains =
+    match !positional with
+    | [ x; y ] -> x, y
+    | _ ->
+      invalid_arg
+        "specification filepath and/or chains file is not specified or there too many \
+         parameters"
+  in
   if String.is_empty !directory then invalid_arg "output directory path cannot be emtpy";
   let processor =
     if !cores <> 1
@@ -388,13 +350,13 @@ let () =
   in
   Ocolor_format.prettify_formatter Format.std_formatter;
   let ast =
-    Mrtccslparsing.Parse.from_file !specification
+    Mrtccslparsing.Parse.from_file specification
     |> Result.map_error (fun pp_e ->
       fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
     |> Result.unwrap ~msg:"Failed in parsing."
   in
-  let functional_chains = parse_chain_file !chain_file in
-  let name = Filename.basename !specification in
+  let functional_chains = parse_chain_file chains in
+  let name = Filename.basename specification in
   let context, m, errors = Mrtccslparsing.Compile.into_module ast in
   if List.is_empty errors
   then (
@@ -415,7 +377,7 @@ let () =
         ; print_cadp = !print_cadp_trace
         ; print_timed_cadp = (if !print_tcadp_trace then scale else None)
         ; gen = { horizon = of_float !horizon; steps = !steps }
-        ; directory = !directory
+        ; output_dir = !directory
         ; rounding = parse_rounding !rounding
         }
       (name, m, [], functional_chains))

@@ -99,7 +99,14 @@ module Chain = struct
     | [ name; chain ] -> name, parse chain
     | _ ->
       failwith
-        (Printf.sprintf "invalid chain \"%s\", should follow the template <name>:<chain link>((->|?)<chain link>)*" str)
+        (Printf.sprintf
+           "invalid chain \"%s\", should follow the template <name>:<chain \
+            link>((->|?)<chain link>)*"
+           str)
+  ;;
+
+  let parse_from_channel ch =
+    ch |> In_channel.lines_seq |> Seq.map parse_with_name
   ;;
 end
 
@@ -320,6 +327,25 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     Format.pp_print_flush formatter ()
   ;;
 
+  let categorized_reaction_times session categories span chain_instances =
+    let misses_into_category map =
+      List.to_string
+        ~sep:"_"
+        (fun sample ->
+           let missed = CMap.find_opt sample map in
+           let missed = Option.value ~default:0 missed in
+           Printf.sprintf "%s=%i" (of_offset session sample) missed)
+        categories
+    in
+    let reaction_times =
+      Iter.map
+        (fun ({ misses; _ } as chain : chain_instance) ->
+           misses_into_category misses, reaction_time_of_span chain span)
+        chain_instances
+    in
+    reaction_times
+  ;;
+
   let reaction_times_to_string ~sep iter =
     Iter.to_string
       ~sep
@@ -331,7 +357,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       iter
   ;;
 
-  let reaction_times_to_csv session categories pairs_to_print ch iter =
+  let reaction_times_to_csv session categories pairs_to_print iter ch =
     Printf.fprintf
       ch
       "%s\n"

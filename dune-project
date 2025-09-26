@@ -17,7 +17,7 @@
 
 (documentation https://github.com/PaulRaUnite/mrtccsl)
 
-(version 0.3)
+(version 0.4-alpha)
 
 (package
  (name mrtccsl)
@@ -73,7 +73,11 @@
    (>= 6.0.3))
   (owl
    (>= 1.2))
-  bitvectorset)
+  bitvectorset
+  (cmdliner
+   (= 1.3.0))
+  dune-build-info
+  (csv (= 2.4)))
  (tags
   (simulation
    "model checking"
