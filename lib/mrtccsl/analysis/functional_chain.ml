@@ -388,10 +388,10 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
 
   module Export = struct
     module Set = Set.Make (String)
-    module Inner = Automata.Export.Make (String) (N) (Set)
+    module Inner = Automata.Trace.Make (String) (N) (Set)
 
     let convert_tasks session tasks =
-      List.map (Automata.Export.map_task @@ of_offset session) tasks
+      List.map (Automata.Trace.map_task @@ of_offset session) tasks
     ;;
 
     let convert_trace session trace =
