@@ -92,7 +92,7 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
       let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
       let op, expr =
         match op with
-        | `Neq -> failwith "neq is not convex"
+        | `Neq -> failwith "non-equality is not convex"
         | `Eq -> Tcons1.EQ, diff
         | `Less -> Tcons1.SUP, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
         | `LessEq -> Tcons1.SUPEQ, Texpr1.unop Texpr1.Neg diff Texpr1.Real Texpr1.Near
@@ -200,7 +200,7 @@ module VPL (V : Var) (N : Num) = struct
   ;;
 
   let op2op = function
-    | `Neq -> failwith "neq is not convex"
+    | `Neq -> failwith "non-equality is not convex"
     | `Eq -> Vpl.Cstr_type.EQ
     | `More -> Vpl.Cstr_type.GT
     | `Less -> Vpl.Cstr_type.LT

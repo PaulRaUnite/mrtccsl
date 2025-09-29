@@ -448,7 +448,9 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       |> Iter.map (fun Trace.{ time; label } ->
         ( label
           |> Set.to_iter
-          |> Iter.map (C.of_string >> to_offset session)
+          |> Iter.map (fun e ->
+            let e = C.of_string e in
+            save session e)
           |> A.L.of_iter
         , time ))
     ;;

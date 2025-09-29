@@ -22,7 +22,11 @@ let shift_position (p : Lexing.position) offset =
 
 let highlight ~warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg : string) =
   if not (String.equal s.pos_fname f.pos_fname)
-  then failwith "Trying to highlight range in different files"
+  then
+    failwithf
+      "Trying to highlight range in different files: first %s then %s"
+      s.pos_fname
+      f.pos_fname
   else if s.pos_lnum = f.pos_lnum
   then (
     (* Format.printf "start=%i finish=%i %i %i\n" s.pos_cnum f.pos_cnum s.pos_bol (Bytes.length lexbuf); *)
@@ -96,7 +100,11 @@ let highlight ~color ~symbol loc msg =
   | Nowhere -> fun fmt -> Format.fprintf fmt "Unknown location"
   | Location (s, f) ->
     if not (String.equal s.pos_fname f.pos_fname)
-    then failwith "Trying to highlight range in different files"
+    then
+      failwithf
+        "Trying to highlight range in different files: first %s then %s"
+        s.pos_fname
+        f.pos_fname
     else if s.pos_lnum = f.pos_lnum
     then (
       let _, lexbuf = MenhirLib.LexerUtil.read s.pos_fname in

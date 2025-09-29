@@ -435,6 +435,7 @@ module Make (N : Timestamp) (L : Label) = struct
               name = timestamp_column
               || String.contains name '{'
               || String.contains name '}'
+              || name = ""
             then None
             else (
               match value with
@@ -448,6 +449,7 @@ module Make (N : Timestamp) (L : Label) = struct
     ;;
 
     let write ch clocks trace =
+      let clocks = List.sort_uniq L.E.compare clocks in
       let out = Csv.to_channel ~quote_all:false ch in
       let clock_strs = List.map L.E.to_string clocks in
       Csv.output_record out (timestamp_column :: clock_strs);

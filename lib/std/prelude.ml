@@ -14,6 +14,8 @@ let ( and* ) x y =
   Some (x, y)
 ;;
 
+let failwithf f = Printf.ksprintf failwith f
+
 module Fun = struct
   include Fun
 
@@ -64,7 +66,7 @@ module Option = struct
 
   let unwrap ~expect = function
     | Some x -> x
-    | None -> failwith @@ Printf.sprintf "expected: %s" expect
+    | None -> failwithf "expected: %s" expect
   ;;
 end
 
@@ -1220,5 +1222,3 @@ module Sys = struct
       (fun () -> f file)
   ;;
 end
-
-let failwithf f = Printf.ksprintf failwith f

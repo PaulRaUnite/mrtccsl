@@ -1,19 +1,7 @@
 (executable
- (public_name reaction)
- (name reaction)
- (modules reaction version name_convention)
- (libraries mrtccsl std cmdliner csv dune-build-info))
-
-(executable
- (public_name simulate)
- (name simulate)
- (modules simulate name_convention)
- (libraries mrtccsl std domainslib halsoa mrtccslparsing))
-
-(executable
  (public_name ccsl+)
  (name ccslplus)
- (modules ccslplus version name_convention)
+ (modules ccslplus common reaction simulate convert)
  (libraries mrtccsl std domainslib mrtccslparsing cmdliner dune-build-info))
 
 (env

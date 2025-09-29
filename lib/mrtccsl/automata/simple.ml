@@ -183,7 +183,8 @@ struct
           | `More -> pinf_strict
           | `MoreEq -> pinf
           | `Eq -> return
-          | `Neq -> failwith "irrepresentable in interval domain"
+          | `Neq ->
+            failwith "non-equality is irrepresentable in interval domain, not convex"
         in
         let cond = cond_f c in
         v, cond
@@ -205,7 +206,8 @@ struct
           | `More -> pinf_strict
           | `MoreEq -> pinf
           | `Eq -> return
-          | `Neq -> failwith "irrepresentable in interval domain"
+          | `Neq ->
+            failwith "non-equality is irrepresentable in interval domain, not convex"
         in
         let cond = cond_f c in
         v, cond
@@ -218,15 +220,15 @@ struct
           match left with
           | Include left -> left
           | Exclude left -> succ left
-          | Inf -> failwith "[-oo, x] is not bound"
+          | Inf -> failwith "to_nonstrict: [-oo, x] is not bound"
         and right =
           match right with
           | Include right -> right
           | Exclude right -> pred right
-          | Inf -> failwith "[x, +oo] is not bound"
+          | Inf -> failwith "to_nonstrict: [x, +oo] is not bound"
         in
         left, right
-      | Empty -> failwith "interval is empty"
+      | Empty -> failwith "to_nonstrict: interval is empty"
     ;;
   end
 
@@ -261,6 +263,16 @@ struct
     ;;
 
     let take ~steps = Iter.take steps
+
+    let take_while p =
+      let was_cut = ref false in
+      Iter.take_while (fun x ->
+        if p x
+        then (
+          was_cut := true;
+          true)
+        else false)
+    ;;
   end
 
   module VarSeq = struct
@@ -856,7 +868,12 @@ struct
                CMap.update
                  from
                  (function
-                   | Some _ -> failwith "not injective"
+                   | Some _ ->
+                     failwithf
+                       "pool constraint: lock->unlock pairs has to be injective, pair \
+                        %s->%s is not"
+                       (C.to_string from)
+                       (C.to_string into)
                    | None -> Some into)
                  acc)
             CMap.empty
@@ -955,7 +972,7 @@ struct
         let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
         (* Printf.printf "%f %f %f %f %f\n" a b mu sigma sample; *)
         N.of_float sample
-    | Exponential _ -> failwith "todo"
+    | Exponential _ -> failwith "not implemented"
   ;;
 
   let of_spec ?(debug = false) spec : sim =

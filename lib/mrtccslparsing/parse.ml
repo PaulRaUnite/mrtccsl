@@ -219,6 +219,7 @@ let parse_with_error_handling buffer =
   result
 ;;
 
+
 let from_file path =
   let _, buffer = MenhirLib.LexerUtil.read path in
   parse_with_error_handling buffer

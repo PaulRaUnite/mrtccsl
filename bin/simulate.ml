@@ -4,7 +4,6 @@ open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
 module S = FnCh.S
-module C = Halsoa.Examples.Make (Number.Rational)
 open Number.Rational
 open FnCh
 
@@ -22,48 +21,15 @@ let priority_strategy priorities general_strategy =
                 (A.L.cardinal (A.L.inter y priorities)))
         candidates
     in
-    let priotized, rest =
+    let prioritized, rest =
       List.partition (fun (l, _) -> A.L.cardinal (A.L.inter l priorities) > 0) candidates
     in
-    if List.is_empty priotized then general_strategy rest else general_strategy priotized
+    if List.is_empty prioritized
+    then general_strategy rest
+    else general_strategy prioritized
   in
   f
 ;;
-
-(*TODO: need to review if the priority strategy is really correct*)
-(* let fifo_strategy priorities general_strategy =
-  let queue = ref [] in
-  let priorities = A.CMap.of_list priorities in
-  let f candidates =
-    let prioritized =
-      !queue
-      |> List.find_mapi (fun _ c ->
-        match List.filter (fun (l, _) -> A.L.mem c l) candidates with
-        | [] -> None
-        | list -> Some list)
-    in
-    match
-      Option.bind_or (Option.bind prioritized general_strategy) (fun _ ->
-        general_strategy candidates)
-    with
-    | Some (label, _) as solution ->
-      let _ =
-        A.CMap.iter
-          (fun r s ->
-             if A.L.mem r label then queue := List.append !queue [ s ];
-             if A.L.mem s label
-             then (
-               let _, new_queue =
-                 List.map_inplace_or_drop (fun x -> if x = s then `Drop else `Skip) !queue
-               in
-               queue := new_queue))
-          priorities
-      in
-      solution
-    | None -> None
-  in
-  f
-;; *)
 
 let random_strat =
   ST.Solution.avoid_empty
@@ -99,100 +65,151 @@ let random_strat =
   candidates
 ;; *)
 
-type rounding =
-  | Near
-  | Floor
-  | Ceil
-
-let of_rounding = function
-  | Near -> modulo_near
-  | Floor -> modulo_floor
-  | Ceil -> modulo_ceil
-;;
-
-let parse_rounding = function
-  | "near" -> Near
-  | "floor" -> Floor
-  | "ceil" -> Ceil
-  | s -> invalid_arg (Printf.sprintf "parsing rounding, unexpected string: %s" s)
-;;
-
-type 'n generation_config =
+type 'n config =
   { steps : int
-  ; horizon : 'n
-  }
-
-type 'n processing_config =
-  { print_svgbob : bool
-  ; print_cadp : bool
-  ; print_timed_cadp : 'n option
-  ; print_native : bool
-  ; debug : bool
-  ; gen : 'n generation_config
+  ; horizon : 'n option
   ; output_dir : string
-  ; rounding : rounding
+  ; cores : int
+  ; traces : int
   }
-
-let generate_trace ~config ~session system_spec order_hints clocks tasks i =
-  let strategy = ST.Solution.refuse_empty random_strat in
-  let env = A.of_spec ~debug:config.debug system_spec in
-  let trace, cut =
-    A.gen_trace strategy env
-    |> A.Trace.take ~steps:config.gen.steps
-    |> A.Trace.until ~horizon:config.gen.horizon
-  in
-  let trace = A.Trace.persist ~size_hint:config.gen.steps trace in
-  let deadlock = Iter.length trace <> config.gen.steps && not !cut in
-  Printf.printf "trace deadlocked: %b\n" deadlock;
-  let basename = Printf.sprintf "%s/%i" config.output_dir i in
-  if config.print_native
-  then
-    Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
-      FnCh.Export.write_csv
-        session
-        ch
-        (List.map (S.Session.to_offset session) clocks)
-        trace);
-  if config.print_svgbob
-  then
-    Sys.write_file ~filename:(Printf.sprintf "%s.svgbob" basename) (fun trace_file ->
-      Export.trace_to_vertical_svgbob
-        ~numbers:false
-        ~tasks
-        session
-        clocks
-        (Format.formatter_of_out_channel trace_file)
-        trace);
-  if config.print_cadp
-  then
-    Sys.write_file ~filename:(Printf.sprintf "%s.cadp" basename) (fun trace_file ->
-      Export.trace_to_cadp session (Format.formatter_of_out_channel trace_file) trace);
-  Option.iter
-    (fun step ->
-       let modulo = of_rounding config.rounding in
-       Sys.write_file ~filename:(Printf.sprintf "%s.tcadp" basename) (fun trace_file ->
-         Export.trace_to_timed_cadp
-           session
-           (modulo ~divisor:step)
-           order_hints
-           (Format.formatter_of_out_channel trace_file)
-           trace))
-    config.print_timed_cadp;
-  trace
-;;
-
-let trace_to_chains chain trace =
-  let semantics = Earliest in
-  let chain_instances, _ = trace_to_chain semantics chain (A.Trace.to_iter trace) in
-  chain_instances
-;;
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let run_simulation ~config ~bin_size ~processor (_, m, tasks, chains) =
+let read_whole_file filename =
+  (* open_in_bin works correctly on Unix and Windows *)
+  let ch = open_in_bin filename in
+  let s = really_input_string ch (in_channel_length ch) in
+  close_in ch;
+  s
+;;
+
+open Cmdliner
+open Cmdliner.Term.Syntax
+open Common
+
+let recommended_cores = Stdlib.Domain.recommended_domain_count ()
+
+let spec_file_arg =
+  Arg.(
+    required
+    (* TODO: make it possible to use stdin (need modifications to parsing and its error reporting) *)
+    & pos 0 (some non_dir_file) None
+    & info [] ~doc:"Path to specification file." ~docv:"SPEC")
+;;
+
+let output_dir_arg =
+  Arg.(
+    required
+    & opt (some string) None
+    & info [ "o"; "output" ] ~doc:"Path to output directory." ~docv:"OUT")
+;;
+
+let cores_arg =
+  Arg.(
+    value
+    & opt int recommended_cores
+    & info
+        [ "c"; "cores" ]
+        ~doc:"Number of cores (>= 1) that are used to generate traces."
+        ~docv:"CORES")
+;;
+
+let traces_arg =
+  Arg.(
+    value
+    & opt int 1
+    & info [ "t"; "traces" ] ~doc:"Number of traces (>= 1) to be generated." ~docv:"CORES")
+;;
+
+let horizon_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "h"; "horizon" ]
+        ~doc:
+          "Maximum value in real-time that the simulation can reach. Has to be positive \
+           non-null decimal number (any precision)."
+        ~absent:"The trace is only limited by number of $(STEPS)."
+        ~docv:"HORIZON")
+;;
+
+let steps_arg =
+  Arg.(
+    value
+    & opt int 100_000
+    & info
+        [ "s"; "steps" ]
+        ~doc:"Maximum number (>= 0) of steps in a trace."
+        ~docv:"STEPS")
+;;
+
+let verify_config config =
+  if config.cores < 1
+  then
+    failwithf
+      "invalid value %i of CORES variable: has to be bigger or equal to one"
+      config.cores
+  else (
+    match config.horizon with
+    | Some horizon when Number.Rational.less_eq horizon Number.Rational.zero ->
+      failwithf
+        "invalid value %s of HORIZON variable: has to be positive non-zero decimal number"
+        (Number.Rational.to_string horizon)
+    | _ ->
+      ();
+      if config.steps < 0
+      then
+        failwithf
+          "invalid value %i of STEPS variable: has to be non-negative integer"
+          config.steps)
+;;
+
+let generate_trace ~session ~config clocks spec i =
+  let strategy = ST.Solution.refuse_empty random_strat in
+  let env = A.of_spec ~debug:false spec in
+  let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
+  let trace =
+    match config.horizon with
+    | Some horizon ->
+      let trace, _ = A.Trace.until ~horizon trace in
+      trace
+    | None -> trace
+  in
+  let basename = Printf.sprintf "%s/%i" config.output_dir i in
+  Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
+    FnCh.Export.write_csv session ch (List.map (S.Session.to_offset session) clocks) trace)
+;;
+
+let simulate ~config m =
+  verify_config config;
+  let processor =
+    if config.cores <> 1
+    then (
+      let pool =
+        Domainslib.Task.setup_pool
+          ~num_domains:(Int.min config.cores recommended_cores)
+          ()
+      in
+      fun f ->
+        Domainslib.Task.run pool (fun _ ->
+          Domainslib.Task.parallel_for_reduce
+            ~chunk_size:1
+            ~start:0
+            ~finish:(Int.pred config.traces)
+            ~body:(fun v -> [ f v ])
+            pool
+            List.append
+            []))
+    else
+      fun f ->
+        Iter.int_range ~start:0 ~stop:(Int.pred config.traces)
+        |> Iter.map f
+        |> Iter.fold (Fun.flip List.cons) []
+  in
+  let _ = Random.self_init () in
   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
-  let order_hints = Ccsl.MicroStep.derive_order spec.logical in
   let clocks = Ccsl.Language.Specification.clocks spec in
   let _ = print_endline config.output_dir in
   let _ = Sys.create_dir config.output_dir in
@@ -212,187 +229,44 @@ let run_simulation ~config ~bin_size ~processor (_, m, tasks, chains) =
   let open FnCh.S.Session in
   let session = create () in
   let spec = with_spec session spec in
-  let chains =
-    List.map (fun (name, chain) -> name, Chain.map (to_offset session) chain) chains
-  in
-  let tasks = List.map (Automata.Trace.map_task @@ to_offset session) tasks in
-  let traces =
-    processor @@ generate_trace ~config ~session spec order_hints clocks tasks
-  in
-  let process_chain (chain_name, chain) =
-    (* Format.printf
-      "%a\n"
-      (Chain.pp (fun fmt v -> Format.pp_print_string fmt (of_offset session v)))
-      chain; *)
-    let chain_instances =
-      traces
-      |> List.map (trace_to_chains chain)
-      |> List.map Dynarray.to_iter
-      |> List.fold_left Iter.append Iter.empty
-    in
-    let spans_to_consider = Chain.spans_of_interest chain in
-    let categories = Chain.sampling_clocks chain in
-    let make_histogram span =
-      let module S = Stats.Make (String) (Number.Rational) in
-      let tagged_reaction_times =
-        FnCh.categorized_reaction_times session categories span chain_instances
-      in
-      let histogram =
-        S.histogram (Number.Rational.round_floor bin_size) tagged_reaction_times
-      in
-      let filename =
-        Name_convention.histogram_name
-          config.output_dir
-          chain_name
-          (Tuple.map2 (of_offset session) span)
-      in
-      Sys.write_file ~filename (Format.formatter_of_out_channel >> S.to_csv histogram)
-    in
-    List.iter make_histogram spans_to_consider
-  in
-  List.iter process_chain chains
+  ignore @@ processor @@ generate_trace ~session ~config clocks spec
 ;;
 
-let parse_tasks s =
-  let names = String.split ~by:"," s in
-  List.map
-    (fun name ->
-       ( name
-       , Printf.sprintf "%s.r" name
-       , Printf.sprintf "%s.s" name
-       , Printf.sprintf "%s.f" name
-       , Printf.sprintf "%s.d" name ))
-    names
+let cmd =
+  Cmd.v (Cmd.info "simulate" ~version ~doc:"Simulate a CCSL+ specification.")
+  @@ Term.ret
+  @@ let+ specification = spec_file_arg
+     and+ output_dir = output_dir_arg
+     and+ cores = cores_arg
+     and+ horizon = horizon_arg
+     and+ steps = steps_arg
+     and+ traces = traces_arg in
+     Ocolor_format.prettify_formatter Format.std_formatter;
+     let ast =
+       Mrtccslparsing.Parse.from_file specification
+       |> Result.map_error (fun pp_e ->
+         fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
+       |> Result.unwrap ~msg:"Failed in parsing."
+     in
+     let context, m, errors = Mrtccslparsing.Compile.into_module ast in
+     if not (List.is_empty errors)
+     then (
+       Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
+       List.iter (Mrtccslparsing.Compile.print_compile_error Format.std_formatter) errors;
+       failwith "Compilation error.")
+     else (
+       let v2s =
+         Mrtccslparsing.Compile.(
+           function
+           | Explicit v -> List.to_string ~sep:"." Fun.id v
+           | Anonymous i -> Printf.sprintf "anon(%i)" i)
+       in
+       let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
+       let horizon = Option.map Number.Rational.of_decimal_string horizon in
+       try
+         `Ok (Ok (simulate ~config:{ cores; output_dir; horizon; steps; traces } m))
+       with
+       | Failure s -> `Error (false, s))
 ;;
 
-let read_whole_file filename =
-  (* open_in_bin works correctly on Unix and Windows *)
-  let ch = open_in_bin filename in
-  let s = really_input_string ch (in_channel_length ch) in
-  close_in ch;
-  s
-;;
-
-let parse_chain_file filename =
-  let content = read_whole_file filename in
-  let chains = String.split ~by:"\n" content in
-  chains |> List.filter (not << String.is_empty) |> List.map Chain.parse_with_name
-;;
-
-let () =
-  let _ = Random.self_init () in
-  let usage_msg =
-    "simulate [--traces <traces>] [--cores <cores>] [--horizon <trace horizon>] [-bob] \
-     [-cadp] [--tasks <tasks>] <specification> <functional chain> -o <dir>"
-  in
-  let traces = ref 1
-  and cores = ref 1
-  and steps = ref 1000
-  and horizon = ref 10_000.0
-  and print_svgbob = ref false
-  and print_cadp_trace = ref false
-  and print_tcadp_trace = ref false
-  and scale = ref ""
-  and inspect_deadlock = ref false
-  and directory = ref ""
-  and tasks = ref ""
-  and rounding = ref "near" in
-  let speclist =
-    [ "--traces", Arg.Set_int traces, "Number of traces to generate"
-    ; "--cores", Arg.Set_int cores, "Number of cores to use"
-    ; "--horizon", Arg.Set_float horizon, "Max time of simulation"
-    ; "--steps", Arg.Set_int steps, "Max steps of simulation"
-    ; "--tasks", Arg.Set_string tasks, "Tasks specification"
-    ; "-o", Arg.Set_string directory, "Output directory path"
-    ; "-bob", Arg.Set print_svgbob, "Print svgbob trace"
-    ; "-cadp", Arg.Set print_cadp_trace, "Print CADP trace"
-    ; "--scale", Arg.Set_string scale, "Set scale for histogram and timed CADP"
-    ; "-tcadp", Arg.Set print_tcadp_trace, "Print CADP trace with time advances"
-    ; ( "-inspect"
-      , Arg.Set inspect_deadlock
-      , "Collect and print debug information for deadlocked traces" )
-    ; "-rounding", Arg.Set_string rounding, "near|floor|ceil"
-    ]
-  in
-  let positional = ref [] in
-  let _ =
-    Arg.parse
-      speclist
-      (fun file -> positional := List.append !positional [ file ])
-      usage_msg
-  in
-  let recommended_cores = Stdlib.Domain.recommended_domain_count () in
-  if !traces < 1 then invalid_arg "number of traces should be positive";
-  if !cores < 1 then invalid_arg "number of cores should be positive";
-  if !steps < 1 then invalid_arg "number of steps should be positive";
-  if !horizon <= 0.0 then invalid_arg "horizon should be positive";
-  let specification, chains =
-    match !positional with
-    | [ x; y ] -> x, y
-    | _ ->
-      invalid_arg
-        "specification filepath and/or chains file is not specified or there too many \
-         parameters"
-  in
-  if String.is_empty !directory then invalid_arg "output directory path cannot be emtpy";
-  let processor =
-    if !cores <> 1
-    then (
-      let pool =
-        Domainslib.Task.setup_pool ~num_domains:(Int.min !cores recommended_cores) ()
-      in
-      fun f ->
-        Domainslib.Task.run pool (fun _ ->
-          Domainslib.Task.parallel_for_reduce
-            ~chunk_size:1
-            ~start:0
-            ~finish:(Int.pred !traces)
-            ~body:(fun v -> [ f v ])
-            pool
-            List.append
-            []))
-    else
-      fun f ->
-        Iter.int_range ~start:0 ~stop:(Int.pred !traces)
-        |> Iter.map f
-        |> Iter.fold (Fun.flip List.cons) []
-  in
-  Ocolor_format.prettify_formatter Format.std_formatter;
-  let ast =
-    Mrtccslparsing.Parse.from_file specification
-    |> Result.map_error (fun pp_e ->
-      fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
-    |> Result.unwrap ~msg:"Failed in parsing."
-  in
-  let functional_chains = parse_chain_file chains in
-  let name = Filename.basename specification in
-  let context, m, errors = Mrtccslparsing.Compile.into_module ast in
-  if List.is_empty errors
-  then (
-    let scale = if !scale = "" then None else Some (of_decimal_string !scale) in
-    let v2s =
-      Mrtccslparsing.Compile.(
-        function
-        | Explicit v -> List.to_string ~sep:"." Fun.id v
-        | Anonymous i -> Printf.sprintf "anon(%i)" i)
-    in
-    let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
-    run_simulation
-      ~processor
-      ~bin_size:(Option.value ~default:(Number.Rational.from_pair (1, 1000)) scale)
-      ~config:
-        { debug = !inspect_deadlock
-        ; print_svgbob = !print_svgbob
-        ; print_cadp = !print_cadp_trace
-        ; print_timed_cadp = (if !print_tcadp_trace then scale else None)
-        ; gen = { horizon = of_float !horizon; steps = !steps }
-        ; output_dir = !directory
-        ; rounding = parse_rounding !rounding
-        ; print_native = true
-        }
-      (name, m, [], functional_chains))
-  else (
-    Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
-    List.iter (Mrtccslparsing.Compile.print_compile_error Format.std_formatter) errors;
-    failwith "Compilation error.")
-;;
+let main () = Cmd.eval_result cmd

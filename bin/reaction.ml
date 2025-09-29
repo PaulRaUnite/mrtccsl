@@ -3,9 +3,9 @@ open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
-open FnCh
-open Version
 module Stats = Stats.Make (String) (Number.Rational)
+open FnCh
+open Common
 
 let extract_reaction trace_streams reactions_dir histogram_param chains =
   let session = S.Session.create () in
@@ -33,7 +33,7 @@ let extract_reaction trace_streams reactions_dir histogram_param chains =
          List.iter
            (fun span ->
               let filename =
-                Name_convention.reaction_name dir chain_name (Tuple.map2 to_outer span)
+                reaction_name dir chain_name (Tuple.map2 to_outer span)
               in
               (Sys.write_file ~filename)
                 (FnCh.reaction_times_to_csv session categories interest chain_instances))
@@ -51,7 +51,7 @@ let extract_reaction trace_streams reactions_dir histogram_param chains =
                tagged_reaction_times
            in
            let filename =
-             Name_convention.histogram_name dir chain_name (Tuple.map2 to_outer span)
+             histogram_name dir chain_name (Tuple.map2 to_outer span)
            in
            Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats))
         interest
@@ -134,4 +134,3 @@ let cmd =
 ;;
 
 let main () = Cmd.eval_result cmd
-let () = if !Sys.interactive then () else exit (main ())
