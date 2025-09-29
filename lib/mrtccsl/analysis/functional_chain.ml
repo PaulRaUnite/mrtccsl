@@ -443,6 +443,8 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         (convert_trace session trace)
     ;;
 
+    let trace_to_csl session ch trace = Inner.CSL.print ch (convert_trace session trace)
+
     let read_csv session ch =
       Inner.CSV.read ch
       |> Iter.map (fun Trace.{ time; label } ->

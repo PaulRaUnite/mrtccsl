@@ -109,7 +109,7 @@ let cores_arg =
     value
     & opt int recommended_cores
     & info
-        [ "c"; "cores" ]
+        [ "j"; "num-cores" ]
         ~doc:"Number of cores (>= 1) that are used to generate traces."
         ~docv:"CORES")
 ;;
@@ -241,32 +241,10 @@ let cmd =
      and+ horizon = horizon_arg
      and+ steps = steps_arg
      and+ traces = traces_arg in
-     Ocolor_format.prettify_formatter Format.std_formatter;
-     let ast =
-       Mrtccslparsing.Parse.from_file specification
-       |> Result.map_error (fun pp_e ->
-         fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
-       |> Result.unwrap ~msg:"Failed in parsing."
-     in
-     let context, m, errors = Mrtccslparsing.Compile.into_module ast in
-     if not (List.is_empty errors)
-     then (
-       Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
-       List.iter (Mrtccslparsing.Compile.print_compile_error Format.std_formatter) errors;
-       failwith "Compilation error.")
-     else (
-       let v2s =
-         Mrtccslparsing.Compile.(
-           function
-           | Explicit v -> List.to_string ~sep:"." Fun.id v
-           | Anonymous i -> Printf.sprintf "anon(%i)" i)
-       in
-       let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
-       let horizon = Option.map Number.Rational.of_decimal_string horizon in
-       try
-         `Ok (Ok (simulate ~config:{ cores; output_dir; horizon; steps; traces } m))
-       with
-       | Failure s -> `Error (false, s))
+     let m = Mrtccslparsing.load_with_string specification Format.err_formatter in
+     let horizon = Option.map Number.Rational.of_decimal_string horizon in
+     try `Ok (Ok (simulate ~config:{ cores; output_dir; horizon; steps; traces } m)) with
+     | Failure s -> `Error (false, s)
 ;;
 
 let main () = Cmd.eval_result cmd

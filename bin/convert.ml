@@ -24,48 +24,7 @@ let output_arg =
 ;;
 
 module Native = struct
-  module CADP = struct
-    let convert input output =
-      let session = FnCh.S.Session.create () in
-      let trace = FnCh.Export.read_csv session input in
-      FnCh.Export.trace_to_cadp session (Format.formatter_of_out_channel output) trace
-    ;;
-
-    let cmd =
-      Cmd.(
-        v
-          (info
-             "cadp"
-             ~doc:"Convert native trace into CADP trace (comma-separated list of events).")
-        @@ Term.ret
-        @@ let+ input = input_arg
-           and+ output = output_arg in
-           let input = Option.map_or ~default:stdin get_in_channel input
-           and output = Option.map_or ~default:stdout get_out_channel output in
-           `Ok (Ok (convert input output)))
-    ;;
-  end
-
-  module TCADP = struct (*TODO merge timed and untimed*)
-    let scale_arg =
-      Arg.(
-        value
-        & opt rational (Rational.of_frac 1 1000)
-        & info [ "d"; "delta" ] ~doc:"Discretization delta (scale)." ~docv:"SCALE")
-    ;;
-
-    let spec_arg =
-      Arg.(
-        required
-        & opt (some non_dir_file) None
-        & info
-            [ "s"; "spec" ]
-            ~doc:
-              "File with specification used to generate the trace. Used to derive \
-               microstep ordering."
-            ~docv:"SPEC")
-    ;;
-
+  module CSL = struct
     type rounding =
       | Near
       | Floor
@@ -93,70 +52,90 @@ module Native = struct
       Arg.conv (parser, pp)
     ;;
 
-    let mode_arg =
+    let scale_arg =
       Arg.(
         value
-        & opt rounding Near
+        & opt (some rational) None
+        & info [ "s"; "scale" ] ~doc:"Discretization scale." ~docv:"SCALE")
+    ;;
+
+    let spec_arg =
+      Arg.(
+        value
+        & opt (some non_dir_file) None
         & info
-            [ "r"; "round" ]
-            ~doc:"Rounding used in discretization. $(docv) is either near, floor or ceil."
+            [ "m"; "microstep" ]
+            ~doc:
+              "File with specification used to generate the trace. Used to derive \
+               microstep ordering."
+            ~docv:"MICROSTEP")
+    ;;
+
+    let discretization_arg =
+      Arg.(
+        value
+        & opt (some rounding) None
+        & info
+            [ "d"; "discretize" ]
+            ~doc:
+              "Rounding type used in discretization. $(docv) is either near, floor or \
+               ceil. $(i,SCALE) is required parameter for discretization."
             ~docv:"ROUNDING")
     ;;
 
-    let convert ~scale ~m ~rounding_mode input output =
-      let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
-      let order_hints =
-        Ccsl.MicroStep.derive_order Mrtccsl.Ccsl.Language.Specification.(spec.logical)
+    let convert ~serialize ~discretize ~scale input output =
+      let serialize =
+        Option.map_or
+          ~default:FnCh.Export.Inner.Serialize.random
+          (fun spec ->
+             FnCh.Export.Inner.Serialize.respect_microstep
+               (Mrtccsl.Ccsl.MicroStep.derive_order
+                  Mrtccsl.Ccsl.Language.Specification.(spec.logical)))
+          serialize
+      in
+      let to_scl =
+        Option.map_or
+          ~default:(FnCh.Export.trace_to_csl ~tagger:FnCh.Export.Inner.Tag.none)
+          (fun rounding ->
+             let round = of_rounding rounding in
+             let scale = Option.unwrap ~expect:"scale is needed for rounding" scale in
+             FnCh.Export.trace_to_csl
+               ~tagger:(FnCh.Export.Inner.Tag.tag_round_timestamp (round ~divisor:scale)))
+          discretize
       in
       let session = FnCh.S.Session.create () in
       let trace = FnCh.Export.read_csv session input in
-      FnCh.Export.trace_to_timed_cadp
-        session
-        (of_rounding rounding_mode ~divisor:scale)
-        order_hints
-        (Format.formatter_of_out_channel output)
-        trace
+      to_scl session ~serialize (Format.formatter_of_out_channel output) trace
     ;;
 
     let cmd =
       Cmd.(
         v
           (info
-             "tcadp"
+             "csl"
              ~doc:
-               "Convert native trace into timed CADP trace (comma-separated list of \
-                events with discretized time deltas).")
+               "Convert native trace into comma-separated list (CSL) of events, possibly \
+                with discretized time deltas and respecting microstep ordering inside \
+                the CCSL's step.")
         @@ Term.ret
         @@ let+ scale = scale_arg
            and+ input = input_arg
            and+ output = output_arg
-           and+ spec_file = spec_arg
-           and+ rounding_mode = mode_arg in
+           and+ microstep = spec_arg
+           and+ discretize = discretization_arg in
            let input = Option.map_or ~default:stdin get_in_channel input
-           and output = Option.map_or ~default:stdout get_out_channel output in
-           Ocolor_format.prettify_formatter Format.std_formatter;
-           let ast =
-             Mrtccslparsing.Parse.from_file spec_file
-             |> Result.map_error (fun pp_e ->
-               fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
-             |> Result.unwrap ~msg:"Failed in parsing."
+           and output = Option.map_or ~default:stdout get_out_channel output
+           and serialize =
+             Option.map
+               (fun spec_file ->
+                  let m =
+                    Mrtccslparsing.load_with_string spec_file Format.err_formatter
+                  in
+                  let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
+                  spec)
+               microstep
            in
-           let context, m, errors = Mrtccslparsing.Compile.into_module ast in
-           let v2s =
-             Mrtccslparsing.Compile.(
-               function
-               | Explicit v -> List.to_string ~sep:"." Fun.id v
-               | Anonymous i -> Printf.sprintf "anon(%i)" i)
-           in
-           let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
-           if not (List.is_empty errors)
-           then (
-             Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
-             List.iter
-               (Mrtccslparsing.Compile.print_compile_error Format.std_formatter)
-               errors;
-             failwith "Compilation error.")
-           else `Ok (Ok (convert ~scale ~m ~rounding_mode input output)))
+           `Ok (Ok (convert ~discretize ~scale ~serialize input output)))
     ;;
   end
 
@@ -227,7 +206,7 @@ module Native = struct
          "native"
          ~version
          ~doc:"Convert native (precise) trace into other formats.")
-      [ CADP.cmd; TCADP.cmd; SvgBob.cmd ]
+      [ CSL.cmd; SvgBob.cmd ]
   ;;
 end
 

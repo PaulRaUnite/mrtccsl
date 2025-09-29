@@ -83,12 +83,14 @@ module Result = struct
     ;;
   end
 
-  let unwrap ~msg = function
+  let unwrap_to_ch ~msg ch = function
     | Ok x -> x
     | Error e ->
-      Format.printf "%a" e ();
+      Format.fprintf ch "%a" e ();
       failwith msg
   ;;
+
+  let unwrap = unwrap_to_ch Format.std_formatter
 end
 
 module Seq = struct
