@@ -7,7 +7,7 @@ module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
 open Common
 
-let extract_reaction trace_streams reactions_dir histogram_param chains =
+let extract_reaction trace_streams reactions_dir histogram_param chains output_dir =
   let session = S.Session.create () in
   let to_inner = S.Session.to_offset session in
   let to_outer = S.Session.of_offset session in
@@ -32,27 +32,21 @@ let extract_reaction trace_streams reactions_dir histogram_param chains =
       (fun dir ->
          List.iter
            (fun span ->
-              let filename =
-                reaction_name dir chain_name (Tuple.map2 to_outer span)
-              in
+              let filename = reaction_name dir chain_name (Tuple.map2 to_outer span) in
               (Sys.write_file ~filename)
                 (FnCh.reaction_times_to_csv session categories interest chain_instances))
            interest)
       reactions_dir;
-    let print_histogram (dir, scale) =
+    let print_histogram scale =
       List.iter
         (fun span ->
            let tagged_reaction_times =
              FnCh.categorized_reaction_times session categories span chain_instances
            in
            let stats =
-             Stats.histogram
-               (Number.Rational.round_floor (Number.Rational.of_float scale))
-               tagged_reaction_times
+             Stats.histogram (Number.Rational.round_floor scale) tagged_reaction_times
            in
-           let filename =
-             histogram_name dir chain_name (Tuple.map2 to_outer span)
-           in
+           let filename = histogram_name output_dir chain_name (Tuple.map2 to_outer span) in
            Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats))
         interest
     in
@@ -83,19 +77,27 @@ let reactions_list_arg =
         [ "l"; "list" ]
         ~doc:
           "Directory where CSV lists of reaction times categorized by misses will be \
-           placed.")
+           placed."
+        ~docv:"LIST")
 ;;
 
 let histogram_arg =
   Arg.(
     value
-    & opt (some (pair dir float)) None
+    & opt (some rational) None
     & info
         [ "h"; "hist" ]
         ~doc:
-          "Directory where CSV histograms of reaction times, categorized by misses and \
-           collected using scale, will be placed."
+          "Scale with which CSV histograms of reaction times are calculated, categorized \
+           by misses and collected using scale."
         ~docv:"HIST")
+;;
+
+let output_dir_arg =
+  Arg.(
+    required
+    & opt (some string) None
+    & info [ "o"; "output" ] ~doc:"Path to output directory." ~docv:"OUT")
 ;;
 
 let chain_arg =
@@ -118,7 +120,8 @@ let cmd =
   let+ traces = trace_arg
   and+ reaction_list = reactions_list_arg
   and+ histogram = histogram_arg
-  and+ chain = chain_arg in
+  and+ chain = chain_arg
+  and+ output = output_dir_arg in
   let traces = if List.length traces = 0 then [ "-" ] else traces in
   if chain :: traces |> List.filter (String.equal "-") |> List.length > 1
   then `Error (false, "can read stdin only once")
@@ -130,7 +133,7 @@ let cmd =
     let trace_inputs = List.map open_in_chan traces
     and chain_input = open_in_chan chain in
     let chains = Chain.parse_from_channel chain_input in
-    `Ok (Ok (extract_reaction trace_inputs reaction_list histogram chains)))
+    `Ok (Ok (extract_reaction trace_inputs reaction_list histogram chains output)))
 ;;
 
 let main () = Cmd.eval_result cmd

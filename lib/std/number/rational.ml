@@ -63,6 +63,7 @@ let of_decimal_string s =
     let len_after_zero = String.length decimal in
     let decimal = of_frac decimal_num (Int.pow 10 len_after_zero) in
     add whole decimal
+  | [ whole ] -> of_int (int_of_string whole)
   | _ -> failwithf "wrong decimal number: %s" s
 ;;
 
@@ -186,5 +187,4 @@ let round_with modulo bin_size x =
 let round_near = round_with modulo_near
 let round_floor = round_with modulo_floor
 let round_ceil = round_with modulo_ceil
-
 let of_string = of_decimal_string
