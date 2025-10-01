@@ -138,7 +138,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   type semantics =
     | All
     | Earliest
-    | Lastest
+    | Latest
     | Randomized
 
   let consume_label
@@ -220,7 +220,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
               | Earliest ->
                 let first = Queue.peek_opt candidates in
                 Option.to_seq first
-              | Lastest ->
+              | Latest ->
                 let last = Queue.last candidates in
                 Option.to_seq last
               | Randomized ->

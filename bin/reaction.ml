@@ -7,7 +7,14 @@ module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
 open Common
 
-let extract_reaction trace_streams reactions_dir histogram_param chains output_dir =
+let extract_reaction
+      ~semantics
+      trace_streams
+      reactions_dir
+      histogram_param
+      chains
+      output_dir
+  =
   let session = S.Session.create () in
   let to_inner = S.Session.to_offset session in
   let to_outer = S.Session.of_offset session in
@@ -19,7 +26,7 @@ let extract_reaction trace_streams reactions_dir histogram_param chains output_d
     and interest = Chain.spans_of_interest chain in
     let trace_to_chain_instances trace =
       let trace = Dynarray.to_iter trace in
-      let chains, _ = trace_to_chain Earliest chain trace in
+      let chains, _ = trace_to_chain semantics chain trace in
       chains
     in
     let chain_instances =
@@ -46,7 +53,9 @@ let extract_reaction trace_streams reactions_dir histogram_param chains output_d
            let stats =
              Stats.histogram (Number.Rational.round_floor scale) tagged_reaction_times
            in
-           let filename = histogram_name output_dir chain_name (Tuple.map2 to_outer span) in
+           let filename =
+             histogram_name output_dir chain_name (Tuple.map2 to_outer span)
+           in
            Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats))
         interest
     in
@@ -107,6 +116,36 @@ let chain_arg =
     & info [] ~doc:"Path to chain specification file." ~docv:"CHAIN")
 ;;
 
+let chain_semantics =
+  let parser = function
+    | "earliest" -> Ok Earliest
+    | "random" -> Ok Randomized
+    | "latest" -> Ok Latest
+    | "all" -> Ok All
+    | s -> Error (`Msg (Printf.sprintf "wrong chain semantics: %s" s))
+  and pp ppf x =
+    Format.fprintf
+      ppf
+      "%s"
+      (match x with
+       | Earliest -> "earliest"
+       | Randomized -> "random"
+       | Latest -> "latest"
+       | All -> "all")
+  in
+  Arg.conv (parser, pp)
+;;
+
+let chain_semantics_arg =
+  Arg.(
+    value
+    & opt chain_semantics Earliest
+    & info
+        [ "s"; "semantics" ]
+        ~doc:"Semantics of the functional chain. Can be earliest, latest, all or random."
+        ~docv:"SEMANTICS")
+;;
+
 let cmd =
   let man = [ `S Manpage.s_description; `P "$(cmd) computes reaction time" ] in
   Cmd.v
@@ -121,7 +160,8 @@ let cmd =
   and+ reaction_list = reactions_list_arg
   and+ histogram = histogram_arg
   and+ chain = chain_arg
-  and+ output = output_dir_arg in
+  and+ output = output_dir_arg
+  and+ semantics = chain_semantics_arg in
   let traces = if List.length traces = 0 then [ "-" ] else traces in
   if chain :: traces |> List.filter (String.equal "-") |> List.length > 1
   then `Error (false, "can read stdin only once")
@@ -133,7 +173,8 @@ let cmd =
     let trace_inputs = List.map open_in_chan traces
     and chain_input = open_in_chan chain in
     let chains = Chain.parse_from_channel chain_input in
-    `Ok (Ok (extract_reaction trace_inputs reaction_list histogram chains output)))
+    `Ok
+      (Ok (extract_reaction ~semantics trace_inputs reaction_list histogram chains output)))
 ;;
 
 let main () = Cmd.eval_result cmd
