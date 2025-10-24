@@ -167,6 +167,8 @@ struct
     let to_string label =
       if is_empty label then "∅" else Iter.to_string ~sep:"," C.to_string (to_iter label)
     ;;
+
+    module E = C
   end
 
   module NI = struct
@@ -1199,61 +1201,6 @@ module Hashed = struct
 
   module BijectionLevel (C : ID) (N : Num) = struct
     include MakeWithBijection (C) (N) (BitvectorSet.BijectionToInt.Hashed (C))
-  end
-
-  module WithSession (C : ID) (N : Num) = struct
-    module Inner =
-      MakeWithBijection (Number.Integer) (N) (BitvectorSet.BijectionToInt.Int)
-
-    module Session = struct
-      module H = Hashtbl.Make (C)
-
-      type t = int H.t * C.t Dynarray.t
-
-      let create () =
-        let mapping : int H.t = H.create 128 in
-        let inverse : C.t Dynarray.t = Dynarray.create () in
-        mapping, inverse
-      ;;
-
-      let to_offset (mapping, _) k = H.find mapping k
-      let of_offset (_, inverse) i = Dynarray.get inverse i
-
-      let save (mapping, inverse) k =
-        match H.find_opt mapping k with
-        | Some x -> x
-        | None ->
-          let x = Dynarray.length inverse in
-          H.add mapping k x;
-          Dynarray.add_last inverse k;
-          x
-      ;;
-
-      let with_spec session spec =
-        let f k = save session k in
-        Language.Specification.map f f f f f Fun.id spec
-      ;;
-
-      let with_dist session dist =
-        let f = save session in
-        map_dist_binding f Fun.id dist
-      ;;
-
-      let identifiers (_, clocks) = Dynarray.to_list clocks
-    end
-
-    module L = struct
-      let to_iter s l = l |> Inner.L.to_iter |> Iter.map (Session.of_offset s)
-      let to_seq s l = l |> Inner.L.to_seq |> Seq.map (Session.of_offset s)
-    end
-
-    module Trace = struct
-      let to_iter s t =
-        t |> Inner.Trace.to_iter |> Iter.map (fun (l, n) -> L.to_iter s l, n)
-      ;;
-
-      let to_seq s t = t |> Inner.Trace.to_seq |> Seq.map (fun (l, n) -> L.to_seq s l, n)
-    end
   end
 end
 

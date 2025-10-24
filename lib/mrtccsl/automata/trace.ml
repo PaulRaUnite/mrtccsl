@@ -56,6 +56,9 @@ type ('l, 'n) step =
 module Make (N : Timestamp) (L : Label) = struct
   type nonrec step = (L.t, N.t) step
 
+  let step_to_pair { label; time } = label, time
+  let pair_to_step (label, time) = { label; time }
+
   module Svgbob = struct
     let print_horizontal ?(numbers = false) ?precision ~tasks clocks formatter trace =
       if List.is_empty clocks
@@ -127,9 +130,9 @@ module Make (N : Timestamp) (L : Label) = struct
             let compare = Tuple.compare_same4 L.E.compare
           end)
         in
-        let serialize_label task_state (l, n') =
+        let serialize_label task_state { label = l; time } =
           (* let delta = N.(n' - n) in *)
-          let time_label = N.to_string n' in
+          let time_label = N.to_string time in
           let time_label =
             match precision with
             | Some precision ->
@@ -274,7 +277,7 @@ module Make (N : Timestamp) (L : Label) = struct
           done
         in
         let _ = Format.fprintf ch "+\n" in
-        let[@inline hint] serialize_record (tasks, clocks) (l, n) =
+        let[@inline hint] serialize_record (tasks, clocks) { label = l; time } =
           let new_tasks =
             Array.map
               (fun (({ release; start; finish; deadline; _ } as t), executes, constrains) ->
@@ -339,7 +342,7 @@ module Make (N : Timestamp) (L : Label) = struct
                  clock, count)
               clocks
           in
-          let time_label = N.to_string n in
+          let time_label = N.to_string time in
           Format.fprintf ch "+ %s\n" time_label;
           Array.iter
             (fun ({ release; deadline; _ }, executes, constrains) ->
@@ -407,9 +410,9 @@ module Make (N : Timestamp) (L : Label) = struct
     let print ?step_sep ~tagger ~serialize formatter trace =
       let init_tagger, tag = tagger in
       let tag_state = init_tagger () in
-      let pp_step f (label, now) =
+      let pp_step f { label; time } =
         let serialization = serialize label in
-        let serialization = tag tag_state now @@ Iter.map L.E.to_string serialization in
+        let serialization = tag tag_state time @@ Iter.map L.E.to_string serialization in
         Iter.pp_seq ~sep:"," Format.pp_print_string f serialization
       in
       Iter.pp_seq ~sep:(Option.value ~default:"," step_sep) pp_step formatter trace;

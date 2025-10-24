@@ -1,9 +1,8 @@
 open Mrtccsl
 open Prelude
-open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
-module S = FnCh.S
+module Export = Automata.Trace.Make (Number.Rational) (A.L)
 open Number.Rational
 open FnCh
 
@@ -165,7 +164,7 @@ let verify_config config =
           config.steps)
 ;;
 
-let generate_trace ~session ~config clocks spec i =
+let generate_trace ~config clocks spec i =
   let strategy = ST.Solution.refuse_empty random_strat in
   let env = A.of_spec ~debug:false spec in
   let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
@@ -176,9 +175,10 @@ let generate_trace ~session ~config clocks spec i =
       trace
     | None -> trace
   in
+  let trace = Iter.map Export.pair_to_step trace in
   let basename = Printf.sprintf "%s/%i" config.output_dir i in
   Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
-    FnCh.Export.write_csv session ch (List.map (S.Session.to_offset session) clocks) trace)
+    Export.CSV.write ch clocks trace)
 ;;
 
 let simulate ~config m =
@@ -226,10 +226,7 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
-  let open FnCh.S.Session in
-  let session = create () in
-  let spec = with_spec session spec in
-  ignore @@ processor @@ generate_trace ~session ~config clocks spec
+  ignore @@ processor @@ generate_trace ~config clocks spec
 ;;
 
 let cmd =

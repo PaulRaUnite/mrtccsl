@@ -1,10 +1,11 @@
 open Prelude
-open Mrtccsl
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Number
 open Common
 module FnCh = Mrtccsl.Functional_chain.Make (String) (Rational)
+module Label = FnCh.A.L
+module Export = Mrtccsl.Automata.Trace.Make (Rational) (Label)
 
 let input_arg =
   Arg.(
@@ -86,26 +87,25 @@ module Native = struct
     let convert ~serialize ~discretize ~scale input output =
       let serialize =
         Option.map_or
-          ~default:FnCh.Export.Inner.Serialize.random
+          ~default:Export.Serialize.random
           (fun spec ->
-             FnCh.Export.Inner.Serialize.respect_microstep
+             Export.Serialize.respect_microstep
                (Mrtccsl.Ccsl.MicroStep.derive_order
                   Mrtccsl.Ccsl.Language.Specification.(spec.logical)))
           serialize
       in
       let to_scl =
         Option.map_or
-          ~default:(FnCh.Export.trace_to_csl ~tagger:FnCh.Export.Inner.Tag.none)
+          ~default:(Export.CSL.print ~tagger:Export.Tag.none)
           (fun rounding ->
              let round = of_rounding rounding in
              let scale = Option.unwrap ~expect:"scale is needed for rounding" scale in
-             FnCh.Export.trace_to_csl
-               ~tagger:(FnCh.Export.Inner.Tag.tag_round_timestamp (round ~divisor:scale)))
+             Export.CSL.print
+               ~tagger:(Export.Tag.tag_round_timestamp (round ~divisor:scale)))
           discretize
       in
-      let session = FnCh.S.Session.create () in
-      let trace = FnCh.Export.read_csv session input in
-      to_scl session ~serialize (Format.formatter_of_out_channel output) trace
+      let trace = Export.CSV.read input in
+      to_scl ~serialize (Format.formatter_of_out_channel output) trace
     ;;
 
     let cmd =
@@ -141,18 +141,22 @@ module Native = struct
 
   module SvgBob = struct
     let print_svgbob ~tasks ~vertical input output =
-      let session = FnCh.S.Session.create () in
-      let trace = FnCh.Export.read_csv session input in
+      let trace = Export.CSV.read input in
       let trace = Iter.persistent trace in
-      let clocks = FnCh.S.Session.identifiers session in
-      let tasks = List.map (Trace.map_task (FnCh.S.Session.to_offset session)) tasks in
+      let clocks =
+        Iter.fold
+          Mrtccsl.Automata.Trace.(fun acc { label; _ } -> Label.union acc label)
+          Label.empty
+          trace
+      in
+      let clocks = Label.to_list clocks in
       let bob =
         if vertical
-        then FnCh.Export.trace_to_vertical_svgbob
-        else FnCh.Export.trace_to_svgbob ?precision:None
+        then Export.Svgbob.print_vertical
+        else Export.Svgbob.print_horizontal ?precision:None
       in
       let formatter = Format.formatter_of_out_channel output in
-      bob ~numbers:false ~tasks session clocks formatter trace;
+      bob ~numbers:false ~tasks clocks formatter trace;
       Format.pp_print_flush formatter ()
     ;;
 

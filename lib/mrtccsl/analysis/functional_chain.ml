@@ -109,11 +109,9 @@ module Chain = struct
 end
 
 module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
-  module S = Automata.Simple.Hashed.WithSession (C) (N)
-  module A = S.Inner
+  module A = Automata.Simple.Make (C) (N)
   module ST = Automata.Simple.Strategy (A)
   module CMap = Map.Make (A.C)
-  open S.Session
 
   type chain_instance =
     { trace : N.t CMap.t
@@ -127,12 +125,12 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     ; mutable misses : int CMap.t
     }
 
-  let partial_chain_to_string session chain =
+  let partial_chain_to_string chain =
     Printf.sprintf
       "trace: %s targets: %s misses: %s"
-      (CMap.to_string (of_offset session >> C.to_string) N.to_string chain.trace)
-      (CMap.to_string (of_offset session >> C.to_string) Int.to_string chain.targets)
-      (CMap.to_string (of_offset session >> C.to_string) Int.to_string chain.misses)
+      (CMap.to_string C.to_string N.to_string chain.trace)
+      (CMap.to_string C.to_string Int.to_string chain.targets)
+      (CMap.to_string C.to_string Int.to_string chain.misses)
   ;;
 
   type semantics =
@@ -248,7 +246,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     full_chains, partial_chains, counters
   ;;
 
-  let[@inline always] trace_to_chain sem chain trace =
+  let[@inline always] extract_chains sem chain trace =
     let instructions = Array.of_list (Chain.to_instructions chain) in
     let len_instr = Array.length instructions in
     let full_chains, dangling_chains, _ =
@@ -262,30 +260,26 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     full_chains, dangling_chains
   ;;
 
-  let functional_chains
+  let chains_of_spec
         ?(debug = false)
         ?(sem = All)
         (s, n, time)
         (system_spec : _ Language.Specification.t)
         (chain : C.t Chain.t)
     =
-    let session = create () in
-    let env = A.of_spec ~debug (with_spec session system_spec) in
+    let env = A.of_spec ~debug system_spec in
     let trace, cut =
       A.gen_trace s env |> A.Trace.take ~steps:n |> A.Trace.until ~horizon:time
     in
     let trace = A.Trace.persist ~size_hint:n trace in
-    let session_chain = Chain.map (to_offset session) chain in
-    let full_chains, dangling_chains =
-      trace_to_chain sem session_chain (A.Trace.to_iter trace)
-    in
+    let full_chains, dangling_chains = extract_chains sem chain (A.Trace.to_iter trace) in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
         "%s\n"
         (List.to_string ~sep:"\n" partial_chain_to_string dangling_chains)
     in *)
-    session, trace, not !cut, full_chains, dangling_chains
+    trace, not !cut, full_chains, dangling_chains
   ;;
 
   let reaction_time_of_span ({ trace; _ } : chain_instance) (first, last) : N.t =
@@ -307,14 +301,10 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     |> Iter.persistent
   ;;
 
-  let print_statistics session category formatter chains =
+  let print_statistics category formatter chains =
     let stats = statistics category chains in
     let total = Iter.fold (fun total (_, x) -> total + x) 0 stats in
-    Format.fprintf
-      formatter
-      "%s | total: %i\n"
-      (C.to_string (of_offset session category))
-      total;
+    Format.fprintf formatter "%s | total: %i\n" (C.to_string category) total;
     let total = Float.of_int total in
     Format.fprintf
       formatter
@@ -325,14 +315,14 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     Format.pp_print_flush formatter ()
   ;;
 
-  let categorized_reaction_times session categories span chain_instances =
+  let categorized_reaction_times categories span chain_instances =
     let misses_into_category map =
       List.to_string
         ~sep:"_"
         (fun sample ->
            let missed = CMap.find_opt sample map in
            let missed = Option.value ~default:0 missed in
-           Printf.sprintf "%s=%i" (of_offset session sample) missed)
+           Printf.sprintf "%s=%i" (C.to_string sample) missed)
         categories
     in
     let reaction_times =
@@ -355,7 +345,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       iter
   ;;
 
-  let reaction_times_to_csv session categories pairs_to_print iter ch =
+  let reaction_times_to_csv categories pairs_to_print iter ch =
     Printf.fprintf
       ch
       "%s\n"
@@ -363,10 +353,9 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
          ~sep:","
          Fun.id
          (List.map
-            (fun (f, s) ->
-               Printf.sprintf "%s->%s" (of_offset session f) (of_offset session s))
+            (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
             pairs_to_print
-          @ List.map (of_offset session) categories));
+          @ List.map C.to_string categories));
     Iter.iter
       (fun ({ misses; _ } as chain : chain_instance) ->
          Printf.fprintf
@@ -385,90 +374,4 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
                    categories)))
       iter
   ;;
-
-  module Export = struct
-    module Set = Set.Make (String)
-
-    module Inner =
-      Automata.Trace.Make
-        (N)
-        (struct
-          include Set
-          module E = String
-        end)
-
-    let convert_tasks session tasks =
-      List.map (Automata.Trace.map_task @@ of_offset session) tasks
-    ;;
-
-    let convert_trace session trace =
-      Iter.map
-        (fun (l, n) -> l |> A.L.to_iter |> Iter.map (of_offset session) |> Set.of_iter, n)
-        trace
-    ;;
-
-    let trace_to_svgbob ?numbers ?precision ~tasks session clocks ch trace =
-      Inner.Svgbob.print_horizontal
-        ?numbers
-        ?precision
-        ~tasks:(convert_tasks session tasks)
-        clocks
-        ch
-        (convert_trace session trace)
-    ;;
-
-    let trace_to_vertical_svgbob ?numbers ~tasks session clocks channel trace =
-      Inner.Svgbob.print_vertical
-        ?numbers
-        ~tasks:(convert_tasks session tasks)
-        clocks
-        channel
-        (convert_trace session trace)
-    ;;
-
-    let trace_to_cadp session ch trace =
-      Inner.CSL.print
-        ~step_sep:",STEP,"
-        ~tagger:Inner.Tag.none
-        ~serialize:Inner.Serialize.random
-        ch
-        (convert_trace session trace)
-    ;;
-
-    let trace_to_timed_cadp session round_to order_hints ch trace =
-      Inner.CSL.print
-        ~tagger:(Inner.Tag.tag_round_timestamp round_to)
-        ~serialize:(Inner.Serialize.respect_microstep order_hints)
-        ch
-        (convert_trace session trace)
-    ;;
-
-    let trace_to_csl session ch trace = Inner.CSL.print ch (convert_trace session trace)
-
-    let read_csv session ch =
-      Inner.CSV.read ch
-      |> Iter.map (fun Trace.{ time; label } ->
-        ( label
-          |> Set.to_iter
-          |> Iter.map (fun e ->
-            let e = C.of_string e in
-            save session e)
-          |> A.L.of_iter
-        , time ))
-    ;;
-
-    let write_csv session ch clocks trace =
-      let clock_to_string = of_offset session >> C.to_string in
-      let trace =
-        Iter.map
-          (fun (label, time) ->
-             let label =
-               label |> A.L.to_iter |> Iter.map clock_to_string |> Set.of_iter
-             in
-             Trace.{ label; time })
-          trace
-      and clocks = List.map clock_to_string clocks in
-      Inner.CSV.write ch clocks trace
-    ;;
-  end
 end

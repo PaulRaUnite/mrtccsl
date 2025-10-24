@@ -2,6 +2,7 @@ open Mrtccsl
 open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
+module Export = Mrtccsl.Automata.Trace.Make (Number.Rational) (FnCh.A.L)
 module A = FnCh.A
 module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
@@ -15,18 +16,16 @@ let extract_reaction
       chains
       output_dir
   =
-  let session = S.Session.create () in
-  let to_inner = S.Session.to_offset session in
-  let to_outer = S.Session.of_offset session in
-  let channel_to_trace ch = FnCh.Export.read_csv session ch |> Dynarray.of_iter in
+  let channel_to_trace ch =
+    Export.CSV.read ch |> Iter.map Export.step_to_pair |> Dynarray.of_iter
+  in
   let traces = List.map channel_to_trace trace_streams in
   let process_chain (chain_name, chain) =
-    let chain = Chain.map to_inner chain in
     let categories = Chain.sampling_clocks chain
     and interest = Chain.spans_of_interest chain in
     let trace_to_chain_instances trace =
       let trace = Dynarray.to_iter trace in
-      let chains, _ = trace_to_chain semantics chain trace in
+      let chains, _ = extract_chains semantics chain trace in
       chains
     in
     let chain_instances =
@@ -39,23 +38,21 @@ let extract_reaction
       (fun dir ->
          List.iter
            (fun span ->
-              let filename = reaction_name dir chain_name (Tuple.map2 to_outer span) in
+              let filename = reaction_name dir chain_name span in
               (Sys.write_file ~filename)
-                (FnCh.reaction_times_to_csv session categories interest chain_instances))
+                (FnCh.reaction_times_to_csv categories interest chain_instances))
            interest)
       reactions_dir;
     let print_histogram scale =
       List.iter
         (fun span ->
            let tagged_reaction_times =
-             FnCh.categorized_reaction_times session categories span chain_instances
+             FnCh.categorized_reaction_times categories span chain_instances
            in
            let stats =
              Stats.histogram (Number.Rational.round_floor scale) tagged_reaction_times
            in
-           let filename =
-             histogram_name output_dir chain_name (Tuple.map2 to_outer span)
-           in
+           let filename = histogram_name output_dir chain_name span in
            Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats))
         interest
     in
