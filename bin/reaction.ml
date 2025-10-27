@@ -12,7 +12,9 @@ let extract_reaction
       ~semantics
       trace_streams
       reactions_dir
-      histogram_param
+      chistogram_param
+      whistogram_param
+      scale
       chains
       output_dir
   =
@@ -43,20 +45,44 @@ let extract_reaction
                 (FnCh.reaction_times_to_csv categories interest chain_instances))
            interest)
       reactions_dir;
-    let print_histogram scale =
+    if chistogram_param
+    then
       List.iter
         (fun span ->
            let tagged_reaction_times =
              FnCh.categorized_reaction_times categories span chain_instances
            in
            let stats =
-             Stats.histogram (Number.Rational.round_floor scale) tagged_reaction_times
+             Stats.category_histogram
+               (Number.Rational.round_floor scale)
+               tagged_reaction_times
            in
-           let filename = histogram_name output_dir chain_name span in
+           let filename = categorized_histogram_name output_dir chain_name span in
            Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats))
-        interest
+        interest;
+    let print_weighted_histogram mode =
+      let span = Chain.start_finish_clocks chain in
+      let discretize_range right_bound =
+        let open Number.Rational in
+        let whole_parts = to_int (right_bound / scale) in
+        Iter.int_range ~start:0 ~stop:whole_parts
+        |> Iter.map (fun sample_point -> of_int sample_point * scale)
+      in
+      let discretize_range =
+        match mode with
+        | `All -> Some discretize_range
+        | `Worst -> None
+      in
+      let tagged_reaction_times =
+        FnCh.weighted_full_reaction_times ?discretize_range chain chain_instances
+      in
+      let stats =
+        Stats.weighted_histogram (Number.Rational.round_floor scale) tagged_reaction_times
+      in
+      let filename = weighted_histogram_name output_dir chain_name span in
+      Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats)
     in
-    Option.iter print_histogram histogram_param
+    Option.iter print_weighted_histogram whistogram_param
   in
   Seq.iter process_chain chains
 ;;
@@ -87,16 +113,36 @@ let reactions_list_arg =
         ~docv:"LIST")
 ;;
 
-let histogram_arg =
+let categorized_histogram_arg =
   Arg.(
     value
-    & opt (some rational) None
+    & flag
     & info
-        [ "h"; "hist" ]
+        [ "c"; "categorized" ]
         ~doc:
           "Scale with which CSV histograms of reaction times are calculated, categorized \
-           by misses and collected using scale."
-        ~docv:"HIST")
+           by misses and collected using $(i,SCALE)."
+        ~docv:"CATEGORIZED_HIST")
+;;
+
+let weighted_histogram_arg =
+  Arg.(
+    value
+    & opt (some @@ enum [ "worst", `Worst; "all", `All ]) None
+    & info
+        [ "w"; "weighted" ]
+        ~doc:
+          "Scale with which CSV histograms of reaction times are calculated, categorized \
+           by contributions of individual reactions. When all is specified, $(i,SCALE) \
+           variable should be present."
+        ~docv:"WEIGHTED_HIST")
+;;
+
+let scale_arg =
+  Arg.(
+    required
+    & opt (some rational) None
+    & info ["d";"scale"] ~doc:"Scale used for histograms." ~docv:"SCALE")
 ;;
 
 let output_dir_arg =
@@ -155,7 +201,9 @@ let cmd =
   @@
   let+ traces = trace_arg
   and+ reaction_list = reactions_list_arg
-  and+ histogram = histogram_arg
+  and+ chistogram = categorized_histogram_arg
+  and+ whistogram = weighted_histogram_arg
+  and+ scale = scale_arg
   and+ chain = chain_arg
   and+ output = output_dir_arg
   and+ semantics = chain_semantics_arg in
@@ -171,7 +219,16 @@ let cmd =
     and chain_input = open_in_chan chain in
     let chains = Chain.parse_from_channel chain_input in
     `Ok
-      (Ok (extract_reaction ~semantics trace_inputs reaction_list histogram chains output)))
+      (Ok
+         (extract_reaction
+            ~semantics
+            trace_inputs
+            reaction_list
+            chistogram
+            whistogram
+            scale
+            chains
+            output)))
 ;;
 
 let main () = Cmd.eval_result cmd

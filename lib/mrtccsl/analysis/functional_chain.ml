@@ -9,6 +9,7 @@ module Chain = struct
 
   type 'c t =
     { first : 'c
+    ; periodic : bool
     ; rest : (relation * 'c) list
     }
   [@@deriving map, show]
@@ -20,7 +21,7 @@ module Chain = struct
         (Option.map (fun (_, c) -> c) (List.last chain.rest)) )
   ;;
 
-  let links { first; rest } =
+  let links { first; rest; _ } =
     let _, links =
       List.fold_left
         (fun (prev, links) (_, next) -> next, (prev, next) :: links)
@@ -45,10 +46,11 @@ module Chain = struct
     type t =
       [ relation
       | `New
+      | `NewPeriodic
       ]
     [@@deriving show, sexp]
 
-    let last_clock { first; rest } =
+    let last_clock { first; rest; _ } =
       Option.value ~default:first (List.last (List.map (fun (_, x) -> x) rest))
     ;;
 
@@ -61,12 +63,20 @@ module Chain = struct
   end
 
   let to_instructions chain_spec =
-    let init = chain_spec.first, (`New : Instruction.t) in
+    let init =
+      ( chain_spec.first
+      , if chain_spec.periodic then `NewPeriodic else (`New : Instruction.t) )
+    in
     let rest_seq = chain_spec.rest |> List.map (fun (x, y) -> y, (x :> Instruction.t)) in
     init :: rest_seq
   ;;
 
   let parse str =
+    let periodic, str =
+      match String.chop_prefix ~pre:"~" str with
+      | Some str -> true, str
+      | None -> false, str
+    in
     let causalities = String.split ~by:"->" str in
     let with_sampling = List.map (String.split ~by:"?") causalities in
     let r =
@@ -83,7 +93,7 @@ module Chain = struct
                           chain.rest
                           [ (if i = 0 then `Causality, next else `Sampling, next) ]
                     }
-                  | None -> { first = next; rest = [] }
+                  | None -> { first = next; periodic; rest = [] }
                 in
                 Some r)
              chain
@@ -108,7 +118,14 @@ module Chain = struct
   let parse_from_channel ch = ch |> In_channel.lines_seq |> Seq.map parse_with_name
 end
 
-module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
+module Make
+    (C : Automata.Simple.Hashed.ID)
+    (N : sig
+       include Automata.Simple.Num
+
+       val ( / ) : t -> t -> t
+     end) =
+struct
   module A = Automata.Simple.Make (C) (N)
   module ST = Automata.Simple.Strategy (A)
   module CMap = Map.Make (A.C)
@@ -116,6 +133,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   type chain_instance =
     { trace : N.t CMap.t
     ; misses : int CMap.t
+    ; since : N.t option
     }
   [@@deriving map]
 
@@ -123,6 +141,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     { trace : N.t CMap.t
     ; targets : int CMap.t
     ; mutable misses : int CMap.t
+    ; since : N.t option
     }
 
   let partial_chain_to_string chain =
@@ -141,6 +160,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
 
   let consume_label
         ?(sem = All)
+        ~update_tick
         instructions
         (full_chains, (partial_chains : _ Queue.t array), counters)
         (label, now)
@@ -183,7 +203,17 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
         | `New ->
           let targets = targets_from index in
           Queue.add
-            { trace = CMap.singleton c now; targets; misses = CMap.empty }
+            { trace = CMap.singleton c now; targets; misses = CMap.empty; since = None }
+            partial_chains.(0)
+        | `NewPeriodic ->
+          let targets = targets_from index in
+          let since = update_tick c now in
+          Queue.add
+            { trace = CMap.singleton c now
+            ; targets
+            ; misses = CMap.empty
+            ; since = Some since
+            }
             partial_chains.(0)
         | `Causality ->
           let q = partial_chains.(index - 1) in
@@ -194,12 +224,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
             | Some chain ->
               (match CMap.find_opt c chain.targets with
                | Some target when target = counter ->
-                 Queue.add
-                   { trace = CMap.add c now chain.trace
-                   ; targets = chain.targets
-                   ; misses = chain.misses
-                   }
-                   next;
+                 Queue.add { chain with trace = CMap.add c now chain.trace } next;
                  Queue.drop q;
                  aux q
                | _ -> ())
@@ -227,8 +252,7 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
             in
             let to_sample =
               Seq.map
-                (fun chain ->
-                   { trace = CMap.add c now chain.trace; targets; misses = chain.misses })
+                (fun chain -> { chain with trace = CMap.add c now chain.trace; targets })
                 to_sample
             in
             let next = partial_chains.(index) in
@@ -238,7 +262,10 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
     let _ = Array.iteri execute_instruction instructions in
     let new_full f a =
       let last = Array.length instructions - 1 in
-      Queue.iter (fun chain -> f { trace = chain.trace; misses = chain.misses }) a.(last);
+      Queue.iter
+        (fun chain ->
+           f { trace = chain.trace; misses = chain.misses; since = chain.since })
+        a.(last);
       Queue.clear a.(last)
     in
     let _ = Dynarray.append_iter full_chains new_full partial_chains in
@@ -249,9 +276,15 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
   let[@inline always] extract_chains sem chain trace =
     let instructions = Array.of_list (Chain.to_instructions chain) in
     let len_instr = Array.length instructions in
+    let ticks = ref CMap.empty in
+    let update_tick clock time =
+      let previous = CMap.value ~default:N.zero clock !ticks in
+      ticks := CMap.add clock time !ticks;
+      previous
+    in
     let full_chains, dangling_chains, _ =
       Iter.fold
-        (consume_label ~sem instructions)
+        (consume_label ~update_tick ~sem instructions)
         ( Dynarray.create ()
         , Array.init len_instr (fun _ -> Queue.create ())
         , Array.make len_instr 0 )
@@ -329,6 +362,55 @@ module Make (C : Automata.Simple.Hashed.ID) (N : Automata.Simple.Num) = struct
       Iter.map
         (fun ({ misses; _ } as chain : chain_instance) ->
            misses_into_category misses, reaction_time_of_span chain span)
+        chain_instances
+    in
+    reaction_times
+  ;;
+
+  (**[weighted_full_reaction_times ~discretize_range chain chain_instances] returns end-to-end reaction time of the functional [chain] using [~discretize_range] to randomly offset the reaction times, inside [(0, start[i+1]-start[i])] range.*)
+  let weighted_full_reaction_times ?discretize_range chain chain_instances =
+    let open Chain in
+    let span = start_finish_clocks chain in
+    let links = links chain in
+    let reaction_times =
+      Iter.flat_map
+        (fun chain ->
+           let total = reaction_time_of_span chain span in
+           let contributions =
+             links
+             |> List.map (fun span ->
+               let f, s = span in
+               let name = Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s) in
+               name, reaction_time_of_span chain span)
+           in
+           let compute_wights contributions total =
+             List.map
+               (fun (name, link_reaction) -> name, N.(link_reaction / total))
+               contributions
+           in
+           let reactions =
+             match chain.since with
+             | Some since ->
+               let blind_range = N.(CMap.find (fst span) chain.trace - since) in
+               (match discretize_range with
+                | Some discretize_range ->
+                  let blind_spots = discretize_range blind_range in
+                  (*"blind spot" here is an uncertain region of time between the period ticks*)
+                  Iter.map
+                    (fun blind_spot ->
+                       let total = N.(blind_spot + total) in
+                       let contributions = ("blind_spot", blind_spot) :: contributions in
+                       contributions, total)
+                    blind_spots
+                | None ->
+                  let total = N.(blind_range + total) in
+                  let contributions = ("blind_spot", blind_range) :: contributions in
+                  Iter.singleton (contributions, total))
+             | None -> Iter.singleton (contributions, total)
+           in
+           Iter.map
+             (fun (contributions, total) -> compute_wights contributions total, total)
+             reactions)
         chain_instances
     in
     reaction_times

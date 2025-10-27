@@ -51,14 +51,13 @@ let random l r =
   l + ((r - l) * (nom / denom))
 ;;
 
-let from_int = of_int
 let to_rational = Fun.id
 let from_pair (nom, denom) = of_frac nom denom
 
 let of_decimal_string s =
   match String.split_on_char '.' s with
   | [ whole; decimal ] ->
-    let whole = (from_int << int_of_string) whole in
+    let whole = (of_int << int_of_string) whole in
     let decimal_num = int_of_string decimal in
     let len_after_zero = String.length decimal in
     let decimal = of_frac decimal_num (Int.pow 10 len_after_zero) in
@@ -188,3 +187,9 @@ let round_near = round_with modulo_near
 let round_floor = round_with modulo_floor
 let round_ceil = round_with modulo_ceil
 let of_string = of_decimal_string
+
+let to_int n =
+  let nom, denom = to_mpzf2 n in
+  let result = Mpzf.fdiv_q nom denom in
+  Mpz.get_int result
+;;

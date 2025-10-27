@@ -197,7 +197,8 @@ let signals_to_chain (components, hal) signal_path =
   let get_sensor signal =
     (*TODO: maybe replace by using producers map so that I can support functional chains without hal? *)
     let st = signal_task signal in
-    [ { first = start st; rest = [ `Causality, finish st ] }, [ signal ] ]
+    [ { first = start st; rest = [ `Causality, finish st ]; periodic = true }, [ signal ]
+    ]
   in
   let candidates =
     List.fold_left

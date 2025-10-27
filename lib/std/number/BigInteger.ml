@@ -15,7 +15,7 @@ let t_to_string = to_string
 let random x y = Random.int_in_range ~min:x ~max:y
 let round_up = Fun.id
 let round_down = Fun.id
-let from_int = Fun.id
+let of_int = Fun.id
 
 include Interface.Number.Operators.Make (struct
     include Mpzf

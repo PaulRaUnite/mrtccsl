@@ -9,9 +9,14 @@ let reaction_name dir chain_name span =
   Printf.sprintf "%s/%s/%s_%s.reaction.csv" dir chain_name start finish
 ;;
 
-let histogram_name dir chain_name span =
+let weighted_histogram_name dir chain_name span =
   let start, finish = span in
-  Printf.sprintf "%s/%s/%s_%s.histogram.csv" dir chain_name start finish
+  Printf.sprintf "%s/%s/weighted/%s_%s.histogram.csv" dir chain_name start finish
+;;
+
+let categorized_histogram_name dir chain_name span =
+  let start, finish = span in
+  Printf.sprintf "%s/%s/categorized/%s_%s.histogram.csv" dir chain_name start finish
 ;;
 
 let rational =

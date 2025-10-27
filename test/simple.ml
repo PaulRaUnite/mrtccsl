@@ -21,7 +21,7 @@ let wall_test spec names_traces_results =
 let logical_wall_test spec names_traces_results =
   let add_time (name, trace, result) =
     let trace =
-      List.combine trace (List.init (List.length trace) (fun x -> N.from_int (x + 1)))
+      List.combine trace (List.init (List.length trace) (fun x -> N.of_int (x + 1)))
     in
     name, trace |> List.to_seq |> A.Trace.of_seq, result
   in

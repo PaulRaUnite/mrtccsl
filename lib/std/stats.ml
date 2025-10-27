@@ -17,13 +17,53 @@ struct
   module CategorySet = Set.Make (Category)
   module Bins = Map.Make (Num)
 
-  type t = (* TODO: separate normalized and non-normalized histograms? *)
-    { bins : Num.t Categories.t Bins.t
+  type t =
+    { (* TODO: separate normalized and non-normalized histograms? *)
+      bins : Num.t Categories.t Bins.t
     ; categories : CategorySet.t
     ; total : int
     }
 
-  let histogram round_to (reaction_times : ('key * Num.t) Iter.t) : t =
+  let weighted_histogram
+        round_to
+        (reaction_times : ((Category.t * Num.t) list * Num.t) Iter.t)
+    : t
+    =
+    let inc_category k w categories =
+      Categories.entry (Num.add w) ~default:Num.zero k categories
+    in
+    let categories, bins, total =
+      Iter.fold
+        (fun (categories, bins, sum) (weights, v) ->
+           let bin = round_to v in
+           let categories, bins =
+             List.fold_left
+               (fun (categories, bins) (span, weight) ->
+                  let categories = CategorySet.add span categories
+                  and bins =
+                    Bins.entry
+                      ~default:Categories.empty
+                      (inc_category span weight)
+                      bin
+                      bins
+                  in
+                  categories, bins)
+               (categories, bins)
+               weights
+           in
+           categories, bins, sum + 1)
+        (CategorySet.empty, Bins.empty, 0)
+        reaction_times
+    in
+    let normalized_bins =
+      Bins.map
+        (Categories.map (fun count -> Num.div count (Num.from_pair (total, 1))))
+        bins
+    in
+    { bins = normalized_bins; categories; total }
+  ;;
+
+  let category_histogram round_to (reaction_times : ('key * Num.t) Iter.t) : t =
     let inc_category k categories = Categories.entry Int.succ ~default:0 k categories in
     let categories, bins, total =
       Iter.fold
