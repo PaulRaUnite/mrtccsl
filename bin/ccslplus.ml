@@ -1,5 +1,4 @@
 open Cmdliner
-open Term.Syntax
 open Common
 
 let cmd =
@@ -10,7 +9,7 @@ let cmd =
        ~version
        "ccsl+"
        ~doc:"Collection of tools for CCSL+ (modular, real-time, probabilistic CCSL).")
-    [ Simulate.cmd; Reaction.cmd; Convert.cmd ]
+    [ Simulate.cmd; Reaction.cmd; Convert.cmd ; Inspect.cmd ]
 ;;
 
 let main () = Cmd.eval_result cmd

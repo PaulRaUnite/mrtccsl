@@ -15,11 +15,11 @@ let load filename error_ch =
     List.iter (Compile.print_compile_error error_ch) errors;
     Format.pp_print_flush error_ch ();
     failwith "Compilation error.")
-  else m
+  else context, m
 ;;
 
 let load_with_string filename error_ch =
-  let m = load filename error_ch in
+  let context, m = load filename error_ch in
   let v2s =
     Compile.(
       function
@@ -27,7 +27,7 @@ let load_with_string filename error_ch =
       | Anonymous i -> Printf.sprintf "anon(%i)" i)
   in
   let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
-  m
+  context, m
 ;;
 
 module Loc = Loc

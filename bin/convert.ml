@@ -128,7 +128,7 @@ module Native = struct
            and serialize =
              Option.map
                (fun spec_file ->
-                  let m =
+                  let _, m =
                     Mrtccslparsing.load_with_string spec_file Format.err_formatter
                   in
                   let spec = Mrtccsl.Ccsl.Language.Module.flatten m in

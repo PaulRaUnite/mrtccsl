@@ -229,6 +229,13 @@ module Specification = struct
 
   let clocks s = List.flat_map clocks s.logical
 
+  let length { duration; probabilistic; logical; integer } =
+    List.length duration
+    + List.length probabilistic
+    + List.length logical
+    + List.length integer
+  ;;
+
   module Builder = struct
     type nonrec ('c, 'tp, 'ip, 'tv, 'iv, 't, 'gv) t =
       { mutable spec : ('c, 'tp, 'ip, 'tv, 'iv, 't) t }
@@ -305,5 +312,16 @@ module Module = struct
   let flatten { assumptions; structure; assertions } =
     let specs = structure :: List.append assumptions assertions in
     List.fold_left Specification.merge Specification.empty specs
+  ;;
+
+  let clocks { assumptions; structure; assertions } =
+    List.flat_map Specification.clocks ((structure :: assumptions) @ assertions)
+  ;;
+
+  let length { assumptions; structure; assertions } =
+    List.fold_left
+      Int.add
+      0
+      (List.map Specification.length ((structure :: assumptions) @ assertions))
   ;;
 end

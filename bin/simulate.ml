@@ -238,7 +238,7 @@ let cmd =
      and+ horizon = horizon_arg
      and+ steps = steps_arg
      and+ traces = traces_arg in
-     let m = Mrtccslparsing.load_with_string specification Format.err_formatter in
+     let _, m = Mrtccslparsing.load_with_string specification Format.err_formatter in
      let horizon = Option.map Number.Rational.of_decimal_string horizon in
      try `Ok (Ok (simulate ~config:{ cores; output_dir; horizon; steps; traces } m)) with
      | Failure s -> `Error (false, s)

@@ -190,7 +190,7 @@ struct
         in
         let cond = cond_f c in
         v, cond
-      | _ -> failwith "not implemented"
+      | _ -> failwith "numeric relations between rational variables are not implemented"
     ;;
   end
 
@@ -213,7 +213,7 @@ struct
         in
         let cond = cond_f c in
         v, cond
-      | _ -> failwith "not implemented"
+      | _ -> failwith "numeric relations between integer variables are not implemented"
     ;;
 
     let to_nonstrict = function
@@ -923,7 +923,7 @@ struct
           true
         in
         g, t
-      | _ -> failwith "not implemented"
+      | c -> failwithf "automata not implemented for %s" (name c)
     in
     let g now = Iter.of_array (g now) in
     let clocks = L.of_list (clocks constr) in

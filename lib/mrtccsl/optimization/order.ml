@@ -54,7 +54,7 @@ module Make (C : Set.OrderedType) = struct
   let squish = function
     | Causality { cause; conseq } | Precedence { cause; conseq } ->
       List.powerset [ cause; conseq ]
-    | Exclusion (clocks,_) -> [] :: List.map List.return clocks
+    | Exclusion (clocks, _) -> [] :: List.map List.return clocks
     | Coincidence clocks -> [ []; clocks ]
     | Subclocking { sub; super; _ } -> [ []; [ sub; super ]; [ super ] ]
     | Minus { out; arg; except } ->
@@ -66,12 +66,17 @@ module Make (C : Set.OrderedType) = struct
        | Some base ->
          [ []; [ out; base ]; [ out; arg; base ]; [ arg ]; [ arg; base ]; [ base ] ]
        | None -> [ []; [ out; arg ]; [ arg ] ])
-    | Fastest { out; args = [ left; right ] } | Slowest { out; args = [ left; right ] } ->
-      [ []; [ out; left; right ]; [ out; left ]; [ out; right ]; [ left ]; [ right ] ]
+    | Fastest { out; args } | Slowest { out; args } ->
+      let pws = List.powerset_nz args in
+      let with_out = List.map (List.cons out) pws in
+      let len = List.length args in
+      let without_out = List.filter (fun label -> List.length label <> len) pws in
+      ([] :: with_out) @ without_out
     | Intersection { out; args } ->
       let labels = List.powerset args in
       List.map (fun l -> if l = args then out :: args else l) labels
     | Union { out; args } -> [] :: List.map (fun l -> out :: l) (List.powerset_nz args)
+    | DisjunctiveUnion { out; args ; _} -> [] :: List.map (fun c -> [ out; c ]) args
     | Periodic { out; base; _ } -> [ []; [ out; base ]; [ base ] ]
     | Sample { out; arg; base } ->
       [ []; [ out; base ]; [ out; base; arg ]; [ arg ]; [ base ] ]
@@ -86,7 +91,9 @@ module Make (C : Set.OrderedType) = struct
       |> List.powerset_nz
       |> List.filter (fun l -> List.length l <= n)
       |> List.flat_map (fun comb -> List.fold_left List.flat_cartesian [ [] ] comb)
-    | _ -> failwith "not implemented"
+    | Allow { from; until; args } | Forbid { from; until; args } ->
+      [ [ from ]; [ until ] ] @ List.powerset args
+    | c -> failwithf "squishing is not implemented for %s" (name c)
   ;;
 
   let squish c = List.map L.of_list @@ squish c
