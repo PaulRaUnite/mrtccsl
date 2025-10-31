@@ -15,7 +15,8 @@
 %token ASSUME ASSERT STRUCTURE (*modules*)
 %token AT QUESTION (* special syntax inside modules *)
 %token VAR (* variable declaration *)
-%token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT (*constraints*)
+%token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT ALLOW FORBID FROM UNTIL FIRST LAST (*constraints*)
+%token OR_EQ XOR_EQ (*additive constraints*)
 %token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM SIM
 %token LESS LESSEQ MORE MOREEQ EQUAL NOTEQUAL  (* variable relations *)
  (*expressions *)
@@ -142,14 +143,19 @@ clock_expr0 :
 | NEXT ; arg=delim_clock_expr {CNext arg}
 | skip=option(skip) ; EVERY ; period=inline_relation(int_expr) ; OF ; base=delim_clock_expr { CPeriodic {skip;period;base}}
 | SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CSample{arg;base} }
+| FIRST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CFirstSample{arg;base} }
+| LAST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CLastSample{arg;base} }
 | base=delim_clock_expr ; EXCEPT ; subs=list(delim_clock_expr) { CMinus {base;subs}}
 | FASTEST ; OF ; clocks=list(delim_clock_expr) { CFastest clocks }
 | SLOWEST ; OF ; clocks=list(delim_clock_expr) { CSlowest clocks }
 | PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodJitter {period;error;offset}}
 | PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodDrift {period;error;offset}}
 | DELAY ; arg=delim_clock_expr ; BY ; delay=inline_relation(duration_expr) {CTimeDelay {arg;delay}}
-| strict=option(STRICT) ; SPORADIC ; at_least=duration {CSporadic {at_least; strict=(Option.is_some strict)}} 
+| strict=option(STRICT) ; SPORADIC ; at_least=duration {CSporadic {at_least; strict=(Option.is_some strict)}}
 
+%inline additive_union :
+| OR_EQ { AUnion }
+| XOR_EQ { ADisjunctiveUnion }
 
 statement : statement0 {Loc.make $symbolstartpos $endpos $1}
 statement0 : 
@@ -161,7 +167,10 @@ statement0 :
 | DISCRETE ; PROCESS ; var=var ; WITH ; values=located(list(INT)) ; SIM ; ratios=located(separated_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
+| ALLOW ; clocks=nonempty_list(clock_expr) ; FROM ; from=clock_expr ; UNTIL ; until=clock_expr {Allow{clocks;from;until} }
+| FORBID ; clocks=nonempty_list(clock_expr) ; FROM ; from=clock_expr ; UNTIL ; until=clock_expr {Forbid{clocks;from;until} }
 | name=id ; LBRACE ; statements=statements ; RBRACE { Block {name ; statements } }
+| v=var ; u=additive_union ; e=clock_expr { AdditiveUnion (v,u,e) }
 
 statements :
 | dangling_list(SEMICOLON, statement) { $1 }

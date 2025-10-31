@@ -78,6 +78,14 @@ let string_token =
   | CONTINUOUS -> "CONTINUOUS"
   | CLOCK -> "CLOCK"
   | VAR -> "VAR"
+  | UNTIL -> "UNTIL"
+  | FROM -> "FROM"
+  | FORBID -> "FORBID"
+  | ALLOW -> "ALLOW"
+  | FIRST -> "FIRST"
+  | LAST -> "LAST"
+  | OR_EQ -> "OR_EQ"
+  | XOR_EQ -> "XOR_EQ"
 ;;
 
 let test_tokens =
@@ -157,6 +165,12 @@ let test_tokens =
     ; ARROWRIGHT
     ; AND
     ; ALTERNATES
+    ; UNTIL
+    ; FROM
+    ; ALLOW
+    ; FORBID
+    ; FIRST
+    ; LAST
     ]
 ;;
 
@@ -218,7 +232,6 @@ let parse_with_error_handling buffer =
   in
   result
 ;;
-
 
 let from_file path =
   let _, buffer = MenhirLib.LexerUtil.read path in

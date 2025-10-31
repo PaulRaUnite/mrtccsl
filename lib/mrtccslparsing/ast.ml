@@ -28,6 +28,11 @@ type 'a inline_relation' =
 
 type 'a inline_relation = 'a inline_relation' Loc.t
 
+type additive_union =
+  | AUnion
+  | ADisjunctiveUnion
+[@@deriving compare]
+
 type clock_rel =
   | Coincidence
   | Exclusion
@@ -80,6 +85,14 @@ and clock_expr' =
       { arg : clock_expr
       ; base : clock_expr
       }
+  | CFirstSample of
+      { arg : clock_expr
+      ; base : clock_expr
+      }
+  | CLastSample of
+      { arg : clock_expr
+      ; base : clock_expr
+      }
   | CMinus of
       { base : clock_expr
       ; subs : clock_expr list
@@ -107,12 +120,18 @@ and clock_expr' =
 
 and clock_expr = clock_expr' Loc.t
 
-type var_type = [ `Int | `Duration | `Clock ] 
+type var_type =
+  [ `Int
+  | `Duration
+  | `Clock
+  ]
+
 type statement' =
   | VariableDeclaration of (id list * var_type) list
   | IntRelation of int_expr * (num_rel * int_expr) list
   | DurationRelation of duration_expr * (num_rel * duration_expr) list
   | ClockRelation of clock_expr * clock_rel * clock_expr
+  | AdditiveUnion of var * additive_union * clock_expr
   | DiscreteProcess of
       { var : var
       ; values : int list Loc.t
@@ -126,6 +145,16 @@ type statement' =
   | Block of
       { name : id
       ; statements : statements
+      }
+  | Allow of
+      { clocks : clock_expr list
+      ; from : clock_expr
+      ; until : clock_expr
+      }
+  | Forbid of
+      { clocks : clock_expr list
+      ; from : clock_expr
+      ; until : clock_expr
       }
 
 and statement = statement' Loc.t

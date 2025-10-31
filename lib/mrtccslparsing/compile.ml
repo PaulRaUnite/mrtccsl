@@ -164,16 +164,24 @@ module Context = struct
 
   let make_block id = { id; blocks = []; vars = [] }
 
+  module VarMap = Map.Make (struct
+      type t = Ast.additive_union * string list
+
+      let compare =
+        Tuple.compare2 Ast.compare_additive_union (List.compare String.compare)
+      ;;
+    end)
+
   type t =
     { rev_roots : block list
-    ; current : block option
+    ; current : (block * var list VarMap.t) option
     ; generator : int
     }
 
   let pp fmt { rev_roots; current; _ } =
     let blocks =
       match current with
-      | Some current -> current :: rev_roots
+      | Some (current, _) -> current :: rev_roots
       | None -> rev_roots
     in
     Format.fprintf
@@ -189,10 +197,26 @@ module Context = struct
 
   let next_root context id =
     { rev_roots =
-        Option.map_or (fun x -> x :: context.rev_roots) ~default:[] context.current
-    ; current = Some { id; blocks = []; vars = [] }
+        Option.map_or (fun (x, _) -> x :: context.rev_roots) ~default:[] context.current
+    ; current = Some ({ id; blocks = []; vars = [] }, VarMap.empty)
     ; generator = context.generator
     }
+  ;;
+
+  let dump_constraints context builder =
+    let constraints =
+      match context.current with
+      | Some (_, map) ->
+        map
+        |> VarMap.to_list
+        |> List.map (fun ((t, v), args) ->
+          match t with
+          | Ast.AUnion -> Mrtccsl.Language.Union { out = Explicit v; args }
+          | Ast.ADisjunctiveUnion ->
+            Mrtccsl.Language.DisjunctiveUnion { out = Explicit v; args; ratios = None })
+      | None -> []
+    in
+    List.iter (Mrtccsl.Language.Specification.Builder.logical builder) constraints
   ;;
 
   let rec map_inplace f = function
@@ -238,8 +262,9 @@ module Context = struct
 
   let add ~context ~prefix decl : t with_error =
     let open Result.Syntax in
-    let* current = block_add ~block:(Option.get context.current) ~prefix decl in
-    Ok { context with current = Some current }
+    let block, additive_map = Option.get context.current in
+    let* current = block_add ~block ~prefix decl in
+    Ok { context with current = Some (current, additive_map) }
   ;;
 
   let add_variable ~context ~prefix variable var_type location : (t * var) with_error =
@@ -286,14 +311,14 @@ module Context = struct
       List.find_map
         (fun block ->
            search_block ~block ~expect ~location (List.append scope qualified_var))
-        (Option.get context.current :: context.rev_roots)
+        ((fst @@ Option.get context.current) :: context.rev_roots)
     with
     | Some (Ok v) -> Ok (Some v)
     | Some (Error e) -> Error e
     | None ->
-      (match scope with
-       | _ :: scope -> search ~context ~scope ~expect ~location qualified_var
-       | [] -> Ok None)
+      (match List.last_partition scope with
+       | Some _, scope -> search ~context ~scope ~expect ~location qualified_var
+       | _ -> Ok None)
   ;;
 
   let resolve ~context ~scope ~expect (qualified_var : Ast.var) : (t * var) with_error =
@@ -307,6 +332,28 @@ module Context = struct
        | [] -> failwith "illegal variable: variable path cannot be empty"
        | v :: [] -> add_variable ~context ~prefix:scope v expect location
        | _ -> Error (ComplexInlineVariableDeclaration location))
+  ;;
+
+  let resolve_local ~context ~scope ~expect (qualified_var : Ast.var)
+    : (t * var) with_error
+    =
+    let open Result.Syntax in
+    let* new_context, v =
+      resolve ~context:{ context with rev_roots = [] } ~scope ~expect qualified_var
+    in
+    Ok ({ new_context with rev_roots = context.rev_roots }, v)
+  ;;
+
+  let additive_constraint ~context (var : var) (t : Ast.additive_union) (e : var) : t =
+    let block, map = Option.get context.current in
+    let var =
+      match var with
+      | Explicit list -> list
+      | Anonymous _ ->
+        failwith "additive constraints can only use explicit clocks (not anonymous)"
+    in
+    let map = VarMap.entry ~default:[] (List.cons e) (t, var) map in
+    { context with current = Some (block, map) }
   ;;
 end
 
@@ -481,14 +528,19 @@ let into_module { assumptions; structure; assertions } =
         in
         Builder.logical builder @@ Periodic { out; base; period; skip };
         Ok context
-      | CSample { arg; base } ->
+      | (CSample { arg; base } | CFirstSample { arg; base } | CLastSample { arg; base })
+        as c ->
         let* context, arg =
           compile_clock_expr ~context ~scope ~builder ~result_variable:None arg
         in
         let* context, base =
           compile_clock_expr ~context ~scope ~builder ~result_variable:None base
         in
-        Builder.logical builder @@ Sample { out; arg; base };
+        (match c with
+         | CSample _ -> Builder.logical builder @@ Sample { out; arg; base }
+         | CFirstSample _ -> Builder.logical builder @@ FirstSampled { out; arg; base }
+         | CLastSample _ -> Builder.logical builder @@ LastSampled { out; arg; base }
+         | _ -> failwith "impossible");
         Ok context
       | CMinus { base; subs } ->
         let* context, base =
@@ -727,6 +779,41 @@ let into_module { assumptions; structure; assertions } =
         ~context
         ~builder
         statements
+    | Allow { clocks; from; until } ->
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, clocks = compile_clock_exprs ~context ~scope ~builder clocks in
+         let* context, from =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None from
+         in
+         let* context, until =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None until
+         in
+         Builder.logical builder @@ Allow { args = clocks; from; until };
+         Ok context)
+    | Forbid { clocks; from; until } ->
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, clocks = compile_clock_exprs ~context ~scope ~builder clocks in
+         let* context, from =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None from
+         in
+         let* context, until =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None until
+         in
+         Builder.logical builder @@ Forbid { args = clocks; from; until };
+         Ok context)
+    | AdditiveUnion (v, u, e) ->
+      error_recover
+        ~context
+        ~errors:[]
+        (let* context, v = Context.resolve_local ~context ~scope ~expect:`Clock v in
+         let* context, e =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None e
+         in
+         Ok (Context.additive_constraint ~context v u e))
   and compile_block ~scope ~context ~builder stmts =
     List.fold_left
       (fun (context, errors) v ->
@@ -736,7 +823,11 @@ let into_module { assumptions; structure; assertions } =
   in
   let compile_top_block name stmts (context, errors) builder =
     let context = Context.next_root context name in
-    accumulate_errors ~errors @@ compile_block ~scope:[] ~context ~builder stmts
+    let context, errors =
+      accumulate_errors ~errors @@ compile_block ~scope:[] ~context ~builder stmts
+    in
+    Context.dump_constraints context builder;
+    context, errors
   in
   let compile_top_blocks name list =
     List.mapi

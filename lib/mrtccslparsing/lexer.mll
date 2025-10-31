@@ -25,6 +25,8 @@ rule read =
   | "\n" { MenhirLib.LexerUtil.newline lexbuf; read lexbuf }
   | white { read lexbuf }
   | "//" { single_comment (Buffer.create 16) lexbuf }  (* TODO: redo the comments, I want to make formatter too. *)
+  | "+=" { OR_EQ }
+  | "|=" { XOR_EQ }
   | "{" { LBRACE }
   | "}" { RBRACE }
   | "(" { LPAREN }
@@ -94,6 +96,12 @@ rule read =
   | "normal" {NORMAL}
   | "uniform" {UNIFORM}
   | "strict" {STRICT}
+  | "allow" {ALLOW}
+  | "forbid" {FORBID}
+  | "from" {FROM}
+  | "until" {UNTIL}
+  | "first" {FIRST}
+  | "last" {LAST}
   (* time scales and units *)
   | "year" { SECOND(365*24*60*60, 1) }
   | "month" { SECOND(30*24*60*60, 1) }
