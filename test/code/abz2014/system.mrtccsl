@@ -1,0 +1,518 @@
+assume {
+    vars {
+        controller {
+            module1 {
+                continuous process j with normal(0s, 0.5ms);
+                duration : -1ms <= j <= 1ms;
+            };
+            module2 {
+                continuous process j with normal(0s, 0.5ms);
+                duration : -1ms <= j <= 1ms;
+            }
+        }
+    };
+} structure {
+    flying alternates onground;
+    valve {
+        door {
+            retraction {
+                var open, close: clock;
+                // open alternates close;
+            };
+            extension {
+                var open, close : clock;
+                // open alternates close;
+            };
+        };
+        gear {
+            retraction {
+                var open, close: clock;
+                // open alternates close;
+            };
+            extension {
+                var open, close: clock;
+                // open alternates close;
+            };
+        };
+        general {
+            open alternates close;
+        };
+        allow door.retraction.close door.retraction.open door.extension.close door.extension.open gear.retraction.close gear.retraction.open gear.extension.close gear.extension.open from general.open until general.close; // it is a deviation from how the system may behave because that would require modelling of the physical behaviour
+    };
+    cylinder {
+        door {
+            front {
+                retracted alternates extended;
+            };
+            left {
+                retracted alternates extended;
+            };
+            right {
+                retracted alternates extended;
+            };
+        };
+        gear {
+            front {
+                retracted alternates extended;
+            };
+            left {
+                retracted alternates extended;
+            };
+            right {
+                retracted alternates extended;
+            };
+        };
+    };
+    lock { // TODO: maybe just maybe we don't actually lock, only unlock?
+        door {
+            front {
+                unlock alternates lock;
+            };
+            left {
+                unlock alternates lock;
+            };
+            right {
+                unlock alternates lock;
+            };
+        };
+        gear {
+            up {
+                front {
+                    lock alternates unlock;
+                };
+                left {
+                    lock alternates unlock;
+                };
+                right {
+                    lock alternates unlock;
+                };
+            };
+            down {
+                front {
+                    unlock alternates lock;
+                };
+                left {
+                    unlock alternates lock;
+                };
+                right {
+                    unlock alternates lock;
+                };
+            };
+        };
+    };
+
+    // relations between valves and cylinders
+    // high to down
+    cylinder.door.front.extended = delay valve.door.extension.open by 1.2s;
+    cylinder.door.left.extended = delay valve.door.extension.open by 1.5s;
+    cylinder.door.right.extended = delay valve.door.extension.open by 1.5s;
+    // down to high
+    cylinder.door.front.retracted = delay valve.door.retraction.open by 1.2s;
+    cylinder.door.left.retracted = delay valve.door.retraction.open by 1.6s;
+    cylinder.door.right.retracted = delay valve.door.retraction.open by 1.6s;
+
+    // relations between valves and 
+    // high to down
+    cylinder.gear.front.extended = delay valve.gear.extension.open by 1.2s;
+    cylinder.gear.left.extended = delay valve.gear.extension.open by 1.6s;
+    cylinder.gear.right.extended = delay valve.gear.extension.open by 1.6s;
+    // down to high
+    cylinder.gear.front.retracted = delay valve.gear.retraction.open by 1.6s;
+    cylinder.gear.left.retracted = delay valve.gear.retraction.open by 1.6s;
+    cylinder.gear.right.retracted = delay valve.gear.retraction.open by 1.6s;
+
+    // TODO: valves cannot close before the cylinder finishes extension
+
+    sensor {
+        pressure {
+            var present, lacking : clock;
+        };
+        door {
+            front {
+                var open, closed : clock;
+                var locked, unlocked : clock;
+            };
+            left {
+                var open, closed : clock;
+                var locked, unlocked : clock;
+            };
+            right {
+                var open, closed : clock;
+                var locked, unlocked : clock;
+            };
+            var open, closed : clock;
+            open = slowest of front.open left.open right.open;
+            closed = slowest of front.closed left.closed right.closed;
+            locked = slowest of front.locked left.locked right.locked;
+            unlocked = slowest of front.unlocked left.unlocked right.unlocked;
+        };
+        gear {
+            front {
+                var retracted, extended : clock;
+            };
+            left {
+                var retracted, extended : clock;
+            };
+            right {
+                var retracted, extended : clock;
+            };
+            var retracted, extended : clock;
+            retracted = slowest of front.retracted left.retracted right.retracted;
+            extended = slowest of front.extended left extended right.extended;
+            up {
+                front {
+                    var locked, unlocked : clock;
+                };
+                left {
+                    var locked, unlocked : clock;
+                };
+                right {
+                    var locked, unlocked : clock;
+                };
+                var locked, unlocked : clock;
+                locked = slowest of front.locked left.locked right.locked;
+                unlocked = slowest of front.unlocked left.unlocked right.unlocked;
+            };
+            down {
+                front {
+                    var locked, unlocked : clock;
+                };
+                left {
+                    var locked, unlocked : clock;
+                };
+                right {
+                    var locked, unlocked : clock;
+                };
+                var locked, unlocked : clock;
+                locked = slowest of front.locked left.locked right.locked;
+                unlocked = slowest of front.unlocked left.unlocked right.unlocked;
+            };
+            shockabsorbers {
+                var relaxed, compressed : clock;
+            };
+        }
+    };
+
+    // relations between locks and sensors
+    // doors
+    sensor.door.front.unlocked = delay lock.door.front.unlock by 0.4s;
+    sensor.door.left.unlocked = delay lock.door.left.unlock by 0.4s;
+    sensor.door.right.unlocked = delay lock.door.right.unlock by 0.4s;
+
+    sensor.door.front.locked = delay lock.door.front.lock by 0.3s;
+    sensor.door.left.locked = delay lock.door.left.lock by 0.3s;
+    sensor.door.right.locked = delay lock.door.right.lock by 0.3s;
+
+    // gear
+    // high position
+    sensor.gear.up.front.unlocked = delay lock.gear.up.front.unlock by 0.8s;
+    sensor.gear.up.left.unlocked = delay lock.gear.up.left.unlock by 0.8s;
+    sensor.gear.up.right.unlocked = delay lock.gear.up.right.unlock by 0.8s;
+
+    sensor.gear.up.front.locked = delay lock.gear.up.front.lock by 0.4s;
+    sensor.gear.up.left.locked = delay lock.gear.up.left.lock by 0.4s;
+    sensor.gear.up.right.locked = delay lock.gear.up.right.lock by 0.4s;
+    // down position
+    sensor.gear.down.front.unlocked = delay lock.gear.down.front.unlock by 0.8s;
+    sensor.gear.down.left.unlocked = delay lock.gear.down.left.unlock by 0.8s;
+    sensor.gear.down.right.unlocked = delay lock.gear.down.right.unlock by 0.8s;
+
+    sensor.gear.down.front.locked = delay lock.gear.down.front.lock by 0.4s;
+    sensor.gear.down.left.locked = delay lock.gear.down.left.lock by 0.4s;
+    sensor.gear.down.right.locked = delay lock.gear.down.right.lock by 0.4s;
+
+    // reation between shock absorbers and flying/being on ground
+    sensor.gear.shockabsorbers.relaxed = delay flying by ?;
+    sensor.gear.shockabsorbers.compressed = delay onground by ?;
+
+    // relation between general valve and pressure sensor
+    sensor.pressure.present = delay valve.general.open by 1s;
+    sensor.pressure.lacking = delay valve.general.close by 3.6s;
+
+    var cycle : clock;
+    cycle = sensor.pressure.lacking;
+    handle {
+        var up,down,neutral,action,movement : clock;
+        // constraints to make handle move only up <-> neutral <-> down
+        movement = up xor down xor neutral;
+        neutral = (sample up on (neutral or down)) or (sample down on (neutral or up));
+        
+        action = up xor down;
+
+        committed {
+            var up,down,action : clock;
+            // because it is not possible to cancel action, the action will be considered committed until the cycle completes
+            action = first sample handle.action on cycle;
+            up = sample handle.up on (action or cycle);
+            down = sample handle.down on (action or cycle);
+        };
+    };
+    switch {
+        close alternates open;
+        close = (delay (first sample handle.committed.action on open) by 0.8s);
+        deadline = delay handle.action by 20s;
+        open = delay (deadline except (sample handle.action on deadline)) by 1.2s;
+    };
+    controller {
+        module1 {
+            cpu = periodic 1ms with drift vars.controller.module1.j;
+            command {
+                valve {
+                    general {
+                        var open, close : clock;
+                    };
+                    gear {
+                        retraction {
+                            var open, close: clock;
+                        };
+                        extension {
+                            var open, close: clock;
+                        };
+                    };
+                    door {
+                        retraction {
+                            var open, close: clock;
+                        };
+                        extension {
+                            var open, close: clock;
+                        };
+                    };
+                };
+                lock {
+                    door {
+                        var lock,unlock : clock;
+                    };
+                    gear {
+                        up {
+                            var lock,unlock : clock;
+                        };
+                        down {
+                            var lock,unlock : clock;
+                        };
+                    };
+                };
+            };
+            extension {
+                start = handle.committed.down;
+                command.valve.general.open += start $ 1 on cpu;
+                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
+                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                command.lock.gear.up.unlock += (sample start on sensor.door.open) $ 1 on cpu;
+                command.valve.gear.extension.open += (sample start on sensor.gear.up.unlocked) $ 1 on cpu;
+                command.lock.gear.down.lock += (sample start on sensor.gear.extended) $ 1 on cpu;
+                reverse = (sample start on sensor.gear.down.locked) $ 1 on cpu;
+                command.valve.gear.extension.close += reverse; 
+                command.valve.door.extension.close += reverse; 
+                command.valve.door.retraction.open += reverse;
+                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
+                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.valve.door.retraction.close += finish;
+                command.valve.general.close += finish;
+            };
+            retraction {
+                start = handle.committed.up;
+                command.valve.general.open += start $ 1 on cpu;
+                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
+                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                maybe_retraction = sample start on sensor.door.open;
+                avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
+                maybe_retraction = start_retraction xor avoid_retraction;
+                command.lock.gear.down.unlock += start_retraction $ 1 on cpu;
+                command.valve.gear.retraction.open += (sample start on sensor.gear.down.unlocked) $ 1 on cpu;
+                command.lock.gear.down.lock += (sample start on sensor.gear.retracted) $ 1 on cpu;
+                reverse = (sample start on (sensor.gear.down.locked)) $ 1 on cpu;
+                command.valve.gear.retraction.close += reverse;
+                command.valve.door.extension.close += reverse or avoid_retraction;
+                command.valve.door.retraction.open += reverse or avoid_retraction;
+                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
+                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.valve.door.retraction.close += finish;
+                command.valve.general.close += finish;
+            };
+        };
+        module2 {
+            cpu = periodic 1ms with drift vars.controller.module1.j;
+            command {
+                valve {
+                    general {
+                        var open, close : clock;
+                    };
+                    gear {
+                        retraction {
+                            var open, close: clock;
+                        };
+                        extension {
+                            var open, close: clock;
+                        };
+                    };
+                    door {
+                        retraction {
+                            var open, close: clock;
+                        };
+                        extension {
+                            var open, close: clock;
+                        };
+                    };
+                };
+                lock {
+                    door {
+                        var lock,unlock : clock;
+                    };
+                    gear {
+                        up {
+                            var lock,unlock : clock;
+                        };
+                        down {
+                            var lock,unlock : clock;
+                        };
+                    };
+                };
+            };
+            extension {
+                start = handle.committed.down;
+                command.valve.general.open += start $ 1 on cpu;
+                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
+                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                command.lock.gear.up.unlock += (sample start on sensor.door.open) $ 1 on cpu;
+                command.valve.gear.extension.open += (sample start on sensor.gear.up.unlocked) $ 1 on cpu;
+                command.lock.gear.down.lock += (sample start on sensor.gear.extended) $ 1 on cpu;
+                reverse = (sample start on sensor.gear.down.locked) $ 1 on cpu;
+                command.valve.gear.extension.close += reverse; 
+                command.valve.door.extension.close += reverse; 
+                command.valve.door.retraction.open += reverse;
+                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
+                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.valve.door.retraction.close += finish;
+                command.valve.general.close += finish;
+            };
+            retraction {
+                start = handle.committed.up;
+                command.valve.general.open += start $ 1 on cpu;
+                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
+                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                maybe_retraction = sample start on sensor.door.open;
+                avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
+                maybe_retraction = start_retraction xor avoid_retraction;
+                command.lock.gear.down.unlock += start_retraction $ 1 on cpu;
+                command.valve.gear.retraction.open += (sample start on sensor.gear.down.unlocked) $ 1 on cpu;
+                command.lock.gear.down.lock += (sample start on sensor.gear.retracted) $ 1 on cpu;
+                reverse = (sample start on (sensor.gear.down.locked)) $ 1 on cpu;
+                command.valve.gear.retraction.close += reverse;
+                command.valve.door.extension.close += reverse or avoid_retraction;
+                command.valve.door.retraction.open += reverse or avoid_retraction;
+                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
+                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.valve.door.retraction.close += finish;
+                command.valve.general.close += finish;
+            };
+        };
+        // because the outputs using OR-gate to combine the output of controllers, we use fastest and slowest constraints
+        command {
+            valve {
+                general {
+                    var open, close : clock;
+                    open = fastest of module1.command.valve.general.open module2.command.valve.general.open;
+                    close = slowest of module1.command.valve.general.close module2.command.valve.general.close;
+                };
+                gear {
+                    retraction {
+                        var open, close: clock;
+                        open = fastest of module1.command.valve.gear.retraction.open module2.command.valve.gear.retraction.open;
+                        close = slowest of module1.command.valve.gear.retraction.close module2.command.valve.gear.retraction.close;
+                    };
+                    extension {
+                        var open, close: clock;
+                        open = fastest of module1.command.valve.gear.extension.open module2.command.valve.gear.extension.open;
+                        close = slowest of module1.command.valve.gear.extension.close module2.command.valve.gear.extension.close;
+                    };
+                };
+                door {
+                    retraction {
+                        var open, close: clock;
+                        open = fastest of module1.command.valve.door.retraction.open module2.command.valve.door.retraction.open;
+                        close = slowest of module1.command.valve.door.retraction.close module2.command.valve.door.retraction.close;
+                    };
+                    extension {
+                        var open, close: clock;
+                        open = fastest of module1.command.valve.door.extension.open module2.command.valve.door.extension.open;
+                        close = slowest of module1.command.valve.door.extension.close module2.command.valve.door.extension.close;
+                    };
+                };
+            };
+            lock {
+                door {
+                    var lock,unlock : clock;
+                    lock = fastest of module1.command.lock.door.lock module2.command.lock.door.lock;
+                    unlock = slowest of module1.command.lock.door.unlock module2.command.lock.door.unlock;
+                };
+                gear {
+                    up {
+                        var lock,unlock : clock;
+                        lock = fastest of module1.command.lock.gear.up.lock module2.command.lock.gear.up.lock;
+                        unlock = slowest of module1.command.lock.gear.up.unlock module2.command.lock.gear.up.unlock;
+                    };
+                    down {
+                        var lock,unlock : clock;
+                        lock = fastest of module1.command.lock.gear.down.lock module2.command.lock.gear.down.lock;
+                        unlock = slowest of module1.command.lock.gear.down.unlock module2.command.lock.gear.down.unlock;
+                    };
+                };
+            };
+        };
+        indicate {
+            var locked, maneuvering, anomaly : clock;
+        };
+    };
+
+    // connection between controller commands and actuators
+    valve.general.open = delay controller.command.valve.general.open by 1ms;
+    valve.general.close = delay controller.command.valve.general.close by 1ms;
+
+    valve.door.retraction.open = delay controller.command.valve.door.retraction.open by 1ms;
+    valve.door.retraction.close = delay controller.command.valve.door.retraction.close by 1ms;
+
+    valve.door.extension.open = delay controller.command.valve.door.extension.open by 1ms;
+    valve.door.extension.close = delay controller.command.valve.door.extension.close by 1ms;
+
+    valve.gear.retraction.open = delay controller.command.valve.gear.retraction.open by 1ms;
+    valve.gear.retraction.close = delay controller.command.valve.gear.retraction.close by 1ms;
+
+    valve.gear.extension.open = delay controller.command.valve.gear.extension.open by 1ms;
+    valve.gear.extension.close = delay controller.command.valve.gear.extension.close by 1ms;
+
+    // relations between commands and door locks
+    lock.door.front.unlock = delay controller.command.lock.door.unlock by 1ms;
+    lock.door.left.unlock = delay controller.command.lock.door.unlock by 1ms;
+    lock.door.right.unlock = delay controller.command.lock.door.unlock by 1ms;
+    lock.door.front.lock = delay controller.command.lock.door.lock by 1ms;
+    lock.door.left.lock = delay controller.command.lock.door.lock by 1ms;
+    lock.door.right.lock = delay controller.command.lock.door.lock by 1ms;
+
+    // relations between commands and gear locks
+    lock.gear.up.front.unlock = delay controller.command.lock.gear.up.unlock by 1ms;
+    lock.gear.up.left.unlock = delay controller.command.lock.gear.up.unlock by 1ms;
+    lock.gear.up.right.unlock = delay controller.command.lock.gear.up.unlock by 1ms;
+    lock.gear.up.front.lock = delay controller.command.lock.gear.up.lock by 1ms;
+    lock.gear.up.left.lock = delay controller.command.lock.gear.up.lock by 1ms;
+    lock.gear.up.right.lock = delay controller.command.lock.gear.up.lock by 1ms;
+
+    lock.gear.down.front.unlock = delay controller.command.lock.gear.down.unlock by 1ms;
+    lock.gear.down.left.unlock = delay controller.command.lock.gear.down.unlock by 1ms;
+    lock.gear.down.right.unlock = delay controller.command.lock.gear.down.unlock by 1ms;
+    lock.gear.down.front.lock = delay controller.command.lock.gear.down.lock by 1ms;
+    lock.gear.down.left.lock = delay controller.command.lock.gear.down.lock by 1ms;
+    lock.gear.down.right.lock = delay controller.command.lock.gear.down.lock by 1ms;
+} assert {
+    // should not have a conflict between the commands to the controllers
+    handle.committed.action = handle.committed.up xor handle.committed.down;
+
+    // should not open opposing valves
+    mutex {
+        valve.door.retraction.open -> valve.door.retraction.close,
+        valve.door.extension.open -> valve.door.extension.close,
+    };
+    mutex {
+        valve.gear.retraction.open -> valve.gear.retraction.close,
+        valve.gear.extension.open -> valve.gear.extension.close,
+    }
+}
