@@ -8,6 +8,7 @@ module Make (C : Set.OrderedType) = struct
     type t =
       { solutions : int
       ; constr : int
+      ; constr_str : string
       ; labels : L.t list
       ; clocks : L.t
       }
@@ -22,20 +23,40 @@ module Make (C : Set.OrderedType) = struct
         let default = 0
       end)
 
-  let compatible ~modulo l l' = L.equal_modulo ~modulo l l'
+  module Display = struct
+    include G
 
-  let seed graph =
-    let iter f = G.iter_edges_e f graph in
-    let edge = iter |> Iter.min_exn ~lt:(fun x y -> G.E.label x > G.E.label y) in
-    [ G.E.src edge; G.E.dst edge ]
-  ;;
+    let vertex_name v = string_of_int (V.label v).constr
+    let graph_attributes _ = []
+    let default_vertex_attributes _ = []
+    let vertex_attributes v = [ `Label (V.label v).constr_str ]
+    let default_edge_attributes _ = []
+    let edge_attributes e = [ `Label (string_of_int (E.label e)) ]
+    let get_subgraph _ = None
+  end
+
+  let compatible ~modulo l l' = L.equal_modulo ~modulo l l'
 
   module VS = Set.Make (G.V)
 
-  let rec optimize graph front =
-    if List.length front = G.nb_vertex graph
+  let root graph component =
+    let component = VS.of_list component in
+    let iter f = G.iter_edges_e f graph in
+    let edge =
+      iter
+      |> Iter.filter (fun e ->
+        let src = G.E.src e in
+        VS.mem src component)
+      |> Iter.min_exn ~lt:(fun x y -> G.E.label x < G.E.label y)
+    in
+    [ G.E.src edge; G.E.dst edge ]
+  ;;
+
+  let rec optimize graph group_size front clocks =
+    if List.length front = group_size
     then front
     else (
+      let cardinality = L.cardinal clocks in
       let frontset = VS.of_list front in
       let _, next =
         front
@@ -43,12 +64,19 @@ module Make (C : Set.OrderedType) = struct
         |> Iter.flat_map_l (G.succ_e graph)
         |> Iter.filter_map (fun e ->
           let dst = G.E.dst e in
+          let src = G.E.src e in
+          let src_label = G.V.label src in
+          let dst_label = G.V.label dst in
           if VS.mem dst frontset
           then None
-          else Some (G.E.label e / (G.V.label dst).solutions, dst))
-        |> Iter.min_exn ~lt:(fun x y -> fst x > fst y)
+          else
+            Some
+              ( ( cardinality - L.cardinal (L.inter clocks dst_label.clocks)
+                , G.E.label e / src_label.solutions )
+              , dst ))
+        |> Iter.min_exn ~lt:(fun x y -> fst x < fst y)
       in
-      optimize graph (next :: front))
+      optimize graph group_size (next :: front) (L.union (G.V.label next).clocks clocks))
   ;;
 
   let squish = function
@@ -76,7 +104,7 @@ module Make (C : Set.OrderedType) = struct
       let labels = List.powerset args in
       List.map (fun l -> if l = args then out :: args else l) labels
     | Union { out; args } -> [] :: List.map (fun l -> out :: l) (List.powerset_nz args)
-    | DisjunctiveUnion { out; args ; _} -> [] :: List.map (fun c -> [ out; c ]) args
+    | DisjunctiveUnion { out; args; _ } -> [] :: List.map (fun c -> [ out; c ]) args
     | Periodic { out; base; _ } -> [ []; [ out; base ]; [ base ] ]
     | Sample { out; arg; base } ->
       [ []; [ out; base ]; [ out; base; arg ]; [ arg ]; [ base ] ]
@@ -93,7 +121,7 @@ module Make (C : Set.OrderedType) = struct
       |> List.flat_map (fun comb -> List.fold_left List.flat_cartesian [ [] ] comb)
     | Allow { from; until; args } | Forbid { from; until; args } ->
       [ [ from ]; [ until ] ] @ List.powerset args
-    | c -> failwithf "squishing is not implemented for %s" (name c)
+    | Sporadic { out; _ } -> [ [ out ] ]
   ;;
 
   let squish c = List.map L.of_list @@ squish c
@@ -114,6 +142,7 @@ module Make (C : Set.OrderedType) = struct
              { solutions = List.length labels
              ; labels
              ; constr = i
+             ; constr_str = Language.name c
              ; clocks = L.of_list @@ clocks c
              })
         constr
@@ -123,17 +152,37 @@ module Make (C : Set.OrderedType) = struct
       Iter.product iter iter
       |> Iter.fold
            (fun m (i, j) ->
-              let x = G.V.label vertices.(i)
-              and y = G.V.label vertices.(j) in
-              let solutions = edge (x.labels, x.clocks) (y.labels, y.clocks) in
-              if solutions > 0
-              then G.add_edge_e m (G.E.create vertices.(i) solutions vertices.(j));
-              m)
+              if i >= j
+              then m
+              else (
+                let x = G.V.label vertices.(i)
+                and y = G.V.label vertices.(j) in
+                if L.is_empty (L.inter x.clocks y.clocks)
+                then m
+                else (
+                  let solutions = edge (x.labels, x.clocks) (y.labels, y.clocks) in
+                  if solutions > 0
+                  then G.add_edge_e m (G.E.create vertices.(i) solutions vertices.(j));
+                  m)))
            (G.create ~size:(Array.length vertices) ())
     in
-    let constraints =
-      List.map (fun v -> constr.((G.V.label v).constr)) (optimize graph (seed graph))
+    (* let module Dot = Graph.Graphviz.Dot (Display) in
+    let _ = Dot.output_graph (open_out "./graph.dot") graph in *)
+    let module Components = Graph.Components.Undirected (G) in
+    let components = Components.components_list graph in
+    let optimize_component component =
+      let root = root graph component in
+      let clocks =
+        List.fold_left L.union L.empty (List.map (fun v -> (G.V.label v).clocks) root)
+      in
+      optimize graph (List.length component) root clocks
     in
+    let constraints =
+      List.rev_map
+        (fun v -> constr.((G.V.label v).constr))
+        (List.flat_map optimize_component components)
+    in
+    assert (List.length spec.logical = List.length constraints);
     { spec with logical = constraints }
   ;;
 end
