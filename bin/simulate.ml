@@ -168,17 +168,24 @@ let generate_trace ~config clocks spec i =
   let strategy = ST.Solution.refuse_empty random_strat in
   let env = A.of_spec ~debug:false spec in
   let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
-  let trace =
+  let trace, was_cut =
     match config.horizon with
-    | Some horizon ->
-      let trace, _ = A.Trace.until ~horizon trace in
-      trace
-    | None -> trace
+    | Some horizon -> A.Trace.until ~horizon trace
+    | None -> trace, ref false
   in
+  let size = ref 0 in
+  let monitor_size i x =
+    size := Int.succ i;
+    x
+  in
+  let trace = Iter.mapi monitor_size trace in
   let trace = Iter.map Export.pair_to_step trace in
   let basename = Printf.sprintf "%s/%i" config.output_dir i in
-  Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
-    Export.CSV.write ch clocks trace)
+  let _ =
+    Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
+      Export.CSV.write ch clocks trace)
+  in
+  Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" (if !was_cut then false else !size < config.steps) !was_cut !size
 ;;
 
 let simulate ~config m =
