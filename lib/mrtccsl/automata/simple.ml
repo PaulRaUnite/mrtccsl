@@ -131,7 +131,14 @@ module type S = sig
   type guard = (L.t * NI.t) Iter.t
   type solution = L.t * N.t
   type sol_strategy = guard -> solution option
-  type t = (N.t -> guard) * (N.t -> solution -> bool) * L.t
+
+  type t =
+    { name : string
+    ; guard : N.t -> guard
+    ; transition : N.t -> solution -> bool
+    ; clocks : L.t
+    }
+
   type sim
 
   module Trace : Trace with type solution := solution and type num := N.t
@@ -254,7 +261,7 @@ struct
     let until ~horizon trace =
       let was_cut = ref false in
       ( Iter.take_while
-          (fun [@inline hint] (_, n) ->
+          (fun[@inline hint] (_, n) ->
              if N.less n horizon
              then true
              else (
@@ -362,7 +369,12 @@ struct
     ;;
   end
 
-  type t = (N.t -> guard) * (N.t -> solution -> bool) * L.t
+  type t =
+    { name : string
+    ; guard : N.t -> guard
+    ; transition : N.t -> solution -> bool
+    ; clocks : L.t
+    }
 
   type sim =
     { durations : NI.t VarSeq.container
@@ -382,12 +394,15 @@ struct
   ;;
 
   let noop_transition n (_, n') = N.compare n n' < 0
-  let empty : t = noop_guard, noop_transition, L.empty
+
+  let empty : t =
+    { name = "noop"; guard = noop_guard; transition = noop_transition; clocks = L.empty }
+  ;;
 
   let empty_sim : sim =
     { durations = VarSeq.empty_container ()
     ; integers = VarSeq.empty_container ()
-    ; automata = noop_guard, noop_transition, L.empty
+    ; automata = empty
     }
   ;;
 
@@ -402,17 +417,17 @@ struct
   ;;
 
   let correctness_decorator a =
-    let g, t, clocks = a in
-    let t n (l, n') =
-      let possible = g n in
+    let { name; guard; transition; clocks } = a in
+    let transition n (l, n') =
+      let possible = guard n in
       let present =
         Iter.exists
           (fun (l', cond) -> L.equal_modulo ~modulo:clocks l l' && NI.contains cond n')
           possible
       in
-      present && t n (l, n')
+      present && transition n (l, n')
     in
-    g, t, clocks
+    { name; guard; transition; clocks }
   ;;
 
   let debug_g name g now =
@@ -421,36 +436,76 @@ struct
     variants
   ;;
 
+  let[@inline always] sat_solver ~modulo l l' =
+    if L.equal_modulo ~modulo l l' then Some (L.union l l') else None
+  ;;
+
+  let[@inline always] linear_solver c c' =
+    let res = NI.inter (NI.pinf N.zero) (NI.inter c c') in
+    if NI.is_empty res then None else Some res
+  ;;
+
+  let[@inline always] guard_solver ~modulo ((l, c), (l', c')) =
+    match sat_solver ~modulo l l', linear_solver c c' with
+    | Some l, Some c -> Some (l, c)
+    | _ -> None
+  ;;
+
   let sync (a1 : t) (a2 : t) : t =
-    let g1, t1, c1 = a1 in
-    let g2, t2, c2 = a2 in
+    let { name = n1; guard = g1; transition = t1; clocks = c1 } = a1 in
+    let { name = n2; guard = g2; transition = t2; clocks = c2 } = a2 in
     let c = L.union c1 c2 in
     let conf_surface = L.inter c1 c2 in
-    let[@inline always] sat_solver l l' =
-      if L.equal_modulo ~modulo:conf_surface l l' then Some (L.union l l') else None
-    in
-    let[@inline always] linear_solver c c' =
-      let res = NI.inter (NI.pinf N.zero) (NI.inter c c') in
-      if NI.is_empty res then None else Some res
-    in
-    let[@inline always] guard_solver ((l, c), (l', c')) =
-      match sat_solver l l', linear_solver c c' with
-      | Some l, Some c -> Some (l, c)
-      | _ -> None
-    in
     let g now =
-      (* let _ = Printf.printf "sync--- at %s\n" (N.to_string now) in *)
       let g1 = g1 now
-      (* let _ = Printf.printf "sync sol 1: %s\n" (guard_to_string g1) in *)
       and g2 = g2 now in
-      (* let _ = Printf.printf "sync sol 2: %s\n" (guard_to_string g2) in *)
+      (* let _ = Printf.printf "before: %s\n" (guard_to_string g1) in *)
       let pot_solutions = Iter.product g1 g2 in
-      let solutions = Iter.filter_map guard_solver pot_solutions in
+      let solutions = Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
-      Trace.persist solutions
+      let solutions = Trace.persist solutions in
+      (* let _ = Printf.printf "after: %s\n" (guard_to_string solutions) in *)
+      solutions
     in
     let t n l = t1 n l && t2 n l in
-    g, t, c
+    { name = Printf.sprintf "sync(%s, %s)" n1 n2; guard = g; transition = t; clocks = c }
+  ;;
+
+  let sync_batch (automata : t list) : t =
+    let { guard = empty_g; clocks = empty_clocks; _ } =
+      empty
+    in
+    let guard now =
+      let solutions, _ =
+        List.fold_left
+          (fun (prev_solutions, prev_clocks) { guard; clocks; _ } ->
+             (* let _ = print_endline (L.to_string clocks) in *)
+             (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
+             let conf_surface = L.inter prev_clocks clocks in
+             let pot_solutions = Iter.product prev_solutions (guard now) in
+             let solutions =
+               Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
+             in
+             let solutions = Trace.persist solutions in
+             (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
+             solutions, L.union prev_clocks clocks)
+          (empty_g now, empty_clocks)
+          automata
+      in
+      solutions
+    in
+    let transition before sol =
+      Iter.for_all
+        (fun { transition; _ } ->
+           let res = transition before sol in
+           if not res then print_endline "failed";
+           res)
+        (Iter.of_list automata)
+    in
+    let clocks =
+      List.fold_left (fun all { clocks; _ } -> L.union all clocks) empty_clocks automata
+    in
+    { name = "all"; guard; transition; clocks }
   ;;
 
   (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.**)
@@ -489,7 +544,8 @@ struct
   let of_constr (integers, durations) constr : t =
     let open Language in
     let label_array l = Array.map L.of_list (Array.of_list l) in
-    let g, t =
+    let clocks = L.of_list (clocks constr) in
+    let guard, transition =
       match constr with
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
@@ -722,6 +778,9 @@ struct
       | Union { out; args } ->
         let labels = [] :: List.map (fun l -> out :: l) (List.powerset_nz args) in
         stateless (label_array labels)
+      | DisjunctiveUnion { out; args; _ } ->
+        let labels = [] :: List.map (fun c -> [ out; c ]) args in
+        stateless (label_array labels)
       | Alternate { first = a; second = b } ->
         let phase = ref false in
         let g n =
@@ -737,41 +796,56 @@ struct
           true
         in
         g, t
-      | Fastest { out; args = [ a; b ] } | Slowest { out; args = [ a; b ] } ->
-        let count = ref 0 in
-        let general_labels = [ []; [ a; b; out ] ] in
+      | Fastest { out; args } | Slowest { out; args } ->
+        let args_label = L.of_list args in
+        let state = ref (args, [], CMap.of_list (List.map (fun x -> x, 0) args)) in
+        let pws = List.powerset args in
+        let g_fast () =
+          let fastest_clocks, other_clocks, _ = !state in
+          let out_labels =
+            [] :: List.map (List.cons out) (List.powerset_nz fastest_clocks)
+          in
+          let useless_labels = List.powerset other_clocks in
+          Seq.product (List.to_seq out_labels) (List.to_seq useless_labels)
+          |> Seq.map (Tuple.fn2 List.append)
+          |> List.of_seq
+        in
+        let t cond _ (l, _) =
+          let _, _, count = !state in
+          let count = if L.mem out l then CMap.map Int.pred count else count in
+          let count =
+            L.fold (CMap.entry ~default:0 Int.succ) (L.inter args_label l) count
+          in
+          let correct = ref true in
+          let fastest_clocks, other =
+            count
+            |> CMap.to_list
+            |> List.partition_map (fun (c, i) ->
+              if i = 0
+              then Either.Left c
+              else (
+                if cond i
+                then
+                  correct := false;
+                Either.Right c))
+          in
+          state := fastest_clocks, other, count;
+          !correct
+        in
+        let g_slow () =
+          let slowest_clocks, _, _ = !state in
+          List.map (fun l -> if l = slowest_clocks then out :: l else l) pws
+        in
+        let g_without_n, t =
+          match constr with
+          | Fastest _ -> g_fast, t (fun i -> i > 0)
+          | Slowest _ -> g_slow, t (fun i -> i < 0)
+          | _ -> failwith "unreachable"
+        in
         let g n =
-          let fastest_labels =
-            general_labels
-            @
-            match !count with
-            | x when x > 0 -> [ [ a; out ]; [ b ] ]
-            | x when x = 0 -> [ [ a; out ]; [ b; out ] ]
-            | x when x < 0 -> [ [ b; out ]; [ a ] ]
-            | _ -> failwith "unreachable"
-          in
-          let slowest_labels =
-            general_labels
-            @
-            match !count with
-            | x when x > 0 -> [ [ a ]; [ b; out ] ]
-            | x when x = 0 -> [ [ a ]; [ b ] ]
-            | x when x < 0 -> [ [ b ]; [ a; out ] ]
-            | _ -> failwith "unreachable"
-          in
-          let labels =
-            match constr with
-            | Fastest _ -> fastest_labels
-            | Slowest _ -> slowest_labels
-            | _ -> failwith "unreachable"
-          in
+          let labels = g_without_n () in
           let labels = label_array labels in
           lo_guard labels n
-        in
-        let t _ (l, _) =
-          let _ = if L.mem a l then count := !count + 1 in
-          let _ = if L.mem b l then count := !count - 1 in
-          true
         in
         g, t
       | Allow { from; until; args } | Forbid { from; until; args } ->
@@ -900,7 +974,6 @@ struct
           |> Dynarray.to_array
         in
         let t _ (l, _) =
-          (* let _ = Printf.printf "---Transition---\n" in *)
           let to_lock = L.inter l lock_clocks in
           let to_unlock = L.inter l unlock_clocks in
           let new_resources =
@@ -912,25 +985,16 @@ struct
               (List.map (fun lock -> CMap.find lock locks_to_unlocks) (L.to_list to_lock))
           in
           let _ = resources := new_resources in
-          (* let _ =
-            Array.iter
-              (fun x ->
-                 match x with
-                 | Some x -> Printf.printf "resource %s\n" (C.to_string x)
-                 | None -> Printf.printf "not used\n")
-              locks
-          in *)
           true
         in
         g, t
       | c -> failwithf "automata not implemented for %s" (name c)
     in
-    let g now = Iter.of_array (g now) in
-    let clocks = L.of_list (clocks constr) in
-    correctness_decorator (g, t, clocks)
+    let guard now = Iter.of_array (guard now) in
+    correctness_decorator { name = name constr; guard; transition; clocks }
   ;;
 
-  let debug_automata (g, t, clocks) = debug_g "all" g, t, clocks
+  let debug_automata a = { a with guard = debug_g a.name a.guard }
 
   let discr_dist_value ratios interval =
     let left, right = II.to_nonstrict interval in
@@ -972,7 +1036,6 @@ struct
         in
         let a, b = Tuple.map2 N.to_float bounds in
         let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
-        (* Printf.printf "%f %f %f %f %f\n" a b mu sigma sample; *)
         N.of_float sample
     | Exponential _ -> failwith "not implemented"
   ;;
@@ -1014,9 +1077,7 @@ struct
     CMap.merge (process_combination II.inf II.return) integer_bounds integer_dists
     |> CMap.iter (VarSeq.declare_variable integers);
     let constraints =
-      List.fold_left
-        sync
-        empty
+      sync_batch
         (List.map (of_constr (integers, durations)) Language.Specification.(spec.logical))
     in
     { durations
@@ -1026,20 +1087,12 @@ struct
   ;;
 
   let next_step strat (a : t) now : solution option =
-    let guards, transition, _ = a in
-    (* let _ = print_endline "------" in *)
-    let possible = guards now in
-    (* let _ =
-      Printf.printf "--- Candidates ---\n";
-      List.print
-        (fun guard -> Printf.printf "* %s\n" (guard_to_string guard))
-        (List.filter (fun (l, _) -> not (L.is_empty l)) possible)
-    in *)
+    let { guard; transition; _ } = a in
+    let possible = guard now in
     if Iter.is_empty possible
     then None
     else
       let* sol = strat possible in
-      (* let _ = Printf.printf "decision: %s\n" (solution_to_string sol) in *)
       if transition now sol then Some sol else None
   ;;
 
@@ -1055,11 +1108,11 @@ struct
 
   let bisimulate s { automata = a1; _ } { automata = a2; _ } =
     (*TODO: investigate relation between the vrel1 and vrel2. *)
-    let _, trans, _ = a2 in
+    let { transition; _ } = a2 in
     Iter.unfoldr
       (fun now ->
          let* l, n = next_step s a1 now in
-         if trans now (l, n) then Some ((l, n), n) else None)
+         if transition now (l, n) then Some ((l, n), n) else None)
       N.zero
   ;;
 
@@ -1067,7 +1120,7 @@ struct
     VarSeq.suppress integers;
     VarSeq.suppress durations;
     let step a n sol =
-      let _, transition, _ = a in
+      let { transition; _ } = a in
       transition n sol
     in
     let result =

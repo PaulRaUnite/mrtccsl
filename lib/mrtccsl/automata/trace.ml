@@ -467,7 +467,8 @@ module Make (N : Timestamp) (L : Label) = struct
            in
            let timestamp = N.to_string step.time in
            Csv.output_record out (timestamp :: presence))
-        trace
+        trace;
+      Csv.close_out out
     ;;
   end
 end
