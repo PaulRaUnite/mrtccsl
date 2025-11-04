@@ -1,18 +1,8 @@
 assume {
-    vars {
-        controller {
-            module1 {
-                continuous process j with normal(0s, 0.5ms);
-                duration : -1ms <= j <= 1ms;
-            };
-            module2 {
-                continuous process j with normal(0s, 0.5ms);
-                duration : -1ms <= j <= 1ms;
-            }
-        }
-    };
 } structure {
     flying alternates onground;
+    flying = sporadic 10min;
+    onground = sporadic 10min;
     valve {
         door {
             retraction {
@@ -158,7 +148,7 @@ assume {
             };
             var retracted, extended : clock;
             retracted = slowest of front.retracted left.retracted right.retracted;
-            extended = slowest of front.extended left extended right.extended;
+            extended = slowest of front.extended left.extended right.extended;
             up {
                 front {
                     var locked, unlocked : clock;
@@ -222,8 +212,8 @@ assume {
     sensor.gear.down.right.locked = delay lock.gear.down.right.lock by 0.4s;
 
     // reation between shock absorbers and flying/being on ground
-    sensor.gear.shockabsorbers.relaxed = delay flying by ?;
-    sensor.gear.shockabsorbers.compressed = delay onground by ?;
+    sensor.gear.shockabsorbers.relaxed = delay flying by 1ms;
+    sensor.gear.shockabsorbers.compressed = delay onground by 1ms;
 
     // relation between general valve and pressure sensor
     sensor.pressure.present = delay valve.general.open by 1s;
@@ -255,7 +245,6 @@ assume {
     };
     controller {
         module1 {
-            cpu = periodic 1ms with drift vars.controller.module1.j;
             command {
                 valve {
                     general {
@@ -294,44 +283,43 @@ assume {
             };
             extension {
                 start = handle.committed.down;
-                command.valve.general.open += start $ 1 on cpu;
-                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
-                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
-                command.lock.gear.up.unlock += (sample start on sensor.door.open) $ 1 on cpu;
-                command.valve.gear.extension.open += (sample start on sensor.gear.up.unlocked) $ 1 on cpu;
-                command.lock.gear.down.lock += (sample start on sensor.gear.extended) $ 1 on cpu;
-                reverse = (sample start on sensor.gear.down.locked) $ 1 on cpu;
+                command.valve.general.open += delay start by 1ms;
+                command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
+                command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
+                command.lock.gear.up.unlock += delay (sample start on sensor.door.open) by 1ms;
+                command.valve.gear.extension.open += delay (sample start on sensor.gear.up.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start on sensor.gear.extended) by 1ms;
+                reverse = delay (sample start on sensor.gear.down.locked) by 1ms;
                 command.valve.gear.extension.close += reverse; 
                 command.valve.door.extension.close += reverse; 
                 command.valve.door.retraction.open += reverse;
-                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
-                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
+                finish = delay (sample start on sensor.door.locked) by 1ms;
                 command.valve.door.retraction.close += finish;
                 command.valve.general.close += finish;
             };
             retraction {
                 start = handle.committed.up;
-                command.valve.general.open += start $ 1 on cpu;
-                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
-                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                command.valve.general.open += delay start by 1ms;
+                command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
+                command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
                 maybe_retraction = sample start on sensor.door.open;
                 avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
                 maybe_retraction = start_retraction xor avoid_retraction;
-                command.lock.gear.down.unlock += start_retraction $ 1 on cpu;
-                command.valve.gear.retraction.open += (sample start on sensor.gear.down.unlocked) $ 1 on cpu;
-                command.lock.gear.down.lock += (sample start on sensor.gear.retracted) $ 1 on cpu;
-                reverse = (sample start on (sensor.gear.down.locked)) $ 1 on cpu;
+                command.lock.gear.down.unlock += delay start_retraction by 1ms;
+                command.valve.gear.retraction.open += delay (sample start on sensor.gear.down.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start on sensor.gear.retracted) by 1ms;
+                reverse = delay (sample start on (sensor.gear.down.locked)) by 1ms;
                 command.valve.gear.retraction.close += reverse;
                 command.valve.door.extension.close += reverse or avoid_retraction;
                 command.valve.door.retraction.open += reverse or avoid_retraction;
-                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
-                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
+                finish = delay (sample start on sensor.door.locked) by 1ms;
                 command.valve.door.retraction.close += finish;
                 command.valve.general.close += finish;
             };
         };
         module2 {
-            cpu = periodic 1ms with drift vars.controller.module1.j;
             command {
                 valve {
                     general {
@@ -370,38 +358,38 @@ assume {
             };
             extension {
                 start = handle.committed.down;
-                command.valve.general.open += start $ 1 on cpu;
-                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
-                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
-                command.lock.gear.up.unlock += (sample start on sensor.door.open) $ 1 on cpu;
-                command.valve.gear.extension.open += (sample start on sensor.gear.up.unlocked) $ 1 on cpu;
-                command.lock.gear.down.lock += (sample start on sensor.gear.extended) $ 1 on cpu;
-                reverse = (sample start on sensor.gear.down.locked) $ 1 on cpu;
+                command.valve.general.open += delay start by 1ms;
+                command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
+                command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
+                command.lock.gear.up.unlock += delay (sample start on sensor.door.open) by 1ms;
+                command.valve.gear.extension.open += delay (sample start on sensor.gear.up.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start on sensor.gear.extended) by 1ms;
+                reverse = delay (sample start on sensor.gear.down.locked) by 1ms;
                 command.valve.gear.extension.close += reverse; 
                 command.valve.door.extension.close += reverse; 
                 command.valve.door.retraction.open += reverse;
-                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
-                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
+                finish = delay (sample start on sensor.door.locked) by 1ms;
                 command.valve.door.retraction.close += finish;
                 command.valve.general.close += finish;
             };
             retraction {
                 start = handle.committed.up;
-                command.valve.general.open += start $ 1 on cpu;
-                command.lock.door.unlock += (sample start on sensor.pressure.present) $ 1 on cpu;
-                command.valve.door.extension.open += (sample start on sensor.door.unlocked) $ 1 on cpu;
+                command.valve.general.open += delay start by 1ms;
+                command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
+                command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
                 maybe_retraction = sample start on sensor.door.open;
                 avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
                 maybe_retraction = start_retraction xor avoid_retraction;
-                command.lock.gear.down.unlock += start_retraction $ 1 on cpu;
-                command.valve.gear.retraction.open += (sample start on sensor.gear.down.unlocked) $ 1 on cpu;
-                command.lock.gear.down.lock += (sample start on sensor.gear.retracted) $ 1 on cpu;
-                reverse = (sample start on (sensor.gear.down.locked)) $ 1 on cpu;
+                command.lock.gear.down.unlock += delay start_retraction by 1ms;
+                command.valve.gear.retraction.open += delay (sample start on sensor.gear.down.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start on sensor.gear.retracted) by 1ms;
+                reverse = delay (sample start on (sensor.gear.down.locked)) by 1ms;
                 command.valve.gear.retraction.close += reverse;
                 command.valve.door.extension.close += reverse or avoid_retraction;
                 command.valve.door.retraction.open += reverse or avoid_retraction;
-                command.lock.door.lock += (sample start on sensor.door.closed) $ 1 on cpu;
-                finish = (sample start on sensor.door.locked) $ 1 on cpu;
+                command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
+                finish = delay (sample start on sensor.door.locked) by 1ms;
                 command.valve.door.retraction.close += finish;
                 command.valve.general.close += finish;
             };
@@ -413,6 +401,7 @@ assume {
                     var open, close : clock;
                     open = fastest of module1.command.valve.general.open module2.command.valve.general.open;
                     close = slowest of module1.command.valve.general.close module2.command.valve.general.close;
+                    allow open close from switch.open until switch.close;
                 };
                 gear {
                     retraction {
@@ -461,7 +450,7 @@ assume {
         };
         indicate {
             var locked, maneuvering, anomaly : clock;
-        };
+        }; 
     };
 
     // connection between controller commands and actuators
