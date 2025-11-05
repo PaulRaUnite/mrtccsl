@@ -10,7 +10,7 @@ let spec_file_arg =
 ;;
 
 let cmd : (unit, string) result Cmd.t =
-  Cmd.v (Cmd.info "inspect" ~version ~doc:"Format a CCSL+ specification.")
+  Cmd.v (Cmd.info "check" ~version ~doc:"Parses a CCSL+ specification and reports problems.")
   @@ Term.ret
   @@ let+ specification = spec_file_arg in
      let context, m =

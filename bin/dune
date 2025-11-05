@@ -1,7 +1,7 @@
 (executable
  (public_name ccsl+)
  (name ccslplus)
- (modules ccslplus common reaction simulate convert inspect)
+ (modules ccslplus common reaction simulate convert check)
  (libraries mrtccsl std domainslib mrtccslparsing cmdliner dune-build-info))
 
 (env

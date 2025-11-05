@@ -185,7 +185,11 @@ let generate_trace ~config clocks spec i =
     Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
       Export.CSV.write ch clocks trace)
   in
-  Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" (if !was_cut then false else !size < config.steps) !was_cut !size
+  Printf.printf
+    "deadlocked: %b, was_cut: %b, size: %i\n"
+    (if !was_cut then false else !size < config.steps)
+    !was_cut
+    !size
 ;;
 
 let simulate ~config m =
