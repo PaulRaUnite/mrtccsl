@@ -124,6 +124,11 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
       }
 [@@deriving map, show, fold]
 
+let constr_to_string c tp ip tv iv t constr =
+  let pp to_string fmt v = Format.fprintf fmt "%s" (to_string v) in
+  Format.asprintf "%a" (pp_constr (pp c) (pp tp) (pp ip) (pp tv) (pp iv) (pp t)) constr
+;;
+
 (*TODO: replace rt.constraints with just delay and offset. *)
 (* module Complex = struct
   let cumul_periodic out period_var offset_par = [ RTdelay { out; arg = out } ]
@@ -139,7 +144,7 @@ type 'n distribution =
       { mean : 'n
       ; deviation : 'n
       }
-  | Exponential of 'n
+  | Exponential of { rate : 'n }
 [@@deriving map, show, fold]
 
 type ('iv, 'tv, 't) probability_constr =

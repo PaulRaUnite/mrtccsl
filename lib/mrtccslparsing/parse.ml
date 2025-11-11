@@ -86,6 +86,7 @@ let string_token =
   | LAST -> "LAST"
   | OR_EQ -> "OR_EQ"
   | XOR_EQ -> "XOR_EQ"
+  | EXPONENTIAL -> "EXPONENTIAL"
 ;;
 
 let test_tokens =
@@ -171,6 +172,7 @@ let test_tokens =
     ; FORBID
     ; FIRST
     ; LAST
+    ; EXPONENTIAL
     ]
 ;;
 

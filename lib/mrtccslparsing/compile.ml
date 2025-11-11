@@ -399,6 +399,15 @@ let into_module { assumptions; structure; assertions } =
            (Loc.where expr, "CCSL's IR does not support complex integer expressions"))
   in
   let compile_duration (Second { value; scale }) = Number.Rational.mul value scale in
+  let compile_distribution =
+    let open Ast in
+    function
+    | DUniform -> Uniform
+    | DNormal { mean; deviation } ->
+      Normal { mean = compile_duration mean; deviation = compile_duration deviation }
+    | DExponential { mean } ->
+      Exponential { rate = Rational.(one / compile_duration mean) }
+  in
   let compile_duration_expr ~context ~scope expr =
     match Loc.unwrap expr with
     (*TODO: write a simplification of the expressions? *)
@@ -761,7 +770,7 @@ let into_module { assumptions; structure; assertions } =
         (let* context, name = Context.resolve ~context ~scope ~expect:`Duration var in
          Builder.probab builder
          @@ ContinuousProcess
-              { name; dist = map_distribution compile_duration (Loc.unwrap dist) };
+              { name; dist = compile_distribution (Loc.unwrap dist) };
          Ok context)
     | Pool (n, pairs) ->
       error_recover

@@ -1,6 +1,5 @@
 %{
     open Prelude
-    open Mrtccsl.Language
     open Ast
 %}
 
@@ -17,7 +16,7 @@
 %token VAR (* variable declaration *)
 %token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT ALLOW FORBID FROM UNTIL FIRST LAST (*constraints*)
 %token OR_EQ XOR_EQ (*additive constraints*)
-%token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM SIM
+%token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM EXPONENTIAL SIM
 %token LESS LESSEQ MORE MOREEQ EQUAL NOTEQUAL  (* variable relations *)
  (*expressions *)
 %token PLUS MINUS STAR SLASH OF PERCENT PLUSMINUS PPM
@@ -98,8 +97,9 @@ non_empty_dangling_list(sep, X):
 
 contdist : located(contdist0) {$1}
 contdist0 :
-| NORMAL ; LPAREN ; mean=duration ; COMMA ; deviation=duration ; RPAREN {Normal {mean; deviation}}
-| UNIFORM { Uniform }
+| NORMAL ; LPAREN ; mean=duration ; COMMA ; deviation=duration ; RPAREN { DNormal {mean; deviation}}
+| UNIFORM { DUniform }
+| EXPONENTIAL ; LPAREN ; mean=duration ; RPAREN { DExponential {mean} }
 
 duration_expr : duration_expr0 {Loc.make $symbolstartpos $endpos $1}
 %inline delim_duration_expr0 : 
@@ -145,9 +145,9 @@ clock_expr0 :
 | SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CSample{arg;base} }
 | FIRST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CFirstSample{arg;base} }
 | LAST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CLastSample{arg;base} }
-| base=delim_clock_expr ; EXCEPT ; subs=list(delim_clock_expr) { CMinus {base;subs}}
-| FASTEST ; OF ; clocks=list(delim_clock_expr) { CFastest clocks }
-| SLOWEST ; OF ; clocks=list(delim_clock_expr) { CSlowest clocks }
+| base=delim_clock_expr ; EXCEPT ; subs=nonempty_list(delim_clock_expr) { CMinus {base;subs}}
+| FASTEST ; OF ; clocks=nonempty_list(delim_clock_expr) { CFastest clocks }
+| SLOWEST ; OF ; clocks=nonempty_list(delim_clock_expr) { CSlowest clocks }
 | PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodJitter {period;error;offset}}
 | PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodDrift {period;error;offset}}
 | DELAY ; arg=delim_clock_expr ; BY ; delay=inline_relation(duration_expr) {CTimeDelay {arg;delay}}
@@ -164,7 +164,7 @@ statement0 :
 | DURATION ; COLON ; e=duration_expr ; l=pair(num_rel,duration_expr)+ {DurationRelation (e,l)}
 | e1=clock_expr ; r=clock_rel ; e2=clock_expr {ClockRelation (e1,r,e2)}
 | CONTINUOUS ; PROCESS ; var=var ; WITH ; dist=contdist {ContinuousProcess { var ; dist } }
-| DISCRETE ; PROCESS ; var=var ; WITH ; values=located(list(INT)) ; SIM ; ratios=located(separated_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
+| DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
 | ALLOW ; clocks=nonempty_list(clock_expr) ; FROM ; from=clock_expr ; UNTIL ; until=clock_expr {Allow{clocks;from;until} }

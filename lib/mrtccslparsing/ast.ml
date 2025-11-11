@@ -1,6 +1,5 @@
 open Expr
 open Number
-open Mrtccsl.Language
 
 type id = string Loc.t
 type var = string list Loc.t
@@ -12,6 +11,14 @@ type duration =
       { value : Rational.t
       ; scale : Rational.t
       }
+
+type 'n distribution =
+  | DUniform
+  | DNormal of
+      { mean : 'n
+      ; deviation : 'n
+      }
+  | DExponential of { mean : 'n }
 
 type 'a interval =
   | Interval of

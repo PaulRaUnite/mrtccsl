@@ -57,7 +57,7 @@ rule read =
   | "%" { PERCENT }
   | "~" { SIM }
   (* keywords *)
-  | "structure" {STRUCTURE}
+  | "structure" { STRUCTURE }
   | "assume" { ASSUME }
   | "assert" { ASSERT }
   | "var" { VAR }
@@ -95,6 +95,7 @@ rule read =
   | "with" {WITH}
   | "normal" {NORMAL}
   | "uniform" {UNIFORM}
+  | "exponential" {EXPONENTIAL}
   | "strict" {STRICT}
   | "allow" {ALLOW}
   | "forbid" {FORBID}
