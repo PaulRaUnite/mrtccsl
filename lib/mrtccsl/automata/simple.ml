@@ -1,19 +1,35 @@
 open Prelude
 open Language
 
+let factor = 1000.0
+
+let truncated_distribution ~a ~b ~cdf ~ppf =
+  let a, b = factor *. a, factor *. b in
+  let prob_l, prob_r = Tuple.map2 cdf (a, b) in
+  if Float.abs (prob_r -. prob_l) < 0.000001
+  then Random.float (b -. a) +. a
+  else (
+    let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
+    let result = ppf sample_prob in
+    result /. factor)
+;;
+
 let truncated_guassian_rvs ~a ~b ~mu ~sigma =
   if Float.equal sigma 0.0
   then mu
   else (
-    let factor = 1000.0 in
-    let a, b, mu, sigma = factor *. a, factor *. b, factor *. mu, factor *. sigma in
-    let prob_l, prob_r = Tuple.map2 (Owl.Stats.gaussian_cdf ~mu ~sigma) (a, b) in
-    if Float.abs (prob_r -. prob_l) < 0.000001
-    then Random.float (b -. a) +. a
-    else (
-      let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
-      let result = Owl.Stats.gaussian_ppf sample_prob ~mu ~sigma in
-      result /. factor))
+    let mu, sigma = factor *. mu, factor *. sigma in
+    let cdf = Owl.Stats.gaussian_cdf ~mu ~sigma in
+    let ppf = Owl.Stats.gaussian_ppf ~mu ~sigma in
+    truncated_distribution ~a ~b ~cdf ~ppf)
+;;
+
+let truncated_exponential_rvs ~a ~b ~rate =
+  let lambda = rate /. factor in
+  let cdf = Owl.Stats.exponential_cdf ~lambda in
+  let ppf = Owl.Stats.exponential_ppf ~lambda in
+  let result = truncated_distribution ~a ~b ~cdf ~ppf in
+  result
 ;;
 
 (**Specifies the distribution of the time variable. *)
@@ -137,6 +153,7 @@ module type S = sig
     ; guard : N.t -> guard
     ; transition : N.t -> solution -> bool
     ; clocks : L.t
+    ; print_state : unit -> string
     }
 
   type sim
@@ -374,6 +391,7 @@ struct
     ; guard : N.t -> guard
     ; transition : N.t -> solution -> bool
     ; clocks : L.t
+    ; print_state : unit -> string
     }
 
   type sim =
@@ -396,7 +414,12 @@ struct
   let noop_transition n (_, n') = N.compare n n' < 0
 
   let empty : t =
-    { name = "noop"; guard = noop_guard; transition = noop_transition; clocks = L.empty }
+    { name = "noop"
+    ; guard = noop_guard
+    ; transition = noop_transition
+    ; clocks = L.empty
+    ; print_state = (fun () -> "empty")
+    }
   ;;
 
   let empty_sim : sim =
@@ -417,7 +440,7 @@ struct
   ;;
 
   let correctness_decorator a =
-    let { name; guard; transition; clocks } = a in
+    let { name; guard; transition; clocks; print_state } = a in
     let transition n (l, n') =
       let possible = guard n in
       let present =
@@ -427,7 +450,7 @@ struct
       in
       present && transition n (l, n')
     in
-    { name; guard; transition; clocks }
+    { name; guard; transition; clocks; print_state }
   ;;
 
   let debug_g name g now =
@@ -452,8 +475,8 @@ struct
   ;;
 
   let sync (a1 : t) (a2 : t) : t =
-    let { name = n1; guard = g1; transition = t1; clocks = c1 } = a1 in
-    let { name = n2; guard = g2; transition = t2; clocks = c2 } = a2 in
+    let { name = n1; guard = g1; transition = t1; clocks = c1; print_state = p1 } = a1 in
+    let { name = n2; guard = g2; transition = t2; clocks = c2; print_state = p2 } = a2 in
     let c = L.union c1 c2 in
     let conf_surface = L.inter c1 c2 in
     let g now =
@@ -468,17 +491,20 @@ struct
       solutions
     in
     let t n l = t1 n l && t2 n l in
-    { name = Printf.sprintf "sync(%s, %s)" n1 n2; guard = g; transition = t; clocks = c }
+    { name = Printf.sprintf "sync(%s, %s)" n1 n2
+    ; guard = g
+    ; transition = t
+    ; clocks = c
+    ; print_state = (fun () -> Printf.sprintf "%s\n%s" (p1 ()) (p2 ()))
+    }
   ;;
 
-  let sync_batch (automata : t list) : t =
-    let { guard = empty_g; clocks = empty_clocks; _ } =
-      empty
-    in
+  let sync_batch ~debug (automata : t list) : t =
+    let { guard = empty_g; clocks = empty_clocks; _ } = empty in
     let guard now =
       let solutions, _ =
-        List.fold_left
-          (fun (prev_solutions, prev_clocks) { guard; clocks; _ } ->
+        List.fold_lefti
+          (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
              (* let _ = print_endline (L.to_string clocks) in *)
              (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
              let conf_surface = L.inter prev_clocks clocks in
@@ -486,7 +512,14 @@ struct
              let solutions =
                Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
              in
-             let solutions = Trace.persist solutions in
+             let solutions = Iter.persistent solutions in
+             if debug
+             then
+               if Iter.length solutions = 0
+               then (
+                 Printf.printf "%s\n" (guard_to_string prev_solutions);
+                 Printf.printf "%s\n" (guard_to_string solutions);
+                 Printf.printf "deadlock detected from constraint %s %i\n" name i);
              (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
              solutions, L.union prev_clocks clocks)
           (empty_g now, empty_clocks)
@@ -505,10 +538,24 @@ struct
     let clocks =
       List.fold_left (fun all { clocks; _ } -> L.union all clocks) empty_clocks automata
     in
-    { name = "all"; guard; transition; clocks }
+    { name = "all"
+    ; guard
+    ; transition
+    ; clocks
+    ; print_state =
+        (fun () ->
+          List.filter_map
+            (fun { print_state; name; _ } ->
+               let state_str = print_state () in
+               if String.is_empty state_str
+               then None
+               else Some (Printf.sprintf "[%s]: %s" name state_str))
+            automata
+          |> List.to_string ~sep:"\n" Fun.id)
+    }
   ;;
 
-  (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.**)
+  (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.*)
   let lo_guard l =
     let l = Array.map (fun l -> l, NI.pinf N.zero) l in
     fun _ -> l
@@ -516,7 +563,7 @@ struct
 
   let stateless labels =
     let g = lo_guard labels in
-    g, fun _ _ -> true
+    g, (fun _ _ -> true), fun () -> ""
   ;;
 
   let prec c1 c2 strict =
@@ -533,19 +580,21 @@ struct
       let l = if !c = 0 then l2 else l1 in
       lo_guard l now
     in
+    let p () = string_of_int !c in
     ( g
-    , fun _ (l, _) ->
+    , (fun _ (l, _) ->
         let delta = if L.mem c1 l then 1 else 0 in
         let delta = delta - if L.mem c2 l then 1 else 0 in
         let _ = c := !c + delta in
-        !c >= 0 )
+        !c >= 0)
+    , p )
   ;;
 
   let of_constr (integers, durations) constr : t =
     let open Language in
     let label_array l = Array.map L.of_list (Array.of_list l) in
     let clocks = L.of_list (clocks constr) in
-    let guard, transition =
+    let guard, transition, printer =
       match constr with
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
@@ -591,7 +640,8 @@ struct
           let _ = if L.mem b l then ignore (Heap.pop_min queue) in
           true
         in
-        g, t
+        let p () = List.to_string NI.to_string (Heap.to_list queue) in
+        g, t, p
       | CumulPeriodic { out; period; error; offset } ->
         let current_offset, consume_offset =
           VarSeq.get_handle_param NI.return durations offset
@@ -620,7 +670,13 @@ struct
           in
           true
         in
-        g, t
+        let p () =
+          Printf.sprintf
+            "last: %s, current: %s"
+            (Option.to_string ~default:"" N.to_string !last)
+            (NI.to_string (current_error ()))
+        in
+        g, t, p
       | AbsPeriodic { out; period; error; offset } ->
         let current_offset, consume_offset =
           VarSeq.get_handle_param NI.return durations offset
@@ -653,7 +709,13 @@ struct
           in
           true
         in
-        g, t
+        let p () =
+          Printf.sprintf
+            "last: %s, current: %s"
+            (Option.to_string ~default:"" N.to_string !last)
+            (NI.to_string (current_error ()))
+        in
+        g, t, p
       | Sporadic { out = c; at_least = Const at_least; strict } ->
         let last = ref None in
         let g now =
@@ -670,7 +732,10 @@ struct
           let _ = if L.mem c l then last := Some n' in
           true
         in
-        g, t
+        let p () =
+          Printf.sprintf "last: %s" (Option.to_string ~default:"" N.to_string !last)
+        in
+        g, t, p
       | Periodic { out; base; period = Const period; _ } ->
         let labels_eqp = label_array [ [ base; out ]; [] ] in
         let labels_lp = label_array [ [ base ]; [] ] in
@@ -686,7 +751,8 @@ struct
           in
           0 <= !c && !c < period
         in
-        g, t
+        let p () = string_of_int !c in
+        g, t, p
       | Sample { out; arg; base } ->
         let labels_latched =
           label_array [ []; [ arg ]; [ out; arg; base ]; [ out; base ] ]
@@ -703,7 +769,8 @@ struct
           let _ = if L.mem base l then latched := false in
           true
         in
-        g, t
+        let p () = string_of_bool !latched in
+        g, t, p
       | Delay { out; arg; delay; base } ->
         let current_delay, consume_delay =
           VarSeq.get_handle_param II.return integers delay
@@ -767,7 +834,14 @@ struct
           in
           test1 && test2
         in
-        g, t
+        let p () =
+          let interval_str (l, r) = Printf.sprintf "[%i, %i]" l r in
+          Printf.sprintf
+            "latched: %s, heap: %s"
+            (Option.to_string ~default:"empty" interval_str !latch)
+            (List.to_string interval_str (Heap.to_list queue))
+        in
+        g, t, p
       | Minus { out; arg; except } ->
         let labels =
           []
@@ -795,7 +869,8 @@ struct
           let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
           true
         in
-        g, t
+        let p () = string_of_bool !phase in
+        g, t, p
       | Fastest { out; args } | Slowest { out; args } ->
         let args_label = L.of_list args in
         let state = ref (args, [], CMap.of_list (List.map (fun x -> x, 0) args)) in
@@ -824,9 +899,7 @@ struct
               if i = 0
               then Either.Left c
               else (
-                if cond i
-                then
-                  correct := false;
+                if cond i then correct := false;
                 Either.Right c))
           in
           state := fastest_clocks, other, count;
@@ -847,15 +920,19 @@ struct
           let labels = label_array labels in
           lo_guard labels n
         in
-        g, t
+        let p () =
+          let _, _, count = !state in
+          CMap.to_string C.to_string string_of_int count
+        in
+        g, t, p
       | Allow { from; until; args } | Forbid { from; until; args } ->
         let phase = ref false in
         let allow_l1 =
           label_array
-          @@ List.flat_cartesian [ []; [ from; until ]; [ until ] ] (List.powerset args)
+          @@ ([ until ] :: List.flat_cartesian [ []; [ from ] ] (List.powerset args))
         and allow_l2 =
           label_array
-          @@ ([] :: List.flat_cartesian [ [ from ]; [ from; until ] ] (List.powerset args))
+          @@ ([] :: [ until ] :: List.flat_cartesian [ [ from ] ] (List.powerset args))
         in
         let g_allow n =
           let labels = if !phase then allow_l1 else allow_l2 in
@@ -863,14 +940,10 @@ struct
         in
         let forbid_l1 =
           label_array
-          @@ ([]
-              :: [ from ]
-              :: List.flat_cartesian [ [ until ]; [ from; until ] ] (List.powerset args))
+          @@ ([] :: [ from ] :: List.flat_cartesian [ [ until ] ] (List.powerset args))
         and forbid_l2 =
           label_array
-          @@ List.flat_cartesian
-               [ []; [ from ]; [ from; until ]; [ until ] ]
-               (List.powerset args)
+          @@ ([ from ] :: List.flat_cartesian [ []; [ until ] ] (List.powerset args))
         in
         let g_forbid n =
           let labels = if !phase then forbid_l1 else forbid_l2 in
@@ -885,16 +958,21 @@ struct
         let t _ (l, _) =
           let from_test = L.mem from l in
           let until_test = L.mem until l in
-          let _ =
-            phase
-            := match from_test, until_test with
-               | true, true | false, false -> !phase
-               | true, false -> true
-               | false, true -> false
-          in
-          true
+          if from_test && until_test
+          then false
+          else (
+            let _ =
+              phase
+              := match from_test, until_test with
+                 | true, true -> failwith "allow/forbid: both should not happen"
+                 | false, false -> !phase
+                 | true, false -> true
+                 | false, true -> false
+            in
+            true)
         in
-        g, t
+        let p () = string_of_bool !phase in
+        g, t, p
       | FirstSampled { out; arg; base } ->
         let sampled = ref false in
         let g n =
@@ -911,7 +989,8 @@ struct
           let _ = if L.mem base l then sampled := false in
           true
         in
-        g, t
+        let p () = string_of_bool !sampled in
+        g, t, p
       | LastSampled { out; arg; base } ->
         let last = ref false in
         let g n =
@@ -927,7 +1006,8 @@ struct
           let _ = if L.mem base l then last := false in
           true
         in
-        g, t
+        let p () = string_of_bool !last in
+        g, t, p
       | Subclocking { sub = a; super = b; _ } ->
         stateless (label_array [ []; [ a; b ]; [ b ] ])
       | Intersection { out; args } ->
@@ -987,11 +1067,26 @@ struct
           let _ = resources := new_resources in
           true
         in
-        g, t
+        let p () = List.to_string C.to_string !resources in
+        g, t, p
       | c -> failwithf "automata not implemented for %s" (name c)
     in
     let guard now = Iter.of_array (guard now) in
-    correctness_decorator { name = name constr; guard; transition; clocks }
+    correctness_decorator
+      { name =
+          (constr_to_string
+             C.to_string
+             C.to_string
+             C.to_string
+             C.to_string
+             C.to_string
+             N.to_string)
+            constr
+      ; guard
+      ; transition
+      ; clocks
+      ; print_state = printer
+      }
   ;;
 
   let debug_automata a = { a with guard = debug_g a.name a.guard }
@@ -1030,14 +1125,23 @@ struct
       let sigma = N.to_float deviation in
       fun cond ->
         let bounds =
-          Option.unwrap
-            ~expect:"todo: gaussian distribution is undefined on exclusive bounds"
+          Option.unwrap ~expect:"gaussian distribution is undefined on exclusive bounds"
           @@ NI.constant_bounds cond
         in
         let a, b = Tuple.map2 N.to_float bounds in
         let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
         N.of_float sample
-    | Exponential _ -> failwith "not implemented"
+    | Exponential { rate } ->
+      let rate = N.to_float rate in
+      fun cond ->
+        let bounds =
+          Option.unwrap
+            ~expect:"exponential distribution is undefined on exclusive bounds"
+          @@ NI.constant_bounds cond
+        in
+        let a, b = Tuple.map2 N.to_float bounds in
+        let sample = truncated_exponential_rvs ~a ~b ~rate in
+        N.of_float sample
   ;;
 
   let of_spec ?(debug = false) spec : sim =
@@ -1078,6 +1182,7 @@ struct
     |> CMap.iter (VarSeq.declare_variable integers);
     let constraints =
       sync_batch
+        ~debug
         (List.map (of_constr (integers, durations)) Language.Specification.(spec.logical))
     in
     { durations
@@ -1137,6 +1242,11 @@ struct
 
   let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = Iter.filter (fun (l, _) -> not (L.is_empty l)) trace
+
+  let to_string { automata; _ } =
+    let { print_state; _ } = automata in
+    print_state ()
+  ;;
 end
 
 module Strategy (A : S) = struct

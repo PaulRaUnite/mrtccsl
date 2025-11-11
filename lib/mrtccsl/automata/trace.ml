@@ -53,7 +53,7 @@ type ('l, 'n) step =
   ; time : 'n
   }
 
-module Make (N : Timestamp) (L : Label) = struct
+module MakeIO (N : Timestamp) (L : Label) = struct
   type nonrec step = (L.t, N.t) step
 
   let step_to_pair { label; time } = label, time
@@ -424,7 +424,8 @@ module Make (N : Timestamp) (L : Label) = struct
     let timestamp_column = "t"
 
     let read ch =
-      Csv.of_channel ~has_header:true ch
+      let csv = Csv.of_channel ~has_header:true ch in 
+      Csv.Rows.header csv , csv
       |> Csv.Rows.iter
       |> Iter.from_labelled_iter
       |> Iter.map (fun row ->
