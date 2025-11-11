@@ -9,7 +9,7 @@ let cmd =
        ~version
        "ccsl+"
        ~doc:"Collection of tools for CCSL+ (modular, real-time, probabilistic CCSL).")
-    [ Simulate.cmd; Reaction.cmd; Convert.cmd ; Check.cmd ]
+    [ Simulate.cmd; Reaction.cmd; Trace.cmd ; Check.cmd ; Viewgraph.cmd]
 ;;
 
 let main () = Cmd.eval_result cmd

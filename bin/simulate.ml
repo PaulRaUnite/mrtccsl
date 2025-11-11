@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
 module A = FnCh.A
-module Export = Automata.Trace.Make (Number.Rational) (A.L)
+module Export = Automata.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 open FnCh
 
@@ -185,11 +185,9 @@ let generate_trace ~config clocks spec i =
     Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
       Export.CSV.write ch clocks trace)
   in
-  Printf.printf
-    "deadlocked: %b, was_cut: %b, size: %i\n"
-    (if !was_cut then false else !size < config.steps)
-    !was_cut
-    !size
+  let deadlocked = if !was_cut then false else !size < config.steps in
+  Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" deadlocked !was_cut !size;
+  if deadlocked then print_endline @@ A.to_string env
 ;;
 
 let simulate ~config m =

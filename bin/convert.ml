@@ -3,9 +3,11 @@ open Cmdliner
 open Cmdliner.Term.Syntax
 open Number
 open Common
-module FnCh = Mrtccsl.Functional_chain.Make (String) (Rational)
-module Label = FnCh.A.L
-module Export = Mrtccsl.Automata.Trace.Make (Rational) (Label)
+module Label = struct 
+  include Set.Make(String)
+  module E = String
+end
+module Export = Mrtccsl.Automata.Trace.MakeIO (Rational) (Label)
 
 let input_arg =
   Arg.(
@@ -104,7 +106,7 @@ module Native = struct
                ~tagger:(Export.Tag.tag_round_timestamp (round ~divisor:scale)))
           discretize
       in
-      let trace = Export.CSV.read input in
+      let _, trace = Export.CSV.read input in
       to_scl ~serialize (Format.formatter_of_out_channel output) trace
     ;;
 
@@ -141,15 +143,7 @@ module Native = struct
 
   module SvgBob = struct
     let print_svgbob ~tasks ~vertical input output =
-      let trace = Export.CSV.read input in
-      let trace = Iter.persistent trace in
-      let clocks =
-        Iter.fold
-          Mrtccsl.Automata.Trace.(fun acc { label; _ } -> Label.union acc label)
-          Label.empty
-          trace
-      in
-      let clocks = Label.to_list clocks in
+      let clocks, trace = Export.CSV.read input in
       let bob =
         if vertical
         then Export.Svgbob.print_vertical

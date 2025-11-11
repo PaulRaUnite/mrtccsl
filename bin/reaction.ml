@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
-module Export = Mrtccsl.Automata.Trace.Make (Number.Rational) (FnCh.A.L)
+module IO = Mrtccsl.Automata.Trace.MakeIO (Number.Rational) (FnCh.A.L)
 module A = FnCh.A
 module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
@@ -19,7 +19,7 @@ let extract_reaction
       output_dir
   =
   let channel_to_trace ch =
-    Export.CSV.read ch |> Iter.map Export.step_to_pair |> Dynarray.of_iter
+    snd (IO.CSV.read ch) |> Iter.map IO.step_to_pair |> Dynarray.of_iter
   in
   let traces = List.map channel_to_trace trace_streams in
   let process_chain (chain_name, chain) =
@@ -142,7 +142,7 @@ let scale_arg =
   Arg.(
     required
     & opt (some rational) None
-    & info ["d";"scale"] ~doc:"Scale used for histograms." ~docv:"SCALE")
+    & info [ "d"; "scale" ] ~doc:"Scale used for histograms." ~docv:"SCALE")
 ;;
 
 let output_dir_arg =
