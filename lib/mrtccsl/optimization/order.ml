@@ -26,7 +26,7 @@ module Make (C : Set.OrderedType) = struct
   module Display = struct
     include G
 
-    let vertex_name v = string_of_int (V.label v).constr
+    let vertex_name v = string_of_int (V.hash v)
     let graph_attributes _ = []
     let default_vertex_attributes _ = []
     let vertex_attributes v = [ `Label (V.label v).constr_str ]
@@ -34,6 +34,8 @@ module Make (C : Set.OrderedType) = struct
     let edge_attributes e = [ `Label (string_of_int (E.label e)) ]
     let get_subgraph _ = None
   end
+
+  module Dot = Graph.Graphviz.Dot (Display)
 
   let compatible ~modulo l l' = L.equal_modulo ~modulo l l'
 
@@ -132,7 +134,7 @@ module Make (C : Set.OrderedType) = struct
     |> Seq.length
   ;;
 
-  let optimize (spec : _ Specification.t) =
+  let graph (spec : _ Specification.t) =
     let constr = Array.of_list spec.logical in
     let vertices =
       Array.mapi
@@ -166,8 +168,11 @@ module Make (C : Set.OrderedType) = struct
                   m)))
            (G.create ~size:(Array.length vertices) ())
     in
-    (* let module Dot = Graph.Graphviz.Dot (Display) in
-    let _ = Dot.output_graph (open_out "./graph.dot") graph in *)
+    constr, graph
+  ;;
+
+  let optimize (spec : _ Specification.t) =
+    let constr, graph = graph spec in
     let module Components = Graph.Components.Undirected (G) in
     let components = Components.components_list graph in
     let optimize_component component =

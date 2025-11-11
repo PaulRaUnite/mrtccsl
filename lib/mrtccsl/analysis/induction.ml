@@ -257,7 +257,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
   let logical_clocks_from_vars present_vars =
     SetCI.fold
       (fun (c, i) tbl ->
-         Hashtbl.entry (fun list -> i :: list) [] c tbl;
+         Hashtbl.entry (fun list -> i :: list) ~default:[] c tbl;
          tbl)
       present_vars
       (Hashtbl.create 32)
@@ -659,14 +659,14 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
       let mark_cyclic v = Hashtbl.replace in_cycle v true in
       let visited = Hashtbl.create ((len * len) + (2 * len)) in
-      let is_cyclic v = Hashtbl.value false v in_cycle || Hashtbl.mem visited v in
+      let is_cyclic v = Hashtbl.value ~default:false v in_cycle || Hashtbl.mem visited v in
       let visit v = Hashtbl.replace visited v () in
       let next =
         edges
         |> Hashtbl.to_seq
         |> Seq.fold_left
              (fun tbl ((f, t), sat) ->
-                if sat then Hashtbl.entry (fun l -> t :: l) [] f tbl else ();
+                if sat then Hashtbl.entry (fun l -> t :: l) ~default:[] f tbl else ();
                 tbl)
              (Hashtbl.create (Hashtbl.length vertices))
       in
@@ -678,7 +678,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           true, [])
         else (
           visit v;
-          let cycles, problems = List.split (List.map dfs (Hashtbl.value [] v next)) in
+          let cycles, problems = List.split (List.map dfs (Hashtbl.value ~default:[] v next)) in
           let problems = List.concat problems in
           if List.any cycles
           then (
@@ -973,7 +973,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           |> Hashtbl.to_seq
           |> Seq.fold_left
                (fun tbl ((f, t), sat) ->
-                  if sat then Hashtbl.entry (fun l -> t :: l) [] f tbl else ();
+                  if sat then Hashtbl.entry (fun l -> t :: l) ~default:[] f tbl else ();
                   tbl)
                (Hashtbl.create (Hashtbl.length vertices))
         in
@@ -991,7 +991,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
               | Post i -> post.(i)
             in
             let params = S.(prev_params && project param_vars dom) in
-            let next_vertices = Hashtbl.value [] v next in
+            let next_vertices = Hashtbl.value ~default:[] v next in
             List.flat_map (fun nv -> dfs nv params (v :: prev_vertices)) next_vertices)
         in
         init

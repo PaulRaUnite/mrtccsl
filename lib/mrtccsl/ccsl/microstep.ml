@@ -13,7 +13,7 @@ let derive_order spec =
     [ conseq, Either.Right cause; cause, Either.Left conseq ])
   |> List.fold_left
        (fun tbl (event, restriction) ->
-          Hashtbl.entry (List.cons restriction) [] event tbl;
+          Hashtbl.entry (List.cons restriction) ~default:[] event tbl;
           tbl)
        (Hashtbl.create 16)
 ;;
