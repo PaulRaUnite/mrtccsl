@@ -1,8 +1,22 @@
 assume {
+    duration : -1min <= fly_jitter <= 1min;
+    continuous process fly_jitter with normal (0s,0.5min);
+    duration : -1min <= land_jitter <= 1min;
+    continuous process land_jitter with normal (0s,0.5min);
+
+    handle {
+        committed {
+            duration : 1s <= d <= 2hour;
+            continuous process d with exponential (30min);
+
+            discrete process rate with 0 1 ~ 1:1;
+        };
+    };
 } structure {
+    try_flying = periodic 30min with drift fly_jitter offset 10min;
+    try_landing = periodic 30min with drift land_jitter offset 30 min;  
     flying alternates onground;
-    flying = sporadic 10min;
-    onground = sporadic 10min;
+    // TODO: should add try flying and try landing and only allow it if the gear is in the right place
     valve {
         door {
             retraction {
@@ -32,13 +46,13 @@ assume {
     cylinder {
         door {
             front {
-                retracted alternates extended;
+                extended alternates retracted;
             };
             left {
-                retracted alternates extended;
+                extended alternates retracted;
             };
             right {
-                retracted alternates extended;
+                extended alternates retracted;
             };
         };
         gear {
@@ -211,6 +225,23 @@ assume {
     sensor.gear.down.left.locked = delay lock.gear.down.left.lock by 0.4s;
     sensor.gear.down.right.locked = delay lock.gear.down.right.lock by 0.4s;
 
+    // relations between cylinders and sensors
+    sensor.gear.front.retracted = delay cylinder.gear.front.retracted by 1ms;
+    sensor.gear.left.retracted = delay cylinder.gear.left.retracted by 1ms;
+    sensor.gear.right.retracted = delay cylinder.gear.right.retracted by 1ms;
+
+    sensor.gear.front.extended = delay cylinder.gear.front.extended by 1ms;
+    sensor.gear.left.extended = delay cylinder.gear.left.extended by 1ms;
+    sensor.gear.right.extended = delay cylinder.gear.right.extended by 1ms;
+
+    sensor.door.front.closed = delay cylinder.door.front.retracted by 1ms;
+    sensor.door.left.closed = delay cylinder.door.left.retracted by 1ms;
+    sensor.door.right.closed = delay cylinder.door.right.retracted by 1ms;
+
+    sensor.door.front.open = delay cylinder.door.front.extended by 1ms;
+    sensor.door.left.open = delay cylinder.door.left.extended by 1ms;
+    sensor.door.right.open = delay cylinder.door.right.extended by 1ms;
+
     // reation between shock absorbers and flying/being on ground
     sensor.gear.shockabsorbers.relaxed = delay flying by 1ms;
     sensor.gear.shockabsorbers.compressed = delay onground by 1ms;
@@ -219,29 +250,43 @@ assume {
     sensor.pressure.present = delay valve.general.open by 1s;
     sensor.pressure.lacking = delay valve.general.close by 3.6s;
 
-    var cycle : clock;
-    cycle = sensor.pressure.lacking;
+    cycle {
+        var start, finish : clock;
+        finish = sensor.pressure.lacking;
+    };
     handle {
-        var up,down,neutral,action,movement : clock;
-        // constraints to make handle move only up <-> neutral <-> down
-        movement = up xor down xor neutral;
-        neutral = (sample up on (neutral or down)) or (sample down on (neutral or up));
-        
-        action = up xor down;
+        var action : clock;
+        (action $ 1) = delay action by handle.committed.d;
 
         committed {
             var up,down,action : clock;
             // because it is not possible to cancel action, the action will be considered committed until the cycle completes
-            action = first sample handle.action on cycle;
-            up = sample handle.up on (action or cycle);
-            down = sample handle.down on (action or cycle);
+            action = first sample handle.action on cycle.finish;
+            action = up xor down [handle.committed.rate];
+            cycle.start = action;
         };
     };
+    try_flying = accept_flying xor reject_flying;
+    forbid accept_flying from flying until onground;
+    forbid accept_flying from sensor.gear.retracted until sensor.gear.extended;
+    forbid accept_flying from cycle.start until cycle.finish;
+    try_landing = accept_landing xor reject_landing;
+    allow accept_landing from flying until onground;
+    allow accept_landing from sensor.gear.extended until sensor.gear.retracted;
+    forbid accept_landing from cycle.start until cycle.finish;
+    flying = delay accept_flying by 1ms;
+    onground = delay accept_landing by 1ms;
     switch {
+        var open,close,deadline,try_open : clock;
         close alternates open;
-        close = (delay (first sample handle.committed.action on open) by 0.8s);
+        begin_closing = (first sample handle.committed.action on open);
+        close = (delay begin_closing by 0.8s);
         deadline = delay handle.action by 20s;
-        open = delay (deadline except (sample handle.action on deadline)) by 1.2s;
+        non_cancelled_deadline = deadline except cancelled_deadline;
+        duplicate_action = handle.action except begin_closing;
+        cancelled_deadline = sample duplicate_action on non_cancelled_deadline;
+        try_open = delay non_cancelled_deadline by 1.2s;
+        open = try_open except (sample (sample non_cancelled_deadline on duplicate_action) on try_open);
     };
     controller {
         module1 {
@@ -283,40 +328,53 @@ assume {
             };
             extension {
                 start = handle.committed.down;
-                command.valve.general.open += delay start by 1ms;
+                command.valve.general.open += delay start by 1s; // TODO: need a better way to know the switch state
                 command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
                 command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
-                command.lock.gear.up.unlock += delay (sample start on sensor.door.open) by 1ms;
-                command.valve.gear.extension.open += delay (sample start on sensor.gear.up.unlocked) by 1ms;
-                command.lock.gear.down.lock += delay (sample start on sensor.gear.extended) by 1ms;
-                reverse = delay (sample start on sensor.gear.down.locked) by 1ms;
+                maybe_extension = (sample start on sensor.door.open);
+                maybe_extension = avoid_extension xor start_extension;
+                start_extension = shock_relaxed and gear_retracted;
+                avoid_extension = shock_compressed or gear_extended;
+                allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
+                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
+                forbid shock_compressed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
+                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                command.lock.gear.up.unlock += delay start_extension by 1ms;
+                command.valve.gear.extension.open += delay (sample start_extension on sensor.gear.up.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start_extension on sensor.gear.extended) by 1ms;
+                reverse = delay (sample start_extension on sensor.gear.down.locked) by 1ms;
                 command.valve.gear.extension.close += reverse; 
-                command.valve.door.extension.close += reverse; 
-                command.valve.door.retraction.open += reverse;
+                command.valve.door.extension.close += reverse or avoid_extension; 
+                command.valve.door.retraction.open += reverse or avoid_extension;
                 command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
-                finish = delay (sample start on sensor.door.locked) by 1ms;
-                command.valve.door.retraction.close += finish;
-                command.valve.general.close += finish;
+                door_locked = (sample start on sensor.door.locked);
+                command.valve.door.retraction.close += delay door_locked by 1ms;
+                command.valve.general.close += delay door_locked by 4ms;
             };
             retraction {
                 start = handle.committed.up;
-                command.valve.general.open += delay start by 1ms;
+                command.valve.general.open += delay start by 1s;
                 command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
                 command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
                 maybe_retraction = sample start on sensor.door.open;
-                avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
                 maybe_retraction = start_retraction xor avoid_retraction;
+                start_retraction = shock_relaxed and gear_extended;
+                avoid_retraction = shock_compressed or gear_retracted;
+                forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
+                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                allow shock_compressed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
+                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
                 command.lock.gear.down.unlock += delay start_retraction by 1ms;
-                command.valve.gear.retraction.open += delay (sample start on sensor.gear.down.unlocked) by 1ms;
-                command.lock.gear.down.lock += delay (sample start on sensor.gear.retracted) by 1ms;
-                reverse = delay (sample start on (sensor.gear.down.locked)) by 1ms;
+                command.valve.gear.retraction.open += delay (sample start_retraction on sensor.gear.down.unlocked) by 1ms;
+                command.lock.gear.up.lock += delay (sample start_retraction on sensor.gear.retracted) by 1ms;
+                reverse = delay (sample start_retraction on (sensor.gear.up.locked)) by 1ms;
                 command.valve.gear.retraction.close += reverse;
                 command.valve.door.extension.close += reverse or avoid_retraction;
                 command.valve.door.retraction.open += reverse or avoid_retraction;
                 command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
-                finish = delay (sample start on sensor.door.locked) by 1ms;
-                command.valve.door.retraction.close += finish;
-                command.valve.general.close += finish;
+                door_locked = (sample start on sensor.door.locked);
+                command.valve.door.retraction.close += delay door_locked by 1ms;
+                command.valve.general.close += delay door_locked by 4ms;
             };
         };
         module2 {
@@ -358,40 +416,53 @@ assume {
             };
             extension {
                 start = handle.committed.down;
-                command.valve.general.open += delay start by 1ms;
+                command.valve.general.open += delay start by 1s; // TODO: need a better way to know the switch state
                 command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
                 command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
-                command.lock.gear.up.unlock += delay (sample start on sensor.door.open) by 1ms;
-                command.valve.gear.extension.open += delay (sample start on sensor.gear.up.unlocked) by 1ms;
-                command.lock.gear.down.lock += delay (sample start on sensor.gear.extended) by 1ms;
-                reverse = delay (sample start on sensor.gear.down.locked) by 1ms;
+                maybe_extension = (sample start on sensor.door.open);
+                maybe_extension = avoid_extension xor start_extension;
+                start_extension = shock_relaxed and gear_retracted;
+                avoid_extension = shock_compressed or gear_extended;
+                allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
+                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
+                forbid shock_compressed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
+                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                command.lock.gear.up.unlock += delay start_extension by 1ms;
+                command.valve.gear.extension.open += delay (sample start_extension on sensor.gear.up.unlocked) by 1ms;
+                command.lock.gear.down.lock += delay (sample start_extension on sensor.gear.extended) by 1ms;
+                reverse = delay (sample start_extension on sensor.gear.down.locked) by 1ms;
                 command.valve.gear.extension.close += reverse; 
-                command.valve.door.extension.close += reverse; 
-                command.valve.door.retraction.open += reverse;
+                command.valve.door.extension.close += reverse or avoid_extension; 
+                command.valve.door.retraction.open += reverse or avoid_extension;
                 command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
-                finish = delay (sample start on sensor.door.locked) by 1ms;
-                command.valve.door.retraction.close += finish;
-                command.valve.general.close += finish;
+                door_locked = (sample start on sensor.door.locked);
+                command.valve.door.retraction.close += delay door_locked by 1ms;
+                command.valve.general.close += delay door_locked by 4ms;
             };
             retraction {
                 start = handle.committed.up;
-                command.valve.general.open += delay start by 1ms;
+                command.valve.general.open += delay start by 1s;
                 command.lock.door.unlock += delay (sample start on sensor.pressure.present) by 1ms;
                 command.valve.door.extension.open += delay (sample start on sensor.door.unlocked) by 1ms;
                 maybe_retraction = sample start on sensor.door.open;
-                avoid_retraction = sample sensor.gear.shockabsorbers.compressed on maybe_retraction;
                 maybe_retraction = start_retraction xor avoid_retraction;
+                start_retraction = shock_relaxed and gear_extended;
+                avoid_retraction = shock_compressed or gear_retracted;
+                forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
+                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                allow shock_compressed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
+                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
                 command.lock.gear.down.unlock += delay start_retraction by 1ms;
-                command.valve.gear.retraction.open += delay (sample start on sensor.gear.down.unlocked) by 1ms;
-                command.lock.gear.down.lock += delay (sample start on sensor.gear.retracted) by 1ms;
-                reverse = delay (sample start on (sensor.gear.down.locked)) by 1ms;
+                command.valve.gear.retraction.open += delay (sample start_retraction on sensor.gear.down.unlocked) by 1ms;
+                command.lock.gear.up.lock += delay (sample start_retraction on sensor.gear.retracted) by 1ms;
+                reverse = delay (sample start_retraction on (sensor.gear.up.locked)) by 1ms;
                 command.valve.gear.retraction.close += reverse;
                 command.valve.door.extension.close += reverse or avoid_retraction;
                 command.valve.door.retraction.open += reverse or avoid_retraction;
                 command.lock.door.lock += delay (sample start on sensor.door.closed) by 1ms;
-                finish = delay (sample start on sensor.door.locked) by 1ms;
-                command.valve.door.retraction.close += finish;
-                command.valve.general.close += finish;
+                door_locked = (sample start on sensor.door.locked);
+                command.valve.door.retraction.close += delay door_locked by 1ms;
+                command.valve.general.close += delay door_locked by 4ms;
             };
         };
         // because the outputs using OR-gate to combine the output of controllers, we use fastest and slowest constraints
@@ -401,7 +472,7 @@ assume {
                     var open, close : clock;
                     open = fastest of module1.command.valve.general.open module2.command.valve.general.open;
                     close = slowest of module1.command.valve.general.close module2.command.valve.general.close;
-                    allow open close from switch.open until switch.close;
+                    allow open close from switch.close until switch.open;
                 };
                 gear {
                     retraction {
@@ -432,18 +503,18 @@ assume {
                 door {
                     var lock,unlock : clock;
                     lock = fastest of module1.command.lock.door.lock module2.command.lock.door.lock;
-                    unlock = slowest of module1.command.lock.door.unlock module2.command.lock.door.unlock;
+                    unlock = fastest of module1.command.lock.door.unlock module2.command.lock.door.unlock;
                 };
                 gear {
                     up {
                         var lock,unlock : clock;
                         lock = fastest of module1.command.lock.gear.up.lock module2.command.lock.gear.up.lock;
-                        unlock = slowest of module1.command.lock.gear.up.unlock module2.command.lock.gear.up.unlock;
+                        unlock = fastest of module1.command.lock.gear.up.unlock module2.command.lock.gear.up.unlock;
                     };
                     down {
                         var lock,unlock : clock;
                         lock = fastest of module1.command.lock.gear.down.lock module2.command.lock.gear.down.lock;
-                        unlock = slowest of module1.command.lock.gear.down.unlock module2.command.lock.gear.down.unlock;
+                        unlock = fastest of module1.command.lock.gear.down.unlock module2.command.lock.gear.down.unlock;
                     };
                 };
             };
