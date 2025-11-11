@@ -68,6 +68,11 @@ module Option = struct
     | Some x -> x
     | None -> failwithf "expected: %s" expect
   ;;
+
+  let to_string ~default f = function
+    | Some x -> f x
+    | None -> default
+  ;;
 end
 
 module Result = struct
@@ -664,15 +669,40 @@ module Tuple = struct
   let swap2 (x, y) = y, x
 end
 
+(* module type Entry = sig
+  type unknown
+  type occupied
+
+  type (_, 'k, 'v) t
+
+  val or_insert : default:'v -> ('a, 'k, 'v) t -> (occupied, 'k, 'v) t
+  val or_insert_with : (unit -> 'v) -> ('a, 'k, 'v) t -> (occupied, 'k, 'v) t
+  val and_modify : ('v -> 'v) -> ('a, 'k, 'v) t -> ('a, 'k, 'v) t
+  val get : (occupied, 'k, 'v) t -> 'v
+  val maybe_get : ('a, 'k, 'v) t -> 'v option
+end *)
+
 module Hashtbl = struct
   include Hashtbl
 
-  let entry f default key tbl =
+  let entry ~default f key tbl =
     let v = find_opt tbl key |> Option.value ~default in
     replace tbl key (f v)
   ;;
 
-  let value default key tbl = Hashtbl.find_opt tbl key |> Option.value ~default
+  (* TODO: continue work on proper Entry later
+  module Entry : Entry = struct
+    type unknown = private Unknown
+    type occupied= private Occupied
+    
+  type (_, 'k, 'v) val =
+    | Unknown : 'k -> (unknown, 'k, 'v) t
+    | Occupied : ('k * 'v) -> (occupied, 'k, 'v) t
+
+    let or_insert ~default e = 
+  end *)
+
+  let value ~default key tbl = Hashtbl.find_opt tbl key |> Option.value ~default
 
   let[@inline] value_mut ~default key tbl =
     match Hashtbl.find_opt tbl key with
@@ -688,7 +718,7 @@ module Hashtbl = struct
       let tbl = create size in
       Seq.fold_left
         (fun tbl v ->
-           entry (Int.add 1) 0 v tbl;
+           entry (Int.add 1) ~default:0 v tbl;
            tbl)
         tbl
         seq
@@ -696,7 +726,9 @@ module Hashtbl = struct
 
     let by_tags ?(size = 64) seq =
       let tbl = create size in
-      Seq.iter (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) [] k tbl) kl) seq;
+      Seq.iter
+        (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) ~default:[] k tbl) kl)
+        seq;
       tbl
     ;;
   end
@@ -1094,6 +1126,7 @@ module Heap (Elem : Map.OrderedType) : sig
   val map : (Elem.t -> Elem.t) -> t -> unit
   val exists : (Elem.t -> bool) -> t -> bool
   val length : t -> int
+  val to_list : t -> Elem.t list
 end = struct
   (* Our priority queues are implemented using the standard "min heap"
      data structure, a dynamic array representing a binary tree. *)
@@ -1188,6 +1221,7 @@ end = struct
   let map f h = Dynarray.map_inplace f h
   let exists = Dynarray.exists
   let length = Dynarray.length
+  let to_list = Dynarray.to_list
 end
 
 module In_channel = struct
