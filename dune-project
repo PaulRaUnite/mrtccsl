@@ -29,7 +29,7 @@
    (>= 5.3.0))
   (dune :with-build)
   (menhir
-   (= 20240715))
+   (= 20250912))
   camllib
   (apron
    (>= 0.9.15))
@@ -75,7 +75,7 @@
    (>= 1.2))
   bitvectorset
   (cmdliner
-   (= 1.3.0))
+   (= 2.0.0))
   dune-build-info
   (csv (= 2.4)))
  (tags

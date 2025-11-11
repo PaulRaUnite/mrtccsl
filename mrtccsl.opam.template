@@ -5,4 +5,5 @@ pin-depends: [
   ["mlcuddidl.3.0.9" "git+https://github.com/PaulRaUnite/mlcuddidl"]
   ["bitvectorset.0.1.0" "git+https://github.com/PaulRaUnite/bitvectorset"]
   ["fast_bitvector.0.0.5" "git+https://github.com/PaulRaUnite/fast_bitvector"]
+  ["owl.1.2" "git+https://github.com/owlbarn/owl"]
 ]
