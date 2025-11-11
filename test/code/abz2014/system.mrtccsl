@@ -12,6 +12,87 @@ assume {
             discrete process rate with 0 1 ~ 1:1;
         };
     };
+    vars {
+        valve {
+            door {
+                duration : 0.96s <= front_extension <= 1.44s;
+                continuous process front_extension with normal (1.2s, 0.12s);
+                duration : 1.2s <= left_extension <= 1.8s;
+                continuous process left_extension with normal (1.5s, 0.15s);
+                duration : 1.2s <= right_extension <= 1.8s;
+                continuous process right_extension with normal (1.5s, 0.15s);
+                duration : 0.96s <= front_retraction <= 1.44s;
+                continuous process front_retraction with normal (1.2s, 0.12s);
+                duration : 1.28s <= left_retraction <= 1.92s;
+                continuous process left_retraction with normal (1.6s, 0.16s);
+                duration : 1.28s <= right_retraction <= 1.92s;
+                continuous process right_retraction with normal (1.6s, 0.16s);
+            };
+            gear {
+                duration : 0.96s <= front_extension <= 1.44s;
+                continuous process front_extension with normal (1.2s, 0.12s);
+                duration : 1.28s <= left_extension <= 1.92s;
+                continuous process left_extension with normal (1.6s, 0.16s);
+                duration : 1.28s <= right_extension <= 1.92s;
+                continuous process right_extension with normal (1.6s, 0.16s);
+                duration : 0.96s <= front_retraction <= 1.44s;
+                continuous process front_retraction with normal (1.2s, 0.12s);
+                duration : 1.28s <= left_retraction <= 1.92s;
+                continuous process left_retraction with normal (1.6s, 0.16s);
+                duration : 1.28s <= right_retraction <= 1.92s;
+                continuous process right_retraction with normal (1.6s, 0.16s);
+            };
+        };
+        lock {
+            door {
+                duration : 0.32s <= front_unlock <= 0.48s;
+                continuous process front_unlock with normal (0.4s, 0.04s);
+                duration : 0.32s <= left_unlock <= 0.48s;
+                continuous process left_unlock with normal (0.4s, 0.04s);
+                duration : 0.32s <= right_unlock <= 0.48s;
+                continuous process right_unlock with normal (0.4s, 0.04s);
+
+                duration : 0.24s <= front_lock <= 0.36s;
+                continuous process front_lock with normal (0.3s, 0.03s);
+                duration : 0.24s <= left_lock <= 0.36s;
+                continuous process left_lock with normal (0.3s, 0.03s);
+                duration : 0.24s <= right_lock <= 0.36s;
+                continuous process right_lock with normal (0.3s, 0.03s);
+            };
+            gear {
+                up {
+                    duration : 0.64s <= front_unlock <= 0.96s;
+                    continuous process front_unlock with normal (0.8s, 0.08s);
+                    duration : 0.64s <= left_unlock <= 0.96s;
+                    continuous process left_unlock with normal (0.8s, 0.08s);
+                    duration : 0.64s <= right_unlock <= 0.96s;
+                    continuous process right_unlock with normal (0.8s, 0.08s);
+
+                    duration : 0.32s <= front_lock <= 0.48s;
+                    continuous process front_lock with normal (0.4s, 0.04s);
+                    duration : 0.32s <= left_lock <= 0.48s;
+                    continuous process left_lock with normal (0.4s, 0.04s);
+                    duration : 0.32s <= right_lock <= 0.48s;
+                    continuous process right_lock with normal (0.4s, 0.04s);
+                };
+                down {
+                    duration : 0.64s <= front_unlock <= 0.96s;
+                    continuous process front_unlock with normal (0.8s, 0.08s);
+                    duration : 0.64s <= left_unlock <= 0.96s;
+                    continuous process left_unlock with normal (0.8s, 0.08s);
+                    duration : 0.64s <= right_unlock <= 0.96s;
+                    continuous process right_unlock with normal (0.8s, 0.08s);
+
+                    duration : 0.32s <= front_lock <= 0.48s;
+                    continuous process front_lock with normal (0.4s, 0.04s);
+                    duration : 0.32s <= left_lock <= 0.48s;
+                    continuous process left_lock with normal (0.4s, 0.04s);
+                    duration : 0.32s <= right_lock <= 0.48s;
+                    continuous process right_lock with normal (0.4s, 0.04s);
+                }
+            }
+        };
+    };
 } structure {
     try_flying = periodic 30min with drift fly_jitter offset 10min;
     try_landing = periodic 30min with drift land_jitter offset 30 min;  
@@ -107,23 +188,23 @@ assume {
 
     // relations between valves and cylinders
     // high to down
-    cylinder.door.front.extended = delay valve.door.extension.open by 1.2s;
-    cylinder.door.left.extended = delay valve.door.extension.open by 1.5s;
-    cylinder.door.right.extended = delay valve.door.extension.open by 1.5s;
+    cylinder.door.front.extended = delay valve.door.extension.open by vars.valve.door.front_extension;
+    cylinder.door.left.extended = delay valve.door.extension.open by vars.valve.door.left_extension;
+    cylinder.door.right.extended = delay valve.door.extension.open by vars.valve.door.right_extension;
     // down to high
-    cylinder.door.front.retracted = delay valve.door.retraction.open by 1.2s;
-    cylinder.door.left.retracted = delay valve.door.retraction.open by 1.6s;
-    cylinder.door.right.retracted = delay valve.door.retraction.open by 1.6s;
+    cylinder.door.front.retracted = delay valve.door.retraction.open by vars.valve.door.front_retraction;
+    cylinder.door.left.retracted = delay valve.door.retraction.open by vars.valve.door.left_retraction;
+    cylinder.door.right.retracted = delay valve.door.retraction.open by vars.valve.door.right_retraction;
 
     // relations between valves and 
     // high to down
-    cylinder.gear.front.extended = delay valve.gear.extension.open by 1.2s;
-    cylinder.gear.left.extended = delay valve.gear.extension.open by 1.6s;
-    cylinder.gear.right.extended = delay valve.gear.extension.open by 1.6s;
+    cylinder.gear.front.extended = delay valve.gear.extension.open by vars.valve.gear.front_extension;
+    cylinder.gear.left.extended = delay valve.gear.extension.open by vars.valve.gear.left_extension;
+    cylinder.gear.right.extended = delay valve.gear.extension.open by vars.valve.gear.right_extension;
     // down to high
-    cylinder.gear.front.retracted = delay valve.gear.retraction.open by 1.6s;
-    cylinder.gear.left.retracted = delay valve.gear.retraction.open by 1.6s;
-    cylinder.gear.right.retracted = delay valve.gear.retraction.open by 1.6s;
+    cylinder.gear.front.retracted = delay valve.gear.retraction.open by vars.valve.gear.front_retraction;
+    cylinder.gear.left.retracted = delay valve.gear.retraction.open by vars.valve.gear.left_retraction;
+    cylinder.gear.right.retracted = delay valve.gear.retraction.open by vars.valve.gear.right_retraction;
 
     // TODO: valves cannot close before the cylinder finishes extension
 
@@ -199,31 +280,31 @@ assume {
 
     // relations between locks and sensors
     // doors
-    sensor.door.front.unlocked = delay lock.door.front.unlock by 0.4s;
-    sensor.door.left.unlocked = delay lock.door.left.unlock by 0.4s;
-    sensor.door.right.unlocked = delay lock.door.right.unlock by 0.4s;
+    sensor.door.front.unlocked = delay lock.door.front.unlock by vars.lock.door.front_unlock;
+    sensor.door.left.unlocked = delay lock.door.left.unlock by vars.lock.door.left_unlock;
+    sensor.door.right.unlocked = delay lock.door.right.unlock by vars.lock.door.right_unlock;
 
-    sensor.door.front.locked = delay lock.door.front.lock by 0.3s;
-    sensor.door.left.locked = delay lock.door.left.lock by 0.3s;
-    sensor.door.right.locked = delay lock.door.right.lock by 0.3s;
+    sensor.door.front.locked = delay lock.door.front.lock by vars.lock.door.front_lock;
+    sensor.door.left.locked = delay lock.door.left.lock by vars.lock.door.left_lock;
+    sensor.door.right.locked = delay lock.door.right.lock by vars.lock.door.right_lock;
 
     // gear
     // high position
-    sensor.gear.up.front.unlocked = delay lock.gear.up.front.unlock by 0.8s;
-    sensor.gear.up.left.unlocked = delay lock.gear.up.left.unlock by 0.8s;
-    sensor.gear.up.right.unlocked = delay lock.gear.up.right.unlock by 0.8s;
+    sensor.gear.up.front.unlocked = delay lock.gear.up.front.unlock by vars.lock.gear.up.front_unlock;
+    sensor.gear.up.left.unlocked = delay lock.gear.up.left.unlock by vars.lock.gear.up.left_unlock;
+    sensor.gear.up.right.unlocked = delay lock.gear.up.right.unlock by vars.lock.gear.up.right_unlock;
 
-    sensor.gear.up.front.locked = delay lock.gear.up.front.lock by 0.4s;
-    sensor.gear.up.left.locked = delay lock.gear.up.left.lock by 0.4s;
-    sensor.gear.up.right.locked = delay lock.gear.up.right.lock by 0.4s;
+    sensor.gear.up.front.locked = delay lock.gear.up.front.lock by vars.lock.gear.up.front_lock;
+    sensor.gear.up.left.locked = delay lock.gear.up.left.lock by vars.lock.gear.up.left_lock;
+    sensor.gear.up.right.locked = delay lock.gear.up.right.lock by vars.lock.gear.up.right_lock;
     // down position
-    sensor.gear.down.front.unlocked = delay lock.gear.down.front.unlock by 0.8s;
-    sensor.gear.down.left.unlocked = delay lock.gear.down.left.unlock by 0.8s;
-    sensor.gear.down.right.unlocked = delay lock.gear.down.right.unlock by 0.8s;
+    sensor.gear.down.front.unlocked = delay lock.gear.down.front.unlock by vars.lock.gear.down.front_unlock;
+    sensor.gear.down.left.unlocked = delay lock.gear.down.left.unlock by vars.lock.gear.down.left_unlock;
+    sensor.gear.down.right.unlocked = delay lock.gear.down.right.unlock by vars.lock.gear.down.right_unlock;
 
-    sensor.gear.down.front.locked = delay lock.gear.down.front.lock by 0.4s;
-    sensor.gear.down.left.locked = delay lock.gear.down.left.lock by 0.4s;
-    sensor.gear.down.right.locked = delay lock.gear.down.right.lock by 0.4s;
+    sensor.gear.down.front.locked = delay lock.gear.down.front.lock by vars.lock.gear.down.front_lock;
+    sensor.gear.down.left.locked = delay lock.gear.down.left.lock by vars.lock.gear.down.left_lock;
+    sensor.gear.down.right.locked = delay lock.gear.down.right.lock by vars.lock.gear.down.right_lock;
 
     // relations between cylinders and sensors
     sensor.gear.front.retracted = delay cylinder.gear.front.retracted by 1ms;
