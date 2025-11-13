@@ -1,10 +1,9 @@
 open Mrtccsl
 open Prelude
-module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
-module A = FnCh.A
+module A = Automata.Simple.Make (String) (Number.Rational)
+module ST = Automata.Simple.Strategy (A)
 module Export = Automata.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
-open FnCh
 
 let step = of_int 1 / of_int 1000
 
@@ -31,7 +30,7 @@ let priority_strategy priorities general_strategy =
 ;;
 
 let random_strat =
-  ST.Solution.avoid_empty
+  ST.Solution.refuse_empty
   @@ ST.Solution.random_label
        (ST.Num.random_leap
           ~upper_bound:(of_int 1000)
@@ -165,7 +164,7 @@ let verify_config config =
 ;;
 
 let generate_trace ~config clocks spec i =
-  let strategy = ST.Solution.refuse_empty random_strat in
+  let strategy = random_strat in
   let env = A.of_spec ~debug:false spec in
   let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
   let trace, was_cut =

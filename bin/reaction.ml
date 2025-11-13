@@ -8,6 +8,11 @@ module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
 open Common
 
+let open_in_chan = function
+  | "-" -> stdin
+  | file -> open_in file
+;;
+
 let extract_reaction
       ~semantics
       trace_streams
@@ -18,7 +23,9 @@ let extract_reaction
       chains
       output_dir
   =
-  let channel_to_trace ch =
+  let channel_to_trace filename =
+    let ch = open_in_chan filename in
+    (* print_endline filename; *)
     snd (IO.CSV.read ch) |> Iter.map IO.step_to_pair |> Dynarray.of_iter
   in
   let traces = List.map channel_to_trace trace_streams in
@@ -41,6 +48,7 @@ let extract_reaction
          List.iter
            (fun span ->
               let filename = reaction_name dir chain_name span in
+              print_endline filename;
               (Sys.write_file ~filename)
                 (FnCh.reaction_times_to_csv categories interest chain_instances))
            interest)
@@ -104,7 +112,7 @@ let trace_arg =
 let reactions_list_arg =
   Arg.(
     value
-    & opt (some dir) None
+    & opt (some string) None
     & info
         [ "l"; "list" ]
         ~doc:
@@ -119,9 +127,7 @@ let categorized_histogram_arg =
     & flag
     & info
         [ "c"; "categorized" ]
-        ~doc:
-          "Scale with which CSV histograms of reaction times are calculated, categorized \
-           by misses and collected using $(i,SCALE)."
+        ~doc:"Instruct to categorize by misses and collected using $(i,SCALE)."
         ~docv:"CATEGORIZED_HIST")
 ;;
 
@@ -132,9 +138,8 @@ let weighted_histogram_arg =
     & info
         [ "w"; "weighted" ]
         ~doc:
-          "Scale with which CSV histograms of reaction times are calculated, categorized \
-           by contributions of individual reactions. When all is specified, $(i,SCALE) \
-           variable should be present."
+          "Instruct to categorize by contributions of individual reactions. When all is \
+           specified, $(i,SCALE) variable should be present."
         ~docv:"WEIGHTED_HIST")
 ;;
 
@@ -211,18 +216,13 @@ let cmd =
   if chain :: traces |> List.filter (String.equal "-") |> List.length > 1
   then `Error (false, "can read stdin only once")
   else (
-    let open_in_chan = function
-      | "-" -> stdin
-      | file -> open_in file
-    in
-    let trace_inputs = List.map open_in_chan traces
-    and chain_input = open_in_chan chain in
+    let chain_input = open_in_chan chain in
     let chains = Chain.parse_from_channel chain_input in
     `Ok
       (Ok
          (extract_reaction
             ~semantics
-            trace_inputs
+            traces
             reaction_list
             chistogram
             whistogram

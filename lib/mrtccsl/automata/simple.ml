@@ -397,7 +397,7 @@ struct
   type sim =
     { durations : NI.t VarSeq.container
     ; integers : II.t VarSeq.container
-    ; automata : t
+    ; automata : t list
     }
 
   open Sexplib0.Sexp_conv
@@ -425,7 +425,7 @@ struct
   let empty_sim : sim =
     { durations = VarSeq.empty_container ()
     ; integers = VarSeq.empty_container ()
-    ; automata = empty
+    ; automata = []
     }
   ;;
 
@@ -443,9 +443,16 @@ struct
     let { name; guard; transition; clocks; print_state } = a in
     let transition n (l, n') =
       let possible = guard n in
+      (* print_endline "----";
+      print_endline @@ solution_to_string (l,n');
+      print_endline @@ guard_to_string possible; *)
       let present =
         Iter.exists
-          (fun (l', cond) -> L.equal_modulo ~modulo:clocks l l' && NI.contains cond n')
+          (fun (l', cond) ->
+             let eq = L.equal_modulo ~modulo:clocks l l'
+             and contains = NI.contains cond n' in
+             (* Printf.printf "%b %b\n" eq contains; *)
+             eq && contains)
           possible
       in
       present && transition n (l, n')
@@ -499,60 +506,58 @@ struct
     }
   ;;
 
-  let sync_batch ~debug (automata : t list) : t =
-    let { guard = empty_g; clocks = empty_clocks; _ } = empty in
-    let guard now =
-      let solutions, _ =
-        List.fold_lefti
-          (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
-             (* let _ = print_endline (L.to_string clocks) in *)
-             (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
-             let conf_surface = L.inter prev_clocks clocks in
-             let pot_solutions = Iter.product prev_solutions (guard now) in
-             let solutions =
-               Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
-             in
-             let solutions = Iter.persistent solutions in
-             if debug
-             then
-               if Iter.length solutions = 0
-               then (
-                 Printf.printf "%s\n" (guard_to_string prev_solutions);
-                 Printf.printf "%s\n" (guard_to_string solutions);
-                 Printf.printf "deadlock detected from constraint %s %i\n" name i);
-             (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
-             solutions, L.union prev_clocks clocks)
-          (empty_g now, empty_clocks)
-          automata
-      in
-      solutions
+  let sync_guards ?(debug = false) (automata : t list) now =
+    let solutions, _ =
+      List.fold_lefti
+        (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
+           (* let _ = print_endline (L.to_string clocks) in *)
+           (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
+           let conf_surface = L.inter prev_clocks clocks in
+           let pot_solutions = Iter.product prev_solutions (guard now) in
+           let solutions =
+             Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
+           in
+           let solutions = Iter.persistent solutions in
+           if debug
+           then
+             if Iter.length solutions = 0
+             then (
+               Printf.printf "%s\n" (guard_to_string prev_solutions);
+               Printf.printf "%s\n" (guard_to_string solutions);
+               Printf.printf "deadlock detected from constraint %s %i\n" name i);
+           (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
+           solutions, L.union prev_clocks clocks)
+        (noop_guard now, L.empty)
+        automata
     in
-    let transition before sol =
-      Iter.for_all
-        (fun { transition; _ } ->
-           let res = transition before sol in
-           if not res then print_endline "failed";
-           res)
-        (Iter.of_list automata)
-    in
-    let clocks =
-      List.fold_left (fun all { clocks; _ } -> L.union all clocks) empty_clocks automata
-    in
-    { name = "all"
-    ; guard
-    ; transition
-    ; clocks
-    ; print_state =
-        (fun () ->
-          List.filter_map
-            (fun { print_state; name; _ } ->
-               let state_str = print_state () in
-               if String.is_empty state_str
-               then None
-               else Some (Printf.sprintf "[%s]: %s" name state_str))
-            automata
-          |> List.to_string ~sep:"\n" Fun.id)
-    }
+    solutions
+  ;;
+
+  let print_state (automata : t list) () =
+    List.filter_map
+      (fun { print_state; name; _ } ->
+         let state_str = print_state () in
+         if String.is_empty state_str
+         then None
+         else Some (Printf.sprintf "[%s]: %s" name state_str))
+      automata
+    |> List.to_string ~sep:"\n" Fun.id
+  ;;
+
+  let sync_transitions (automata : t list) before sol =
+    List.for_all
+      (fun { transition; name; print_state; _ } ->
+         let res = transition before sol in
+         if not res
+         then (
+           Printf.printf
+             "failed transition at %s: %s %s\n"
+             name
+             (N.to_string before)
+             (solution_to_string sol);
+           print_endline @@ print_state ());
+         res)
+      automata
   ;;
 
   (** Logical-only guard function translates labels to guard of transition, adds generic [eta < eta'] condition on real-time.*)
@@ -1181,24 +1186,21 @@ struct
     CMap.merge (process_combination II.inf II.return) integer_bounds integer_dists
     |> CMap.iter (VarSeq.declare_variable integers);
     let constraints =
-      sync_batch
-        ~debug
-        (List.map (of_constr (integers, durations)) Language.Specification.(spec.logical))
+      List.map (of_constr (integers, durations)) Language.Specification.(spec.logical)
     in
     { durations
     ; integers
-    ; automata = (if debug then debug_automata constraints else constraints)
+    ; automata = (if debug then List.map debug_automata constraints else constraints)
     }
   ;;
 
-  let next_step strat (a : t) now : solution option =
-    let { guard; transition; _ } = a in
-    let possible = guard now in
+  let next_step strat (a : t list) now : solution option =
+    let possible = sync_guards a now in
     if Iter.is_empty possible
     then None
     else
       let* sol = strat possible in
-      if transition now sol then Some sol else None
+      if sync_transitions a now sol then Some sol else None
   ;;
 
   let gen_trace (sol_strat : sol_strategy) { automata; integers; durations } : Trace.t =
@@ -1213,21 +1215,17 @@ struct
 
   let bisimulate s { automata = a1; _ } { automata = a2; _ } =
     (*TODO: investigate relation between the vrel1 and vrel2. *)
-    let { transition; _ } = a2 in
     Iter.unfoldr
       (fun now ->
          let* l, n = next_step s a1 now in
-         if transition now (l, n) then Some ((l, n), n) else None)
+         if sync_transitions a2 now (l, n) then Some ((l, n), n) else None)
       N.zero
   ;;
 
   let accept_trace { automata; integers; durations } n t =
     VarSeq.suppress integers;
     VarSeq.suppress durations;
-    let step a n sol =
-      let { transition; _ } = a in
-      transition n sol
-    in
+    let step a n sol = sync_transitions a n sol in
     let result =
       Iter.fold
         (fun n (l, n') ->
@@ -1242,10 +1240,19 @@ struct
 
   let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = Iter.filter (fun (l, _) -> not (L.is_empty l)) trace
+  let to_string { automata; _ } = print_state automata ()
 
-  let to_string { automata; _ } =
-    let { print_state; _ } = automata in
-    print_state ()
+  let try_force_clock { automata; _ } now clock =
+    let clock_automaton =
+      { guard = (fun _ -> Iter.singleton (L.singleton clock, NI.inf))
+      ; transition = (fun _ (l, _) -> L.mem clock l)
+      ; clocks = L.singleton clock
+      ; print_state = (fun () -> "")
+      ; name = Printf.sprintf "force %s" (C.to_string clock)
+      }
+    in
+    let automata = clock_automaton :: automata in
+    sync_guards ~debug:true automata now
   ;;
 end
 

@@ -15,6 +15,8 @@ include Interface.Number.Operators.Make (struct
     let one = of_int 1
   end)
 
+let minusone = of_int (-1)
+
 let sexp_of_t x =
   let nom = get_num x in
   let denom = get_den x in
