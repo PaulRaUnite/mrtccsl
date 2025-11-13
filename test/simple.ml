@@ -144,7 +144,7 @@ let () =
     ; ( "allow"
       , rglwt
           (constraints_only [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] } ])
-          [ "fab(ab)t"; "(fa)(tb)" ]
+          [ "fab(ab)t"; "(fa)t" ]
           [ "aftb"; "b" ] )
     ; ( "allow-prec"
       , rglwt
@@ -153,12 +153,12 @@ let () =
              ; Precedence { cause = "f"; conseq = "a" }
              ; Precedence { cause = "a"; conseq = "t" }
              ])
-          [ "fat"; "fabt"; "fa(ft)at" ]
-          [ "aftb"; "b"; "(fa)(tb)"; "faaat" ] )
+          [ "fat"; "fabt"; "fafatt" ]
+          [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
     ; ( "forbid"
       , rglwt
           (constraints_only [ Forbid { from = "f"; until = "t"; args = [ "a" ] } ])
-          [ ""; "f"; "t"; "a(ft)a"; "(fta)" ]
+          [ ""; "f"; "t"; "afta"; "f(ta)" ]
           [ "fat"; "ffatt" ] )
     ; ( "forbid-prec"
       , rglwt
