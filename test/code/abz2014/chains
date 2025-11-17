@@ -1,0 +1,2 @@
+extend:handle.committed.down?sensor.gear.extended?cycle.finish
+retract:handle.committed.up?sensor.gear.retracted?cycle.finish

@@ -415,6 +415,7 @@ assume {
                 maybe_extension = (sample start on sensor.door.open);
                 maybe_extension = avoid_extension xor start_extension;
                 start_extension = shock_relaxed and gear_retracted;
+                start_extension = shock_relaxed or gear_retracted;
                 avoid_extension = shock_compressed or gear_extended;
                 allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
                 allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
@@ -440,6 +441,7 @@ assume {
                 maybe_retraction = sample start on sensor.door.open;
                 maybe_retraction = start_retraction xor avoid_retraction;
                 start_retraction = shock_relaxed and gear_extended;
+                start_retraction = shock_relaxed or gear_extended;
                 avoid_retraction = shock_compressed or gear_retracted;
                 forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
                 forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
@@ -503,6 +505,7 @@ assume {
                 maybe_extension = (sample start on sensor.door.open);
                 maybe_extension = avoid_extension xor start_extension;
                 start_extension = shock_relaxed and gear_retracted;
+                start_extension = shock_relaxed or gear_retracted;
                 avoid_extension = shock_compressed or gear_extended;
                 allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
                 allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
@@ -528,6 +531,7 @@ assume {
                 maybe_retraction = sample start on sensor.door.open;
                 maybe_retraction = start_retraction xor avoid_retraction;
                 start_retraction = shock_relaxed and gear_extended;
+                start_retraction = shock_relaxed or gear_extended;
                 avoid_retraction = shock_compressed or gear_retracted;
                 forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
                 forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
