@@ -126,7 +126,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let period, error, offset =
         Const period, Var (FreeVar error), num_expr_of_expr offset
       in
-      out.@[i] == ((period &* Var (Index (i - 1))) &+ offset &+ error)
+      out.@[i] == (period &* Var (Index (i - 1)) &+ offset &+ error)
       && period > Const N.zero
       && offset >= Const N.zero
     | Sporadic { out; at_least; strict } ->
@@ -208,17 +208,17 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       && arg.@[i - d1] <= base.@[i - d1]
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
       base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
-    | Forbid { from; until; args } ->
+    | Forbid { left; right; args; left_strict = false; right_strict = true } ->
       And
         (List.map
            (fun a ->
-              (from.@[i] <= until.@[i] && until.@[i - 1] < a.@[i] && a.@[i] < from.@[i])
-              || (from.@[i - 1] <= until.@[i - 1]
-                  && until.@[i - 1] < a.@[i]
-                  && a.@[i] < from.@[i]))
+              (left.@[i] <= right.@[i] && right.@[i - 1] < a.@[i] && a.@[i] < left.@[i])
+              || (left.@[i - 1] <= right.@[i - 1]
+                  && right.@[i - 1] < a.@[i]
+                  && a.@[i] < left.@[i]))
            args)
-    | Allow { from; until; args } ->
-      And (List.map (fun a -> from.@[i] <= a.@[i] && a.@[i] <= until.@[i]) args)
+    | Allow { left; right; args; left_strict = false; right_strict = false } ->
+      And (List.map (fun a -> left.@[i] <= a.@[i] && a.@[i] <= right.@[i]) args)
     | _ -> raise (UnderApproximationUnavailable c)
   ;;
 
@@ -659,7 +659,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       let in_cycle = Hashtbl.create ((len * len) + (2 * len)) in
       let mark_cyclic v = Hashtbl.replace in_cycle v true in
       let visited = Hashtbl.create ((len * len) + (2 * len)) in
-      let is_cyclic v = Hashtbl.value ~default:false v in_cycle || Hashtbl.mem visited v in
+      let is_cyclic v =
+        Hashtbl.value ~default:false v in_cycle || Hashtbl.mem visited v
+      in
       let visit v = Hashtbl.replace visited v () in
       let next =
         edges
@@ -678,7 +680,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
           true, [])
         else (
           visit v;
-          let cycles, problems = List.split (List.map dfs (Hashtbl.value ~default:[] v next)) in
+          let cycles, problems =
+            List.split (List.map dfs (Hashtbl.value ~default:[] v next))
+          in
           let problems = List.concat problems in
           if List.any cycles
           then (

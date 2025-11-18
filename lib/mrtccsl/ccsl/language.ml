@@ -102,13 +102,17 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
       ; base : 'c
       }
   | Forbid of
-      { from : 'c
-      ; until : 'c
+      { left_strict : bool
+      ; left : 'c
+      ; right : 'c
+      ; right_strict : bool
       ; args : 'c list
       }
   | Allow of
-      { from : 'c
-      ; until : 'c
+      { left_strict : bool
+      ; left : 'c
+      ; right : 'c
+      ; right_strict : bool
       ; args : 'c list
       }
   | Sporadic of
@@ -204,7 +208,8 @@ let clocks = function
   | RTdelay { out; arg; _ } -> [ out; arg ]
   | CumulPeriodic { out; _ } | AbsPeriodic { out; _ } -> [ out ]
   | FirstSampled { out; arg; base } | LastSampled { out; arg; base } -> [ out; arg; base ]
-  | Forbid { from; until; args } | Allow { from; until; args } -> from :: until :: args
+  | Forbid { left; right; args; _ } | Allow { left; right; args; _ } ->
+    left :: right :: args
   | Sporadic { out; _ } -> [ out ]
   | Pool (_, list) ->
     let lock, unlock = List.split list in

@@ -506,24 +506,25 @@ struct
     }
   ;;
 
-  let sync_guards ?(debug = false) (automata : t list) now =
+  let sync_guards ?(debug = true) (automata : t list) now =
     let solutions, _ =
       List.fold_lefti
         (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
            (* let _ = print_endline (L.to_string clocks) in *)
            (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
            let conf_surface = L.inter prev_clocks clocks in
-           let pot_solutions = Iter.product prev_solutions (guard now) in
+           let next_solutions = guard now in
+           let pot_solutions = Iter.product prev_solutions next_solutions in
            let solutions =
              Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
            in
            let solutions = Iter.persistent solutions in
            if debug
            then
-             if Iter.length solutions = 0
+             if Iter.length solutions <= 1
              then (
-               Printf.printf "%s\n" (guard_to_string prev_solutions);
-               Printf.printf "%s\n" (guard_to_string solutions);
+               Printf.printf "prev: %s\n" (guard_to_string prev_solutions);
+               Printf.printf "next: %s\n" (guard_to_string next_solutions);
                Printf.printf "deadlock detected from constraint %s %i\n" name i);
            (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
            solutions, L.union prev_clocks clocks)
@@ -930,53 +931,65 @@ struct
           CMap.to_string C.to_string string_of_int count
         in
         g, t, p
-      | Allow { from; until; args } | Forbid { from; until; args } ->
-        let phase = ref false in
-        let allow_l1 =
-          label_array
-          @@ ([ until ] :: List.flat_cartesian [ []; [ from ] ] (List.powerset args))
-        and allow_l2 =
-          label_array
-          @@ ([] :: [ until ] :: List.flat_cartesian [ [ from ] ] (List.powerset args))
+      | Allow { left = from; right = until; args; left_strict; right_strict }
+      | Forbid { left = from; right = until; args; left_strict; right_strict } ->
+        let folds = ref 0 in
+        let eventwith = [] in
+        let eventwith = if left_strict then eventwith else [ from ] :: eventwith in
+        let eventwith = if right_strict then eventwith else [ until ] :: eventwith in
+        let eventwith =
+          if right_strict && left_strict then eventwith else [ from; until ] :: eventwith
+          (*TODO: I am not extremely sure; this essentially means that there is a microstep order and until happens before from and everything else is around it. Same in forbid. *)
         in
-        let g_allow n =
-          let labels = if !phase then allow_l1 else allow_l2 in
-          lo_guard labels n
+        let without = [] in
+        let without = if left_strict then [ from ] :: without else without in
+        let without = if right_strict then [ until ] :: without else without in
+        let without =
+          if right_strict && left_strict then [ from; until ] :: without else without
         in
-        let forbid_l1 =
+        let on inner outer =
           label_array
-          @@ ([] :: [ from ] :: List.flat_cartesian [ [ until ] ] (List.powerset args))
-        and forbid_l2 =
+          @@ List.append outer
+          @@ List.flat_cartesian ([] :: inner) (List.powerset args)
+        and off inner outer =
           label_array
-          @@ ([ from ] :: List.flat_cartesian [ []; [ until ] ] (List.powerset args))
-        in
-        let g_forbid n =
-          let labels = if !phase then forbid_l1 else forbid_l2 in
-          lo_guard labels n
-        in
+          @@ List.append ([] :: outer)
+          @@ List.flat_cartesian inner (List.powerset args)
+        and allow_more = label_array @@ List.powerset (from :: until :: args)
+        and forbid_more = label_array @@ List.powerset [ from; until ] in
         let g =
           match constr with
-          | Allow _ -> g_allow
-          | Forbid _ -> g_forbid
+          | Allow _ ->
+            fun n ->
+              let labels =
+                match !folds with
+                | 0 -> off eventwith without
+                | 1 -> on eventwith without
+                | _ -> allow_more
+              in
+              lo_guard labels n
+          | Forbid _ ->
+            fun n ->
+              let labels =
+                match !folds with
+                | 0 -> on without eventwith
+                | 1 -> off without eventwith
+                | _ -> forbid_more
+              in
+              lo_guard labels n
           | _ -> failwith "unreachable"
         in
         let t _ (l, _) =
           let from_test = L.mem from l in
           let until_test = L.mem until l in
-          if from_test && until_test
-          then false
-          else (
-            let _ =
-              phase
-              := match from_test, until_test with
-                 | true, true -> failwith "allow/forbid: both should not happen"
-                 | false, false -> !phase
-                 | true, false -> true
-                 | false, true -> false
-            in
-            true)
+          let counter = !folds in
+          let counter = if until_test then counter - 1 else counter in
+          let counter = if from_test then counter + 1 else counter in
+          let counter = if counter < 0 then 0 else counter in
+          folds := counter;
+          true
         in
-        let p () = string_of_bool !phase in
+        let p () = string_of_int !folds in
         g, t, p
       | FirstSampled { out; arg; base } ->
         let sampled = ref false in

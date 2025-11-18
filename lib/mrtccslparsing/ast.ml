@@ -21,17 +21,19 @@ type 'n distribution =
   | DExponential of { mean : 'n }
 
 type 'a interval =
-  | Interval of
-      { left_strict : bool
-      ; left : 'a
-      ; right : 'a
-      ; right_strict : bool
-      }
+  { left_strict : bool
+  ; left : 'a
+  ; right : 'a
+  ; right_strict : bool
+  }
+
+type 'a numeric_interval =
+  | Interval of 'a interval
   | PlusMinus of 'a * 'a
 
 type 'a inline_relation' =
   | InlineExpr of 'a
-  | InlineInterval of 'a interval
+  | InlineInterval of 'a numeric_interval
 
 type 'a inline_relation = 'a inline_relation' Loc.t
 
@@ -155,13 +157,11 @@ type statement' =
       }
   | Allow of
       { clocks : clock_expr list
-      ; from : clock_expr
-      ; until : clock_expr
+      ; interval : clock_expr interval
       }
   | Forbid of
       { clocks : clock_expr list
-      ; from : clock_expr
-      ; until : clock_expr
+      ; interval : clock_expr interval
       }
 
 and statement = statement' Loc.t

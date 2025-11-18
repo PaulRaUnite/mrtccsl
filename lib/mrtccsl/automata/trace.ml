@@ -285,43 +285,32 @@ module MakeIO (N : Timestamp) (L : Label) = struct
                  and start_present = L.mem start l
                  and finish_present = L.mem finish l
                  and deadline_present = L.mem deadline l in
-                 let now_executes = (executes || start_present) && not finish_present
-                 and now_constrains =
-                   (constrains || release_present) && not deadline_present
+                 let executes =
+                   executes
+                   + (if start_present then 1 else 0)
+                   - if finish_present then 1 else 0
                  in
-                 let _ =
-                   match executes, now_executes with
-                   | false, true -> Format.fprintf ch ".+."
-                   | true, true ->
-                     Format.fprintf
-                       ch
-                       (if start_present
-                        then if finish_present then "###" else ".-."
-                        else "| |")
-                   | false, false ->
-                     Format.fprintf
-                       ch
-                       (if start_present && finish_present then "###" else " | ")
-                   | true, false -> Format.fprintf ch "'+'"
+                 let constrains =
+                   constrains
+                   + (if release_present then 1 else 0)
+                   - if deadline_present then 1 else 0
                  in
-                 Format.fprintf ch " ";
-                 let _ =
-                   match constrains, now_constrains with
-                   | false, true -> Format.fprintf ch ".+."
-                   | true, true ->
-                     Format.fprintf
-                       ch
-                       (if release_present
-                        then if deadline_present then ":=:" else ".-."
-                        else ": :")
-                   | false, false ->
-                     Format.fprintf
-                       ch
-                       (if release_present && deadline_present then ".+." else " | ")
-                   | true, false -> Format.fprintf ch "'+'"
+                 let e =
+                   match start_present, finish_present with
+                   | true, true -> if executes = 0 then "###" else ")-("
+                   | true, false -> ".+."
+                   | false, true -> "'+'"
+                   | false, false -> if executes > 0 then "| |" else " | "
                  in
-                 Format.fprintf ch " ";
-                 t, now_executes, now_constrains)
+                 let d =
+                   match release_present, deadline_present with
+                   | true, true -> if constrains = 0 then ":=:" else ":-:"
+                   | true, false -> ".-."
+                   | false, true -> "'+'"
+                   | false, false -> if constrains > 0 then ": :" else " | "
+                 in
+                 Format.fprintf ch "%s %s " e d;
+                 t, executes, constrains)
               tasks
           in
           let horizontal = ref false in
@@ -348,10 +337,10 @@ module MakeIO (N : Timestamp) (L : Label) = struct
             (fun ({ release; deadline; _ }, executes, constrains) ->
                let ready = L.mem release l
                and deadline = L.mem deadline l in
-               Format.fprintf ch (if executes then "| | " else " |  ");
+               Format.fprintf ch (if executes > 0 then "| | " else " |  ");
                Format.fprintf
                  ch
-                 (if constrains
+                 (if constrains > 0
                   then ": : "
                   else if ready && deadline
                   then "'+' "
@@ -361,9 +350,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
           Format.fprintf ch "|\n";
           new_tasks, new_clocks
         in
-        let task_states =
-          tasks |> List.map (fun task -> task, false, false) |> Array.of_list
-        in
+        let task_states = tasks |> List.map (fun task -> task, 0, 0) |> Array.of_list in
         let clock_states = Array.map (fun clock -> clock, 0) clocks in
         let _ = Iter.fold serialize_record (task_states, clock_states) trace in
         let _ =
@@ -424,32 +411,35 @@ module MakeIO (N : Timestamp) (L : Label) = struct
     let timestamp_column = "t"
 
     let read ch =
-      let csv = Csv.of_channel ~has_header:true ch in 
-      Csv.Rows.header csv , csv
-      |> Csv.Rows.iter
-      |> Iter.from_labelled_iter
-      |> Iter.map (fun row ->
-        let timestamp = N.of_string (Csv.Row.find row timestamp_column) in
-        let label =
-          row
-          |> Csv.Row.to_assoc
-          |> Iter.of_list
-          |> Iter.filter_map (fun (name, value) ->
-            if
-              name = timestamp_column
-              || String.contains name '{'
-              || String.contains name '}'
-              || name = ""
-            then None
-            else (
-              match value with
-              | "0" -> None
-              | "1" -> Some name
-              | str -> failwithf "incorrect value in column %s: %s" name str))
-          |> Iter.map L.E.of_string
-          |> L.of_iter
-        in
-        { label; time = timestamp })
+      let csv = Csv.of_channel ~has_header:true ch in
+      ( Csv.Rows.header csv
+        |> List.filter (not << String.equal timestamp_column)
+        |> List.filter (not << String.is_empty)
+      , csv
+        |> Csv.Rows.iter
+        |> Iter.from_labelled_iter
+        |> Iter.map (fun row ->
+          let timestamp = N.of_string (Csv.Row.find row timestamp_column) in
+          let label =
+            row
+            |> Csv.Row.to_assoc
+            |> Iter.of_list
+            |> Iter.filter_map (fun (name, value) ->
+              if
+                name = timestamp_column
+                || String.contains name '{'
+                || String.contains name '}'
+                || name = ""
+              then None
+              else (
+                match value with
+                | "0" -> None
+                | "1" -> Some name
+                | str -> failwithf "incorrect value in column %s: %s" name str))
+            |> Iter.map L.E.of_string
+            |> L.of_iter
+          in
+          { label; time = timestamp }) )
     ;;
 
     let write ch clocks trace =

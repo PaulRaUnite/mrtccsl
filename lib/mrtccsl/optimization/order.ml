@@ -121,8 +121,8 @@ module Make (C : Set.OrderedType) = struct
       |> List.powerset_nz
       |> List.filter (fun l -> List.length l <= n)
       |> List.flat_map (fun comb -> List.fold_left List.flat_cartesian [ [] ] comb)
-    | Allow { from; until; args } | Forbid { from; until; args } ->
-      [ [ from ]; [ until ] ] @ List.powerset args
+    | Allow { left; right; args; _ } | Forbid { left; right; args; _ } ->
+      [ [ left ]; [ right ]; [ left; right ] ] @ List.powerset args
     | Sporadic { out; _ } -> [ [ out ] ]
   ;;
 

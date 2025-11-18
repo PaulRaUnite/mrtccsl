@@ -99,8 +99,7 @@ rule read =
   | "strict" {STRICT}
   | "allow" {ALLOW}
   | "forbid" {FORBID}
-  | "from" {FROM}
-  | "until" {UNTIL}
+  | "in" { IN }
   | "first" {FIRST}
   | "last" {LAST}
   (* time scales and units *)

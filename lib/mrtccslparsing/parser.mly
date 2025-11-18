@@ -14,7 +14,7 @@
 %token ASSUME ASSERT STRUCTURE (*modules*)
 %token AT QUESTION (* special syntax inside modules *)
 %token VAR (* variable declaration *)
-%token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT ALLOW FORBID FROM UNTIL FIRST LAST (*constraints*)
+%token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT ALLOW FORBID FIRST LAST IN (*constraints*)
 %token OR_EQ XOR_EQ (*additive constraints*)
 %token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM EXPONENTIAL SIM
 %token LESS LESSEQ MORE MOREEQ EQUAL NOTEQUAL  (* variable relations *)
@@ -80,10 +80,12 @@ non_empty_dangling_list(sep, X):
 | value=INT ; scale=SECOND { Second {value=Number.Rational.of_int value; scale=(Number.Rational.from_pair scale)}}
 
 %inline interval(X) :
-| LBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { Interval {left_strict=false; left; right; right_strict=false} }
-| RBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { Interval {left_strict=true; left; right; right_strict=false} }
-| LBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { Interval {left_strict=false; left; right; right_strict=true} }
-| RBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { Interval {left_strict=true; left; right; right_strict=true} }
+| LBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { {left_strict=false; left; right; right_strict=false} }
+| RBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { {left_strict=true; left; right; right_strict=false} }
+| LBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { {left_strict=false; left; right; right_strict=true} }
+| RBRACKET ; left=X ; COMMA ; right=X ; LBRACKET { {left_strict=true; left; right; right_strict=true} }
+%inline numeric_interval(X) :
+| interval(X) { Interval $1 }
 | mean=X ; PLUSMINUS ; error=X { PlusMinus (mean,error) }
 
 
@@ -124,7 +126,7 @@ int_expr0 :
 
 %inline inline_relation(X) : 
 | X { Loc.make $symbolstartpos $endpos @@ InlineExpr $1 }
-| interval(X)  { Loc.make $symbolstartpos $endpos @@ InlineInterval $1 }
+| numeric_interval(X)  { Loc.make $symbolstartpos $endpos @@ InlineInterval $1 }
 
 offset : OFFSET ; duration_expr {$2}
 skip : SKIP ; inline_relation(int_expr) {$2}
@@ -167,8 +169,8 @@ statement0 :
 | DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
-| ALLOW ; clocks=nonempty_list(clock_expr) ; FROM ; from=clock_expr ; UNTIL ; until=clock_expr {Allow{clocks;from;until} }
-| FORBID ; clocks=nonempty_list(clock_expr) ; FROM ; from=clock_expr ; UNTIL ; until=clock_expr {Forbid{clocks;from;until} }
+| ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Allow{clocks;interval} }
+| FORBID ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Forbid{clocks;interval} }
 | name=id ; LBRACE ; statements=statements ; RBRACE { Block {name ; statements } }
 | v=var ; u=additive_union ; e=clock_expr { AdditiveUnion (v,u,e) }
 

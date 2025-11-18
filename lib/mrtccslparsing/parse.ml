@@ -78,8 +78,7 @@ let string_token =
   | CONTINUOUS -> "CONTINUOUS"
   | CLOCK -> "CLOCK"
   | VAR -> "VAR"
-  | UNTIL -> "UNTIL"
-  | FROM -> "FROM"
+  | IN -> "IN"
   | FORBID -> "FORBID"
   | ALLOW -> "ALLOW"
   | FIRST -> "FIRST"
@@ -166,8 +165,7 @@ let test_tokens =
     ; ARROWRIGHT
     ; AND
     ; ALTERNATES
-    ; UNTIL
-    ; FROM
+    ; IN
     ; ALLOW
     ; FORBID
     ; FIRST

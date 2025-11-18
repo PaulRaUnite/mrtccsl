@@ -769,8 +769,7 @@ let into_module { assumptions; structure; assertions } =
         ~errors:[]
         (let* context, name = Context.resolve ~context ~scope ~expect:`Duration var in
          Builder.probab builder
-         @@ ContinuousProcess
-              { name; dist = compile_distribution (Loc.unwrap dist) };
+         @@ ContinuousProcess { name; dist = compile_distribution (Loc.unwrap dist) };
          Ok context)
     | Pool (n, pairs) ->
       error_recover
@@ -788,31 +787,33 @@ let into_module { assumptions; structure; assertions } =
         ~context
         ~builder
         statements
-    | Allow { clocks; from; until } ->
+    | Allow { clocks; interval = { left_strict; left; right; right_strict } } ->
       error_recover
         ~context
         ~errors:[]
         (let* context, clocks = compile_clock_exprs ~context ~scope ~builder clocks in
-         let* context, from =
-           compile_clock_expr ~context ~scope ~builder ~result_variable:None from
+         let* context, left =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None left
          in
-         let* context, until =
-           compile_clock_expr ~context ~scope ~builder ~result_variable:None until
+         let* context, right =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Allow { args = clocks; from; until };
+         Builder.logical builder
+         @@ Allow { args = clocks; left_strict; left; right; right_strict };
          Ok context)
-    | Forbid { clocks; from; until } ->
+    | Forbid { clocks; interval = { left_strict; left; right; right_strict } } ->
       error_recover
         ~context
         ~errors:[]
         (let* context, clocks = compile_clock_exprs ~context ~scope ~builder clocks in
-         let* context, from =
-           compile_clock_expr ~context ~scope ~builder ~result_variable:None from
+         let* context, left =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None left
          in
-         let* context, until =
-           compile_clock_expr ~context ~scope ~builder ~result_variable:None until
+         let* context, right =
+           compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Forbid { args = clocks; from; until };
+         Builder.logical builder
+         @@ Forbid { args = clocks; left_strict; left; right; right_strict };
          Ok context)
     | AdditiveUnion (v, u, e) ->
       error_recover
