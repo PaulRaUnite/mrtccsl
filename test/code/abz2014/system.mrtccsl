@@ -122,7 +122,7 @@ assume {
         general {
             open alternates close;
         };
-        allow door.retraction.close door.retraction.open door.extension.close door.extension.open gear.retraction.close gear.retraction.open gear.extension.close gear.extension.open from general.open until general.close; // it is a deviation from how the system may behave because that would require modelling of the physical behaviour
+        allow door.retraction.close door.retraction.open door.extension.close door.extension.open gear.retraction.close gear.retraction.open gear.extension.close gear.extension.open in [general.open, general.close[; // it is a deviation in [how the system may behave because that would require modelling of the physical behaviour
     };
     cylinder {
         door {
@@ -341,20 +341,20 @@ assume {
 
         committed {
             var up,down,action : clock;
-            // because it is not possible to cancel action, the action will be considered committed until the cycle completes
+            // because it is not possible to cancel action, the action will be considered committed, the cycle completes
             action = first sample handle.action on cycle.finish;
             action = up xor down [handle.committed.rate];
             cycle.start = action;
         };
     };
     try_flying = accept_flying xor reject_flying;
-    forbid accept_flying from flying until onground;
-    forbid accept_flying from sensor.gear.retracted until sensor.gear.extended;
-    forbid accept_flying from cycle.start until cycle.finish;
+    forbid accept_flying in [flying, onground[;
+    forbid accept_flying in [sensor.gear.retracted, sensor.gear.extended[;
+    forbid accept_flying in [cycle.start, cycle.finish[;
     try_landing = accept_landing xor reject_landing;
-    allow accept_landing from flying until onground;
-    allow accept_landing from sensor.gear.extended until sensor.gear.retracted;
-    forbid accept_landing from cycle.start until cycle.finish;
+    allow accept_landing in [flying, onground[;
+    allow accept_landing in [sensor.gear.extended, sensor.gear.retracted[;
+    forbid accept_landing in [cycle.start, cycle.finish[;
     flying = delay accept_flying by 1ms;
     onground = delay accept_landing by 1ms;
     switch {
@@ -417,10 +417,10 @@ assume {
                 start_extension = shock_relaxed and gear_retracted;
                 start_extension = shock_relaxed or gear_retracted;
                 avoid_extension = shock_compressed or gear_extended;
-                allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
-                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
-                forbid shock_compressed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
-                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                allow shock_relaxed in [sensor.gear.shockabsorbers.relaxed, sensor.gear.shockabsorbers.compressed[;
+                allow gear_retracted in [sensor.gear.retracted, sensor.gear.extended[;
+                forbid shock_compressed in [sensor.gear.shockabsorbers.relaxed, sensor.gear.shockabsorbers.compressed[;
+                forbid gear_extended in [sensor.gear.retracted, sensor.gear.extended[;
                 command.lock.gear.up.unlock += delay start_extension by 1ms;
                 command.valve.gear.extension.open += delay (sample start_extension on sensor.gear.up.unlocked) by 1ms;
                 command.lock.gear.down.lock += delay (sample start_extension on sensor.gear.extended) by 1ms;
@@ -443,10 +443,10 @@ assume {
                 start_retraction = shock_relaxed and gear_extended;
                 start_retraction = shock_relaxed or gear_extended;
                 avoid_retraction = shock_compressed or gear_retracted;
-                forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
-                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
-                allow shock_compressed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
-                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
+                forbid shock_relaxed in [sensor.gear.shockabsorbers.compressed, sensor.gear.shockabsorbers.relaxed[;
+                forbid gear_extended in [sensor.gear.retracted, sensor.gear.extended[;
+                allow shock_compressed in [sensor.gear.shockabsorbers.compressed, sensor.gear.shockabsorbers.relaxed[;
+                allow gear_retracted in [sensor.gear.retracted, sensor.gear.extended[;
                 command.lock.gear.down.unlock += delay start_retraction by 1ms;
                 command.valve.gear.retraction.open += delay (sample start_retraction on sensor.gear.down.unlocked) by 1ms;
                 command.lock.gear.up.lock += delay (sample start_retraction on sensor.gear.retracted) by 1ms;
@@ -507,10 +507,10 @@ assume {
                 start_extension = shock_relaxed and gear_retracted;
                 start_extension = shock_relaxed or gear_retracted;
                 avoid_extension = shock_compressed or gear_extended;
-                allow shock_relaxed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
-                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
-                forbid shock_compressed from sensor.gear.shockabsorbers.relaxed until sensor.gear.shockabsorbers.compressed;
-                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
+                allow shock_relaxed in [sensor.gear.shockabsorbers.relaxed, sensor.gear.shockabsorbers.compressed[;
+                allow gear_retracted in [sensor.gear.retracted, sensor.gear.extended[;
+                forbid shock_compressed in [sensor.gear.shockabsorbers.relaxed, sensor.gear.shockabsorbers.compressed[;
+                forbid gear_extended in [sensor.gear.retracted, sensor.gear.extended[;
                 command.lock.gear.up.unlock += delay start_extension by 1ms;
                 command.valve.gear.extension.open += delay (sample start_extension on sensor.gear.up.unlocked) by 1ms;
                 command.lock.gear.down.lock += delay (sample start_extension on sensor.gear.extended) by 1ms;
@@ -533,10 +533,10 @@ assume {
                 start_retraction = shock_relaxed and gear_extended;
                 start_retraction = shock_relaxed or gear_extended;
                 avoid_retraction = shock_compressed or gear_retracted;
-                forbid shock_relaxed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
-                forbid gear_extended from sensor.gear.retracted until sensor.gear.extended;
-                allow shock_compressed from sensor.gear.shockabsorbers.compressed until sensor.gear.shockabsorbers.relaxed;
-                allow gear_retracted from sensor.gear.retracted until sensor.gear.extended;
+                forbid shock_relaxed in [sensor.gear.shockabsorbers.compressed, sensor.gear.shockabsorbers.relaxed[;
+                forbid gear_extended in [sensor.gear.retracted, sensor.gear.extended[;
+                allow shock_compressed in [sensor.gear.shockabsorbers.compressed, sensor.gear.shockabsorbers.relaxed[;
+                allow gear_retracted in [sensor.gear.retracted, sensor.gear.extended[;
                 command.lock.gear.down.unlock += delay start_retraction by 1ms;
                 command.valve.gear.retraction.open += delay (sample start_retraction on sensor.gear.down.unlocked) by 1ms;
                 command.lock.gear.up.lock += delay (sample start_retraction on sensor.gear.retracted) by 1ms;
@@ -557,7 +557,7 @@ assume {
                     var open, close : clock;
                     open = fastest of module1.command.valve.general.open module2.command.valve.general.open;
                     close = slowest of module1.command.valve.general.close module2.command.valve.general.close;
-                    allow open close from switch.close until switch.open;
+                    allow open close in [switch.close, switch.open[;
                 };
                 gear {
                     retraction {
