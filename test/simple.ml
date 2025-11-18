@@ -94,7 +94,7 @@ let () =
           (of_decl (fun b ->
              logical b
              @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = None };
-          integer b @@ NumRelation ("duration", `LessEq, const 4);
+             integer b @@ NumRelation ("duration", `LessEq, const 4);
              integer b @@ NumRelation ("duration", `MoreEq, const 2)))
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
           [ "iiiii(oi)" ] )
@@ -141,29 +141,70 @@ let () =
           (constraints_only [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
           [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
           [ "ooo" ] )
-    ; ( "allow"
+    ; ( "allow[f,t)"
       , rglwt
-          (constraints_only [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] } ])
+          (constraints_only
+             [ Allow
+                 { left = "f"
+                 ; right = "t"
+                 ; left_strict = false
+                 ; right_strict = true
+                 ; args = [ "a"; "b" ]
+                 }
+             ])
           [ "fab(ab)t"; "(fa)t" ]
           [ "aftb"; "b" ] )
+    ; ( "allow(f,t]"
+      , rglwt
+          (constraints_only
+             [ Allow
+                 { left = "f"
+                 ; right = "t"
+                 ; left_strict = true
+                 ; right_strict = false
+                 ; args = [ "a"; "b" ]
+                 }
+             ])
+          [ "fabt"; "f(abt)" ]
+          [ "aft"; "ftb"; "(fab)t" ] )
     ; ( "allow-prec"
       , rglwt
           (constraints_only
-             [ Allow { from = "f"; until = "t"; args = [ "a"; "b" ] }
+             [ Allow
+                 { left = "f"
+                 ; right = "t"
+                 ; left_strict = false
+                 ; right_strict = true
+                 ; args = [ "a"; "b" ]
+                 }
              ; Precedence { cause = "f"; conseq = "a" }
              ; Precedence { cause = "a"; conseq = "t" }
              ])
           [ "fat"; "fabt"; "fafatt" ]
           [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
-    ; ( "forbid"
+    ; ( "forbid[f,t)"
       , rglwt
-          (constraints_only [ Forbid { from = "f"; until = "t"; args = [ "a" ] } ])
+          (constraints_only
+             [ Forbid
+                 { left = "f"
+                 ; right = "t"
+                 ; left_strict = false
+                 ; right_strict = true
+                 ; args = [ "a" ]
+                 }
+             ])
           [ ""; "f"; "t"; "afta"; "f(ta)" ]
-          [ "fat"; "ffatt" ] )
+          [ "fat"; "ffatt"; "a(fa)" ] )
     ; ( "forbid-prec"
       , rglwt
           (constraints_only
-             [ Forbid { from = "f"; until = "t"; args = [ "a" ] }
+             [ Forbid
+                 { left = "f"
+                 ; right = "t"
+                 ; left_strict = false
+                 ; right_strict = true
+                 ; args = [ "a" ]
+                 }
              ; Precedence { cause = "f"; conseq = "a" }
              ; Precedence { cause = "a"; conseq = "t" }
              ])
