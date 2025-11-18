@@ -1,0 +1,27 @@
+structure {
+    continuous process d1 with uniform;
+    duration : 1s <= d1 <= 2s;
+    continuous process d2 with uniform;
+    duration : 2s <= d2 <= 3s;
+    mutex {a -> b, c -> d};
+    b = delay a by d1;
+    d = delay c by d1;
+    continuous process v1 with exponential(5s);
+    duration : 0.5s <= v1 <= 10s;
+    continuous process v2 with exponential(5s);
+    duration : 0.5s <= v2 <= 10s;
+    (s1 $ 1) = delay s1 by v1;
+    (s2 $ 1) = delay s2 by v2;
+    spawn = s1 xor s2;
+    spawn = free xor taken;
+    allow taken in ]execution, release];
+    forbid free in ]execution, release];
+    release = force xor drop;
+    allow force in [spawn, release[;
+    forbid drop in [spawn, release[;
+    s1 causes a;
+    s2 causes c;
+    release = b xor d;
+    execution = a xor c;
+    execution = (free or force);
+}
