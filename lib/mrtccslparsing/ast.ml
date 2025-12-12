@@ -48,7 +48,7 @@ type clock_rel =
   | Precedence
   | Causality
   | Subclocking of percentage option
-  | Alternation
+  | Alternation of bool
 
 and contdist = duration distribution Loc.t
 

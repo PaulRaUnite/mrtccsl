@@ -107,7 +107,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         (Option.fold ~none:[] ~some:(fun (_, list) -> list)) maybe_pair_chain
       in
       And pair_chain
-    | Alternate { first; second } -> first.@[i] &|> (second.@[i - 1], second.@[i])
+    | Alternate { first; second; strict = true } ->
+      first.@[i] &|> (second.@[i - 1], second.@[i])
     | RTdelay { out; arg; delay = Var delay } ->
       let delay = Var (FreeVar delay) in
       out.@[i] &- arg.@[i] == delay && delay >= Const N.zero

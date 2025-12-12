@@ -110,7 +110,10 @@ module Make (C : Set.OrderedType) = struct
     | Periodic { out; base; _ } -> [ []; [ out; base ]; [ base ] ]
     | Sample { out; arg; base } ->
       [ []; [ out; base ]; [ out; base; arg ]; [ arg ]; [ base ] ]
-    | Alternate { first; second } -> [ []; [ first ]; [ second ] ]
+    | Alternate { first; second; strict } ->
+      if strict
+      then [ []; [ first ]; [ second ] ]
+      else [ []; [ first ]; [ second ]; [ first; second ] ]
     | RTdelay { out; arg; _ } -> List.powerset [ out; arg ]
     | CumulPeriodic { out; _ } | AbsPeriodic { out; _ } -> [ []; [ out ] ]
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->

@@ -83,14 +83,14 @@ module SimpleControl = struct
     periodic_task "a" e_s p_s 0 b;
     task "c" e_c b;
     Builder.logical b @@ Coincidence [ "s.f"; "c.r" ];
-    Builder.logical b @@ Alternate { first = "c.s"; second = "c.f" }
+    Builder.logical b @@ Alternate { first = "c.s"; second = "c.f"; strict = true }
   ;;
 
   let par_pipeline b =
     no_resource_constraint (48, 52) (5, 10) (25, 40) b;
-    Builder.logical b @@ Alternate { first = "a.s"; second = "a.f" };
-    Builder.logical b @@ Alternate { first = "s.s"; second = "s.f" };
-    Builder.logical b @@ Alternate { first = "c.s"; second = "c.f" }
+    Builder.logical b @@ Alternate { first = "a.s"; second = "a.f"; strict = true };
+    Builder.logical b @@ Alternate { first = "s.s"; second = "s.f"; strict = true };
+    Builder.logical b @@ Alternate { first = "c.s"; second = "c.f"; strict = true }
   ;;
 
   let shared_2core b =

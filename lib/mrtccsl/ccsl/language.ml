@@ -69,6 +69,7 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
   | Alternate of
       { first : 'c
       ; second : 'c
+      ; strict: bool
       }
   | RTdelay of
       { out : 'c
@@ -204,7 +205,7 @@ let clocks = function
     -> out :: args
   | Periodic { out; base; _ } -> [ out; base ]
   | Sample { out; arg; base } -> [ out; arg; base ]
-  | Alternate { first; second } -> [ first; second ]
+  | Alternate { first; second ; _} -> [ first; second ]
   | RTdelay { out; arg; _ } -> [ out; arg ]
   | CumulPeriodic { out; _ } | AbsPeriodic { out; _ } -> [ out ]
   | FirstSampled { out; arg; base } | LastSampled { out; arg; base } -> [ out; arg; base ]

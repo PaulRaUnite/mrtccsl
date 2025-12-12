@@ -128,7 +128,7 @@ let () =
           [ "u"; "ab"; "ba"; "(ab)" ] )
     ; ( "alternate"
       , rglwt
-          (constraints_only [ Alternate { first = "a"; second = "b" } ])
+          (constraints_only [ Alternate { first = "a"; second = "b" ; strict=true} ])
           [ "abab" ]
           [ "baba"; "aa" ] )
     ; ( "fastest"

@@ -749,7 +749,7 @@ let into_module { assumptions; structure; assertions } =
            | Causality -> Some (Causality { cause = left; conseq = right })
            | Subclocking _ ->
              Some (Subclocking { sub = left; super = right; dist = percent_var })
-           | Alternation -> Some (Alternate { first = left; second = right })
+           | Alternation strict -> Some (Alternate { first = left; second = right ; strict})
          in
          Option.iter (Builder.logical builder) constr;
          Ok context)

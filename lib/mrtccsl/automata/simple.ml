@@ -861,18 +861,19 @@ struct
       | DisjunctiveUnion { out; args; _ } ->
         let labels = [] :: List.map (fun c -> [ out; c ]) args in
         stateless (label_array labels)
-      | Alternate { first = a; second = b } ->
+      | Alternate { first = a; second = b; strict } ->
         let phase = ref false in
-        let g n =
-          let labels =
-            if not !phase
-            then [| L.empty; L.singleton a |]
-            else [| L.empty; L.singleton b |]
-          in
-          lo_guard labels n
-        in
+        let g n = 
+        let labels =
+          if not !phase
+          then [| L.empty; L.singleton a |]
+          else if strict
+          then [| L.empty; L.singleton b |]
+          else [| L.empty; L.singleton b; L.of_list [ a; b ] |]
+        in lo_guard labels n in
         let t _ (l, _) =
-          let _ = if L.mem a l then phase := true else if L.mem b l then phase := false in
+          if L.mem b l then phase := false;
+          if L.mem a l then phase := true;
           true
         in
         let p () = string_of_bool !phase in

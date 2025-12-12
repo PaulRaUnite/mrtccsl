@@ -92,7 +92,7 @@ non_empty_dangling_list(sep, X):
 %inline clock_rel:
 | COINCIDENCE {Coincidence}
 | SHARP  {Exclusion }
-| ALTERNATES {Alternation}
+| strict=option(STRICT) ; ALTERNATES {Alternation (Option.is_some strict)}
 | SUBCLOCKS ; p=option(delimited(LBRACKET, percentage, RBRACKET)) {Subclocking p}
 | PRECEDES {Precedence}
 | CAUSES {Causality}
