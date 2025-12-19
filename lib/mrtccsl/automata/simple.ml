@@ -508,28 +508,33 @@ struct
 
   let sync_guards ?(debug = true) (automata : t list) now =
     let solutions, _ =
-      List.fold_lefti
-        (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
-           (* let _ = print_endline (L.to_string clocks) in *)
-           (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
-           let conf_surface = L.inter prev_clocks clocks in
-           let next_solutions = guard now in
-           let pot_solutions = Iter.product prev_solutions next_solutions in
-           let solutions =
-             Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
-           in
-           let solutions = Iter.persistent solutions in
-           if debug
-           then
-             if Iter.length solutions <= 1
-             then (
-               Printf.printf "prev: %s\n" (guard_to_string prev_solutions);
-               Printf.printf "next: %s\n" (guard_to_string next_solutions);
-               Printf.printf "deadlock detected from constraint %s %i\n" name i);
-           (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
-           solutions, L.union prev_clocks clocks)
-        (noop_guard now, L.empty)
-        automata
+      try
+        List.fold_lefti
+          (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
+             (* let _ = print_endline (L.to_string clocks) in *)
+             (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
+             let conf_surface = L.inter prev_clocks clocks in
+             let next_solutions = guard now in
+             let pot_solutions = Iter.product prev_solutions next_solutions in
+             let solutions =
+               Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions
+             in
+             let solutions = Iter.persistent solutions in
+             if debug
+             then
+               if Iter.length solutions <= 1
+               then (
+                 Printf.printf "now: %s\n" (N.to_string now);
+                 Printf.printf "prev: %s\n" (guard_to_string prev_solutions);
+                 Printf.printf "next: %s\n" (guard_to_string next_solutions);
+                 Printf.printf "deadlock detected from constraint %s %i\n" name i;
+                 failwith "need to fail here");
+             (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
+             solutions, L.union prev_clocks clocks)
+          (noop_guard now, L.empty)
+          automata
+      with
+      | _ -> Iter.empty, L.empty
     in
     solutions
   ;;
@@ -863,14 +868,16 @@ struct
         stateless (label_array labels)
       | Alternate { first = a; second = b; strict } ->
         let phase = ref false in
-        let g n = 
-        let labels =
-          if not !phase
-          then [| L.empty; L.singleton a |]
-          else if strict
-          then [| L.empty; L.singleton b |]
-          else [| L.empty; L.singleton b; L.of_list [ a; b ] |]
-        in lo_guard labels n in
+        let g n =
+          let labels =
+            if not !phase
+            then [| L.empty; L.singleton a |]
+            else if strict
+            then [| L.empty; L.singleton b |]
+            else [| L.empty; L.singleton b; L.of_list [ a; b ] |]
+          in
+          lo_guard labels n
+        in
         let t _ (l, _) =
           if L.mem b l then phase := false;
           if L.mem a l then phase := true;
