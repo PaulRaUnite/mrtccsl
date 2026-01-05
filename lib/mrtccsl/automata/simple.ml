@@ -522,10 +522,12 @@ struct
              let solutions = Iter.persistent solutions in
              if debug
              then
-               if Iter.length solutions <= 1
+               if Iter.length solutions = 0
                then (
                  Printf.printf "now: %s\n" (N.to_string now);
+                 Printf.printf "prev clocks: %s\n" (L.to_string prev_clocks);
                  Printf.printf "prev: %s\n" (guard_to_string prev_solutions);
+                 Printf.printf "next clocks: %s\n" (L.to_string clocks);
                  Printf.printf "next: %s\n" (guard_to_string next_solutions);
                  Printf.printf "deadlock detected from constraint %s %i\n" name i;
                  failwith "need to fail here");
