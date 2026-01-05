@@ -1,0 +1,249 @@
+assume {
+
+} structure {
+    hal {
+        positioning {
+            var start, finish : clock;
+            start = periodic 100Hz with jitter var.hal.positioning.jitter offset var.hal.positioning.phase;
+            finish = delay start by var.hal.positioning.latency;
+        };
+        steering_sheel {
+            var start, finish : clock;
+            start = periodic 50Hz with jitter var.hal.steering_sheel.jitter offset var.hal.steering_sheel.phase;
+            finish = delay start by var.hal.steering_sheel.latency;
+        };
+        braking_pedal {
+            var start, finish : clock;
+            start = periodic 50Hz with jitter var.hal.braking_pedal.jitter offset var.hal.braking_pedal.phase;
+            finish = delay start by var.hal.braking_pedal.latency;
+        };
+        acceleration_pedal {
+            var start, finish : clock;
+            start = periodic 50Hz with jitter var.hal.acceleration_pedal.jitter offset var.hal.acceleration_pedal.phase;
+            finish = delay start by var.hal.acceleration_pedal.latency;
+        };
+        camera {
+            n1 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n1.jitter offset var.hal.camera.n1.phase;
+                finish = delay start by var.hal.camera.n1.latency;
+            };
+            n2 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n2.jitter offset var.hal.camera.n2.phase;
+                finish = delay start by var.hal.camera.n2.latency;
+            };
+            n3 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n3.jitter offset var.hal.camera.n3.phase;
+                finish = delay start by var.hal.camera.n3.latency;
+            };
+            n4 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n4.jitter offset var.hal.camera.n4.phase;
+                finish = delay start by var.hal.camera.n4.latency;
+            };
+            n5 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n5.jitter offset var.hal.camera.n5.phase;
+                finish = delay start by var.hal.camera.n5.latency;
+            };
+            n6 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n6.jitter offset var.hal.camera.n6.phase;
+                finish = delay start by var.hal.camera.n6.latency;
+            };
+            n7 {
+                var start, finish : clock;
+                start = periodic 30Hz with jitter var.hal.camera.n7.jitter offset var.hal.camera.n7.phase;
+                finish = delay start by var.hal.camera.n7.latency;
+            };
+            any_finish = n1.finish or n2.finish or n3.finish or n4.finish or n5.finish or n6.finish or n7.finish;
+        };
+        lidar {
+            var start, finish : clock;
+            start = periodic 10Hz with jitter var.hal.lidar.jitter offset var.hal.lidar.phase;
+            finish = delay start by var.hal.lidar.latency;
+        };
+        radar {
+            var start, finish : clock;
+            start = periodic 10Hz with jitter var.hal.radar.jitter offset var.hal.radar.phase;
+            finish = delay start by var.hal.radar.latency;
+        };
+        wheel_speed {
+            n1 {
+                var start, finish : clock;
+                start = periodic 10Hz with jitter var.hal.wheel_speed.n1.jitter offset var.hal.wheel_speed.n1.phase;
+                finish = delay start by var.hal.wheel_speed.n1.latency;
+            };
+            n2 {
+                var start, finish : clock;
+                start = periodic 10Hz with jitter var.hal.wheel_speed.n2.jitter offset var.hal.wheel_speed.n2.phase;
+                finish = delay start by var.hal.wheel_speed.n2.latency;
+            };
+            n3 {
+                var start, finish : clock;
+                start = periodic 10Hz with jitter var.hal.wheel_speed.n3.jitter offset var.hal.wheel_speed.n3.phase;
+                finish = delay start by var.hal.wheel_speed.n3.latency;
+            };
+            n4 {
+                var start, finish : clock;
+                start = periodic 10Hz with jitter var.hal.wheel_speed.n4.jitter offset var.hal.wheel_speed.n4.phase;
+                finish = delay start by var.hal.wheel_speed.n4.latency;
+            };
+        };
+    };
+    resource {
+        gpu {
+            var spawn, execution, release, free, force, taken : clock;
+            spawn = free xor taken;
+            release = force xor drop;
+            execution = (free or force);
+            allow taken in ]execution, release];
+            forbid free in ]execution, release];
+            allow force in [spawn, release[;
+            forbid drop in [spawn, release[;
+            execution alternates release;
+        };
+        cpu {
+            core0 {
+                var spawn, execution, release, free, force, taken : clock;
+                spawn = free xor taken;
+                release = force xor drop;
+                execution = (free or force);
+                allow taken in ]execution, release];
+                forbid free in ]execution, release];
+                allow force in [spawn, release[;
+                forbid drop in [spawn, release[;
+                execution alternates release;
+            };
+            core1 {
+                var spawn, execution, release, free, force, taken : clock;
+                spawn = free xor taken;
+                release = force xor drop;
+                execution = (free or force);
+                allow taken in ]execution, release];
+                forbid free in ]execution, release];
+                allow force in [spawn, release[;
+                forbid drop in [spawn, release[;
+                execution alternates release;
+            };
+            core2 {
+                var spawn, execution, release, free, force, taken : clock;
+                spawn = free xor taken;
+                release = force xor drop;
+                execution = (free or force);
+                allow taken in ]execution, release];
+                forbid free in ]execution, release];
+                allow force in [spawn, release[;
+                forbid drop in [spawn, release[;
+                execution alternates release;
+            };
+            core3 {
+                var spawn, execution, release, free, force, taken : clock;
+                spawn = free xor taken;
+                release = force xor drop;
+                execution = (free or force);
+                allow taken in ]execution, release];
+                forbid free in ]execution, release];
+                allow force in [spawn, release[;
+                forbid drop in [spawn, release[;
+                execution alternates release;
+            };
+        };
+        // add exclusively clocks to spawn, execution and release
+    };
+    service {
+        perception {
+            camera {
+                var release, start, finish : clock;
+                release causes start;
+                release = periodic 10Hz with jitter var.perception.camera.jitter offset var.service.perception.camera.phase;
+                finish = delay start by var.perception.camera.execution;
+                resource.gpu.spawn |= release;
+                resource.gpu.execution |= start;
+                resource.gpu.release |= finish;
+            };
+            radar {
+                var release, start, finish : clock;
+                hal.radar.finish causes release;
+                release = hal.radar.finish;
+                release causes start;
+                finish = delay start by var.perception.radar.execution;
+                resource.gpu.spawn |= release;
+                resource.gpu.execution |= start;
+                resource.gpu.release |= finish;
+            };
+            lidar {
+                var release, start, finish : clock;
+                release = hal.lidar.finish;
+                hal.lidar.finish causes release;
+                release causes start;
+                finish = delay start by var.perception.lidar.execution;
+                resource.gpu.spawn |= release;
+                resource.gpu.execution |= start;
+                resource.gpu.release |= finish;
+            };
+            fusion {
+                var release, start, finish : clock;
+                release causes start;
+                release = periodic 10Hz with jitter var.service.perception.fusion.jitter offset var.service.perception.fusion.phase;
+                finish = delay start by var.service.perception.fusion.execution;
+                resource.cpu.core0.spawn |= release;
+                resource.cpu.core0.execution |= start;
+                resource.cpu.core0.release |= finish;
+            };
+        };
+        object_recognition {
+            var release, start, finish : clock;
+            perception.fusion.finish causes release;
+            release = perception.fusion.finish;
+            release causes start;
+            finish = delay start by var.service.object_recognition.execution;
+            resource.gpu.spawn |= release;
+            resource.gpu.execution |= start;
+            resource.gpu.release |= finish;
+        };
+        prediction {
+            var release, start, finish : clock;
+            object_recognition.finish causes release;
+            release = object_recognition.finish;
+            release causes start;
+            finish = delay start by var.service.prediction.execution;
+            resource.cpu.core0.spawn |= release;
+            resource.cpu.core0.execution |= start;
+            resource.cpu.core0.release |= finish;
+        };
+        time_to_collision {
+            var release, start, finish : clock;
+            release = periodic 5Hz with jitter var.service.time_to_collision.jitter offset var.service.time_to_collision.phase;
+            release causes start;
+            finish = delay start by var.service.time_to_collision.execution;
+            resource.cpu.core0.spawn |= release;
+            resource.cpu.core0.execution |= start;
+            resource.cpu.core0.release |= finish;
+        };
+        aebs_control {
+            var release, start, finish : clock;
+            time_to_collision.finish causes release;
+            release = time_to_collision.finish;
+            release causes start;
+            finish = delay start by var.service.aebs_control.execution;
+            resource.cpu.core0.spawn |= release;
+            resource.cpu.core0.execution |= start;
+            resource.cpu.core0.release |= finish;
+        };
+        pedestrian_notifier {
+            var release, start, finish : clock;
+            object_recognition.finish causes release;
+            release = periodic 1s with jitter var.service.pedestrian_notifier.jitter offset var.service.pedestrian_notifier.phase;
+            release causes start;
+            finish = delay start by var.service.pedestrian_notifier.execution;
+            resource.cpu.core1.spawn |= release;
+            resource.cpu.core1.execution |= start;
+            resource.cpu.core1.release |= finish;
+        };
+    };
+} assert {
+    
+}
