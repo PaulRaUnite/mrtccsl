@@ -1,25 +1,25 @@
 assume {
     vars {
         sensor {
-            continuous process j with normal(0s, 0.5s);
-            duration : -1s <= j <= 1s;
-            continuous process exec with normal(2s, 0.5s);
-            duration : 1s <= exec <= 3s;
+            continuous process j with normal(0s, 5ms);
+            duration : -10ms <= j <= 10ms;
+            continuous process exec with normal(20ms, 5ms);
+            duration : 10ms <= exec <= 30ms;
         };
         controller {
-            continuous process exec with normal(5s, 1.5s);
-            duration : 2s <= exec <= 8s;
+            continuous process exec with normal(50ms, 15ms);
+            duration : 20ms <= exec <= 80ms;
         };
         actuator {
-            continuous process j with normal(0s, 0.5s);
-            duration : -1s <= j <= 1s;
-            continuous process exec with normal(2s, 0.5s);
-            duration : 1s <= exec <= 3s;
+            continuous process j with normal(0s, 5ms);
+            duration : -10ms <= j <= 10ms;
+            continuous process exec with normal(20ms, 5ms);
+            duration : 10ms <= exec <= 30ms;
         };
     };
 } structure {
     sensor {
-        start = periodic 15s with jitter vars.sensor.j;
+        start = periodic 150ms with jitter vars.sensor.j;
         end = delay start by vars.sensor.exec;
     };
     controller {
@@ -27,7 +27,8 @@ assume {
         end = delay start by vars.controller.exec; 
     };
     actuator {
-        start = periodic 15s with jitter vars.actuator.j;
+        start = periodic 100ms with jitter vars.actuator.j;
         end = delay start by vars.actuator.exec; 
     };
+    sensor.end causes controller.start;
 }

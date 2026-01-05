@@ -1,0 +1,35 @@
+assume {
+    
+    duration : -10ms <= Radar_PERIOD_JITTER <= 10ms;
+    continuous process Radar_PERIOD_JITTER with normal(0s, 5ms);
+    
+    duration : 0ms <= Radar_PERIOD_OFF <= 0ms;
+    continuous process Radar_PERIOD_OFF with normal(0ms, 0ms);
+    
+    duration : 10ms <= Radar_EXEC <= 30ms;
+    continuous process Radar_EXEC with normal(20ms, 5ms);
+        
+    duration : -10ms <= Brake_PERIOD_JITTER <= 10ms;
+    continuous process Brake_PERIOD_JITTER with normal(0s, 5ms);
+    
+    duration : 0ms <= Brake_PERIOD_OFF <= 0ms;
+    continuous process Brake_PERIOD_OFF with normal(0ms, 0ms);
+    
+    duration : 10ms <= Brake_EXEC <= 30ms;
+    continuous process Brake_EXEC with normal(20ms, 5ms);
+        
+    duration : 20ms <= AEB_controler_S1_EXEC <= 80ms;
+    continuous process AEB_controler_S1_EXEC with normal(50ms, 15ms);
+} structure {
+    
+    Radar_START = periodic 150ms with jitter Radar_PERIOD_JITTER offset Radar_PERIOD_OFF;
+    Radar_FINISH = delay Radar_START by Radar_EXEC;
+        
+    Brake_START = periodic 100ms with jitter Brake_PERIOD_JITTER offset Brake_PERIOD_OFF;
+    Brake_FINISH = delay Brake_START by Brake_EXEC;
+        
+    Radar_FINISH causes AEB_controler_S1_START;
+    AEB_controler_S1_START = Radar_FINISH;
+    AEB_controler_S1_FINISH = delay AEB_controler_S1_START by AEB_controler_S1_EXEC;
+            
+}
