@@ -13,6 +13,10 @@ include Interface.Number.Operators.Make (struct
 
     let zero = of_int 0
     let one = of_int 1
+
+    (* let div x y =
+      if equal y zero then failwith "rational: division by zero" else Mpqf.div x y
+    ;; *)
   end)
 
 let minusone = of_int (-1)

@@ -385,7 +385,8 @@ struct
            in
            let compute_wights contributions total =
              List.map
-               (fun (name, link_reaction) -> name, N.(link_reaction / total))
+               (fun (name, link_reaction) ->
+                  name, if N.equal total N.zero then N.zero else N.(link_reaction / total))
                contributions
            in
            let reactions =
