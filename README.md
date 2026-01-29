@@ -56,3 +56,6 @@ The project provides the following features:
 - run `eval $(opam env)` (and every time before starting development)
 - run `opam install . --deps-only --with-tests --with-docs` to install *all* the dependencies (add `-w` when installing development version different from the published version)
 - finally, `dune build` to simply build and `dune runtest` to run the tests of the project
+
+The project uses [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) scheme and generate the changelogs using [git-cliff](https://git-cliff.org/) since version `0.5.0`.
+We use (unironically) the [zero-based versioning](https://0ver.org/) until some stable API can be sort of guaranteed (either as text and CLI, or as a library).

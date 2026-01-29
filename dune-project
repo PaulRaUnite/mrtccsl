@@ -17,7 +17,7 @@
 
 (documentation https://github.com/PaulRaUnite/mrtccsl)
 
-(version 0.4-beta)
+(version 0.5.0)
 
 (package
  (name mrtccsl)
