@@ -88,7 +88,7 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
     | And [] -> domain
     | And list -> List.fold_left (add_constraint index) domain list
     | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) ->
+    | Comp (l, op, r) ->
       let diff = Texpr1.binop Texpr1.Sub (te2te l) (te2te r) Texpr1.Real Texpr1.Near in
       let op, expr =
         match op with
@@ -213,7 +213,7 @@ module VPL (V : Var) (N : Num) = struct
     | And [] -> aux, domain
     | And list -> List.fold_left (add_constraint index) (aux, domain) list
     | Or _ -> invalid_arg "polyhedra only supports conjunctions"
-    | Linear (l, op, r) ->
+    | Comp (l, op, r) ->
       let lincond = D.Cond.Atom (te2ae index l, op2op op, te2ae index r) in
       let bexp = D.of_cond lincond in
       let vars = formula |> BoolExpr.vars |> List.map (var index) |> VarSet.of_list in

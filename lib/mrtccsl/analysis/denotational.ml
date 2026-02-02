@@ -29,17 +29,17 @@ let num_expr_of_expr = function
 type ('c, 'n) bool_expr =
   | Or of ('c, 'n) bool_expr list
   | And of ('c, 'n) bool_expr list
-  | Linear of ('c, 'n) num_expr * num_rel * ('c, 'n) num_expr
+  | Comp of ('c, 'n) num_expr * num_rel * ('c, 'n) num_expr
 [@@deriving sexp, compare]
 
 module Syntax = struct
   let ( .@[] ) c i = Var (ClockVar (c, i))
-  let ( < ) x y = Linear (x, `Less, y)
-  let ( <= ) x y = Linear (x, `LessEq, y)
-  let ( > ) x y = Linear (x, `More, y)
-  let ( >= ) x y = Linear (x, `MoreEq, y)
-  let ( == ) x y = Linear (x, `Eq, y)
-  let ( != ) x y = Linear (x, `Neq, y)
+  let ( < ) x y = Comp (x, `Less, y)
+  let ( <= ) x y = Comp (x, `LessEq, y)
+  let ( > ) x y = Comp (x, `More, y)
+  let ( >= ) x y = Comp (x, `MoreEq, y)
+  let ( == ) x y = Comp (x, `Eq, y)
+  let ( != ) x y = Comp (x, `Neq, y)
   let ( &+ ) x y = Op (x, `Add, y)
   let ( &- ) x y = Op (x, `Sub, y)
   let ( &* ) x y = Op (x, `Mul, y)
@@ -186,7 +186,7 @@ module BoolExpr = struct
 
   let rec fold_vars f acc = function
     | Or list | And list -> List.fold_left (fold_vars f) acc list
-    | Linear (left, _, right) ->
+    | Comp (left, _, right) ->
       let acc = NumExpr.fold f acc left in
       NumExpr.fold f acc right
   ;;
@@ -201,10 +201,10 @@ module BoolExpr = struct
       | Or list ->
         let list = List.filter_map elim list in
         if List.is_empty list then None else Some (Or list)
-      | Linear (l, op, r) ->
+      | Comp (l, op, r) ->
         let* l = f l
         and* r = f r in
-        Some (Linear (l, op, r))
+        Some (Comp (l, op, r))
     in
     g e
   ;;
@@ -215,7 +215,7 @@ module BoolExpr = struct
       match e with
       | And list -> And (List.map reduce list)
       | Or list -> Or (List.map reduce list)
-      | Linear (l, op, r) -> Linear (f l, op, f r)
+      | Comp (l, op, r) -> Comp (f l, op, f r)
     in
     bexp_rule r
   ;;
@@ -267,9 +267,9 @@ module BoolExpr = struct
           list
       in
       And (others @ List.flatten to_flatten)
-    | Linear (l, `More, r) -> Linear (r, `Less, l)
-    | Linear (l, `MoreEq, r) -> Linear (r, `LessEq, l)
-    | Linear _ as e -> e
+    | Comp (l, `More, r) -> Comp (r, `Less, l)
+    | Comp (l, `MoreEq, r) -> Comp (r, `LessEq, l)
+    | Comp _ as e -> e
   ;;
 
   let logical_norm e = rewrite Fun.id norm_rule e
@@ -284,12 +284,12 @@ module BoolExpr = struct
     | Or list -> List.flat_map fact_disj list
     | And list ->
       List.map (fun l -> And l) (List.general_cartesian (List.map fact_disj list))
-    | Linear (l, op, r) ->
+    | Comp (l, op, r) ->
       let lvariants = NumExpr.fact_disj l in
       let rvariants = NumExpr.fact_disj r in
       List.cartesian lvariants rvariants
       |> List.map (fun ((lcond, l), (rcond, r)) ->
-        And ((Linear (l, op, r) :: lcond) @ rcond))
+        And ((Comp (l, op, r) :: lcond) @ rcond))
   ;;
 
   let vars f = fold_vars (fun v acc -> v :: acc) [] f
@@ -353,7 +353,7 @@ module BoolExpr = struct
 
   let rec flatten = function
     | Or list | And list -> List.flat_map flatten list
-    | Linear _ as e -> [ e ]
+    | Comp _ as e -> [ e ]
   ;;
 end
 
@@ -420,7 +420,7 @@ module MakeDebug (V : Interface.Debug) (N : Interface.Debug) = struct
       function
       | Or list -> concat "V" list
       | And list -> concat "⋀" list
-      | Linear (l, op, r) ->
+      | Comp (l, op, r) ->
         Printf.sprintf
           "%s %s %s"
           (string_of_tag_expr l)

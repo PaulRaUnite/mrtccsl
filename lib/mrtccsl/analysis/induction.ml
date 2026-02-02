@@ -1060,7 +1060,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
     let remove_by_match_rule constraints f =
       match f with
-      | Linear _ ->
+      | Comp _ ->
         let to_match =
           match ranges_union (clock_index_ranges f) with
           | Some (_, max) ->
@@ -1087,7 +1087,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
         BoolExpr.eliminate
           Option.some
           (function
-            | Linear (Var (ClockVar (c1, i)), `Less, Var (ClockVar (c2, j)))
+            | Comp (Var (ClockVar (c1, i)), `Less, Var (ClockVar (c2, j)))
               when C.compare c1 c2 = 0 && i = j - 1 -> None
             | e -> Some e)
           f
@@ -1106,9 +1106,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     module SubstituteMap = Map.Make (C)
 
     let rec equalities acc = function
-      | Linear (Var (ClockVar (l, i)), `Eq, Var (ClockVar (r, j))) ->
+      | Comp (Var (ClockVar (l, i)), `Eq, Var (ClockVar (r, j))) ->
         ((l, i), (r, j)) :: acc
-      | Linear _ -> acc
+      | Comp _ -> acc
       | And list | Or list -> List.fold_left equalities acc list
     ;;
 
