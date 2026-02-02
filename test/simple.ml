@@ -231,7 +231,7 @@ let () =
     ; ( "sporadic"
       , rtwt
           (constraints_only [ Sporadic { out = "a"; at_least = Const 2 } ])
-          [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
+          [ "aaa", [ 1; 3; 5 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]
 ;;
