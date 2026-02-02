@@ -11,6 +11,7 @@
   ocamlgraph
   cudd
   std
+  symbolic
   iter
   owl
   bitvectorset
