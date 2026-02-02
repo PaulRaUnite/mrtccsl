@@ -56,6 +56,13 @@ let rparam_to_expr =
   | Const c -> rconst c
 ;;
 
+let choice_range_cond len guard choice_var =
+  Option.map_or
+    ~default:guard
+    (fun choice_var -> guard && i0 <= choice_var && choice_var < iconst len)
+    choice_var
+;;
+
 (** Stateless constraints *)
 
 let stateless_as_machine ?(invariant = t) guard = [ t @@@ guard |-> [] ] &&& invariant
@@ -63,14 +70,9 @@ let stateless_as_machine ?(invariant = t) guard = [ t @@@ guard |-> [] ] &&& inv
 let exclusion_as_machine clocks choice_var =
   let clocks = clocks_to_bvars clocks in
   let choice_var = Option.map iinvar choice_var in
-  let guard = build_excl_dec_tree choice_var clocks in
-  stateless_as_machine
-    (* doing nothing should be still possible *)
-    (guard || !(BAnd clocks))
-    ?invariant:
-      (Option.map
-         (fun choice_var -> i0 <= choice_var && choice_var < iconst @@ List.length clocks)
-         choice_var)
+  (* doing nothing should be still possible *)
+  let guard = !(BAnd clocks) || build_excl_dec_tree choice_var clocks in
+  stateless_as_machine @@ choice_range_cond (List.length clocks) guard choice_var
 ;;
 
 let coincidence_as_machine clocks =
@@ -98,10 +100,7 @@ let subclocking_as_machine sub super choice_var =
       (* when subclock then super has to be present *)
       sub ==> super
   in
-  stateless_as_machine
-    guard
-    ?invariant:
-      (Option.map (fun choice_var -> i0 <= choice_var && choice_var <= i1) choice_var)
+  stateless_as_machine @@ choice_range_cond 2 guard choice_var
 ;;
 
 let minus_as_machine out arg except =
@@ -127,12 +126,7 @@ let disj_union_as_machine out args choice_var =
   let choice_var = Option.map iinvar choice_var in
   let exclusion_chain = build_excl_dec_tree choice_var args in
   let guard = bite out exclusion_chain !(BOr args) in
-  stateless_as_machine
-    guard
-    ?invariant:
-      (Option.map
-         (fun choice_var -> i0 <= choice_var && choice_var < iconst @@ List.length args)
-         choice_var)
+  stateless_as_machine @@ choice_range_cond (List.length args) guard choice_var
 ;;
 
 let intersection_as_machine out args =
@@ -300,10 +294,7 @@ let periodic_as_machine out base period error offset =
         ; nominal_name =& t
         ]
   ]
-  &&& (i0 <= period_counter
-       && !nominal ==> (period_counter <= offset)
-       && i1 <= period + error
-       && i0 <= offset)
+  &&& (i0 <= period_counter)
 ;;
 
 let first_sampled_as_machine out arg base =

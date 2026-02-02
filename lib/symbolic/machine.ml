@@ -27,6 +27,8 @@ type ('b, 'v) ite =
   ; if_false : 'v
   }
 
+(** Empty type. It has no constructors and so values cannot exist.
+  Used to prune possibilities in polymorphic types.*)
 type empty = |
 
 type ('sv, 'iv) bool_expr =
@@ -98,7 +100,7 @@ type ('sv, 'iv) transition =
 
 type ('sv, 'iv) t =
   { transitions : ('sv, 'iv) transition list
-  ; invariant : ('sv, 'iv) bool_expr
+  ; invariant : ('sv, empty) bool_expr
   }
 
 type inputs =
