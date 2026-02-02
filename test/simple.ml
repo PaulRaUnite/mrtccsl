@@ -4,7 +4,7 @@ open Language
 open Language.Specification.Builder
 open Number
 module N = Integer
-module A = Automata.Simple.MakeExtendedString (N)
+module A = Backend.Naive.MakeExtendedString (N)
 
 let wall_test spec names_traces_results =
   let check (name, case, expected) =
@@ -50,7 +50,7 @@ let rtwt spec t f =
 
 let () =
   Alcotest.run
-    "Simple Automata"
+    "Naive Backend"
     [ ( "causality"
       , rglwt
           (constraints_only [ Causality { cause = "a"; conseq = "b" } ])

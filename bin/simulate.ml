@@ -1,8 +1,8 @@
 open Mrtccsl
 open Prelude
-module A = Automata.Simple.Make (String) (Number.Rational)
-module ST = Automata.Simple.Strategy (A)
-module Export = Automata.Trace.MakeIO (Number.Rational) (A.L)
+module A = Backend.Naive.Make (String) (Number.Rational)
+module ST = Backend.Naive.Strategy (A)
+module Export = Backend.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
 let step = of_int 1 / of_int 1000

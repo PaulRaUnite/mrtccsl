@@ -119,15 +119,15 @@ module Chain = struct
 end
 
 module Make
-    (C : Automata.Simple.Hashed.ID)
+    (C : Backend.Naive.Hashed.ID)
     (N : sig
-       include Automata.Simple.Num
+       include Backend.Naive.Num
 
        val ( / ) : t -> t -> t
      end) =
 struct
-  module A = Automata.Simple.Make (C) (N)
-  module ST = Automata.Simple.Strategy (A)
+  module A = Backend.Naive.Make (C) (N)
+  module ST = Backend.Naive.Strategy (A)
   module CMap = Map.Make (A.C)
 
   type chain_instance =

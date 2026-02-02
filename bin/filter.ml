@@ -9,7 +9,7 @@ module Label = struct
   module E = String
 end
 
-module IO = Mrtccsl.Automata.Trace.MakeIO (Rational) (Label)
+module IO = Mrtccsl.Backend.Trace.MakeIO (Rational) (Label)
 
 let input_arg =
   Arg.(

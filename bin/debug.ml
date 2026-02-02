@@ -26,10 +26,10 @@ let nextclock_arg =
 ;;
 
 open Mrtccsl
-module A = Automata.Simple.Make (String) (Number.Rational)
-module ST = Automata.Simple.Strategy (A)
+module A = Backend.Naive.Make (String) (Number.Rational)
+module ST = Backend.Naive.Strategy (A)
 module Opt = Optimization.Order.Make (String)
-module IO = Automata.Trace.MakeIO (Number.Rational) (A.L)
+module IO = Backend.Trace.MakeIO (Number.Rational) (A.L)
 
 let debug_trace spec_filename trace clock =
   let _, m = Mrtccslparsing.load_with_string spec_filename Format.err_formatter in

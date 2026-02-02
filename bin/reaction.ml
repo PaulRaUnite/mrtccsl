@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
-module IO = Mrtccsl.Automata.Trace.MakeIO (Number.Rational) (FnCh.A.L)
+module IO = Mrtccsl.Backend.Trace.MakeIO (Number.Rational) (FnCh.A.L)
 module A = FnCh.A
 module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
