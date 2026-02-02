@@ -87,8 +87,9 @@ and clock_expr' =
   | CNext of clock_expr
   | CPeriodic of
       { base : clock_expr
-      ; period : int_expr inline_relation
-      ; skip : int_expr inline_relation option
+      ; period : int Loc.t
+      ; error : int_expr inline_relation
+      ; offset : int_expr inline_relation option
       }
   | CSample of
       { arg : clock_expr
@@ -122,10 +123,7 @@ and clock_expr' =
       { arg : clock_expr
       ; delay : duration_expr inline_relation
       }
-  | CSporadic of
-      { at_least : duration
-      ; strict : bool
-      }
+  | CSporadic of { at_least : duration }
 
 and clock_expr = clock_expr' Loc.t
 
@@ -157,11 +155,13 @@ type statement' =
       }
   | Allow of
       { clocks : clock_expr list
-      ; interval : clock_expr interval
+      ; left : clock_expr
+      ; right : clock_expr
       }
   | Forbid of
       { clocks : clock_expr list
-      ; interval : clock_expr interval
+      ; left : clock_expr
+      ; right : clock_expr
       }
 
 and statement = statement' Loc.t

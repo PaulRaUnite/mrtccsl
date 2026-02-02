@@ -26,7 +26,7 @@ let load_with_string filename error_ch =
       | Explicit v -> List.to_string ~sep:"." Fun.id v
       | Anonymous i -> Printf.sprintf "anon(%i)" i)
   in
-  let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s Fun.id v2s v2s Fun.id m in
+  let m = Mrtccsl.Ccsl.Language.Module.map v2s v2s v2s v2s v2s Fun.id m in
   context, m
 ;;
 

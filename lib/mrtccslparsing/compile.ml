@@ -84,12 +84,12 @@ let print_compile_error fmt =
       (Format.sprintf "but it was declared as %s" (type_to_string dtype))
       fmt
   | IncorrectComparison loc ->
-    print_msg red fmt "Static comparison check failed.";
+    print_msg red fmt "Ahead-of-time comparison check failed.";
     Loc.highlight
       ~color:red
       ~symbol:'^'
       loc
-      (Format.sprintf "this relation does not evaluate to true")
+      (Format.sprintf "this relation never evaluate to true")
       fmt
   | IncorrectValue (loc, msg) ->
     print_msg red fmt "Value convertion failed.";
@@ -203,7 +203,8 @@ module Context = struct
     }
   ;;
 
-  let dump_constraints context builder =
+  (** Extracts additive constraints as regular constraints from the current context. *)
+  let extract_additive_constraints context builder =
     let constraints =
       match context.current with
       | Some (_, map) ->
@@ -213,7 +214,7 @@ module Context = struct
           match t with
           | Ast.AUnion -> Mrtccsl.Language.Union { out = Explicit v; args }
           | Ast.ADisjunctiveUnion ->
-            Mrtccsl.Language.DisjunctiveUnion { out = Explicit v; args; ratios = None })
+            Mrtccsl.Language.DisjunctiveUnion { out = Explicit v; args; choice = None })
       | None -> []
     in
     List.iter (Mrtccsl.Language.Specification.Builder.logical builder) constraints
@@ -370,6 +371,8 @@ let[@inline] accumulate_errors ~errors (context, new_errors) =
 
 let[@inline] finilize_errors (context, errors) = context, List.rev errors
 
+(* TODO: add pruning for anonymous coincidence constraints: if there are anon variables in coincidence, substitute them with proper variable or choose only one and remove the constraint. Should allow to use chain coincidence. *)
+
 let into_module { assumptions; structure; assertions } =
   let open Mrtccsl.Language in
   let open Specification in
@@ -496,10 +499,10 @@ let into_module { assumptions; structure; assertions } =
         Ok context
       | CDisjUnion { args; ratios } ->
         let* context, args = compile_clock_exprs context args in
-        let* context, ratios =
+        let* context, choice =
           map_context_opt_result ~context (Context.resolve ~scope ~expect:`Int) ratios
         in
-        Builder.logical builder @@ DisjunctiveUnion { out; args; ratios };
+        Builder.logical builder @@ DisjunctiveUnion { out; args; choice };
         Ok context
       | CTickDelay { arg; delay; on } ->
         let* context, arg =
@@ -514,29 +517,43 @@ let into_module { assumptions; structure; assertions } =
         let* context, delay =
           compile_integer_inline_relation ~context ~scope ~builder delay
         in
-        Builder.logical builder @@ Delay { out; arg; delay; base = on };
+        Builder.logical builder
+        @@ Delay { out; arg; delay; base = Option.value ~default:arg on };
         Ok context
       | CNext expr ->
         let* context, arg =
           compile_clock_expr ~context ~scope ~builder ~result_variable:None expr
         in
-        Builder.logical builder @@ Delay { out; arg; delay = Const 1; base = None };
+        Builder.logical builder @@ Delay { out; arg; delay = Const 1; base = arg };
         Ok context
-      | CPeriodic { base; period; skip } ->
+      | CPeriodic { base; period; error; offset } ->
         let* context, base =
           compile_clock_expr ~context ~scope ~builder ~result_variable:None base
         in
-        let* context, period =
-          compile_integer_inline_relation ~context ~scope ~builder period
-        in
-        let* context, skip =
-          map_context_opt_result
-            ~context
-            (compile_integer_inline_relation ~builder ~scope)
-            skip
-        in
-        Builder.logical builder @@ Periodic { out; base; period; skip };
-        Ok context
+        if Loc.unwrap period < 1
+        then
+          Error
+            (IncorrectValue
+               (Loc.where period, "period argument should be bigger than zero"))
+        else
+          let* context, error =
+            compile_integer_inline_relation ~context ~scope ~builder error
+          in
+          let* context, offset =
+            map_context_opt_result
+              ~context
+              (compile_integer_inline_relation ~builder ~scope)
+              offset
+          in
+          Builder.logical builder
+          @@ Periodic
+               { out
+               ; base
+               ; period = Loc.unwrap period
+               ; error
+               ; offset = Option.value ~default:(const 0) offset
+               };
+          Ok context
       | (CSample { arg; base } | CFirstSample { arg; base } | CLastSample { arg; base })
         as c ->
         let* context, arg =
@@ -607,9 +624,9 @@ let into_module { assumptions; structure; assertions } =
         in
         Builder.logical builder @@ RTdelay { out; arg; delay };
         Ok context
-      | CSporadic { at_least; strict } ->
+      | CSporadic { at_least } ->
         let at_least = const (compile_duration at_least) in
-        Builder.logical builder @@ Sporadic { out; at_least; strict };
+        Builder.logical builder @@ Sporadic { out; at_least };
         Ok context
     in
     Ok (context, result_variable)
@@ -623,7 +640,7 @@ let into_module { assumptions; structure; assertions } =
   let compile_percentage ~context ~builder ~scope percentage location =
     let r100 = Rational.of_int 100 in
     if Rational.more percentage r100 || Rational.less percentage Rational.zero
-    then Error (IncorrectValue (location, "icorrect percentage"))
+    then Error (IncorrectValue (location, "incorrect percentage range (0 <= p <= 100)"))
     else (
       let to_ratio n =
         let nom, denom = Rational.to_mpzf2 n in
@@ -744,12 +761,15 @@ let into_module { assumptions; structure; assertions } =
            match comp with
            | Coincidence ->
              if left = right then None else Some (Coincidence [ left; right ])
-           | Exclusion -> Some (Exclusion ([ left; right ], None))
+           | Exclusion ->
+             Some (Exclusion { args = [ left; right ]; choice = None })
+             (* TODO: add exclusion with variable *)
            | Precedence -> Some (Precedence { cause = left; conseq = right })
            | Causality -> Some (Causality { cause = left; conseq = right })
            | Subclocking _ ->
-             Some (Subclocking { sub = left; super = right; dist = percent_var })
-           | Alternation strict -> Some (Alternate { first = left; second = right ; strict})
+             Some (Subclocking { sub = left; super = right; choice = percent_var })
+           | Alternation strict ->
+             Some (Alternate { first = left; second = right; strict })
          in
          Option.iter (Builder.logical builder) constr;
          Ok context)
@@ -772,6 +792,7 @@ let into_module { assumptions; structure; assertions } =
          @@ ContinuousProcess { name; dist = compile_distribution (Loc.unwrap dist) };
          Ok context)
     | Pool (n, pairs) ->
+      (*TODO: make it mutex only *)
       error_recover
         ~context
         ~errors:[]
@@ -787,7 +808,7 @@ let into_module { assumptions; structure; assertions } =
         ~context
         ~builder
         statements
-    | Allow { clocks; interval = { left_strict; left; right; right_strict } } ->
+    | Allow { clocks; left; right } ->
       error_recover
         ~context
         ~errors:[]
@@ -798,10 +819,9 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder
-         @@ Allow { args = clocks; left_strict; left; right; right_strict };
+         Builder.logical builder @@ Allow { args = clocks; left; right };
          Ok context)
-    | Forbid { clocks; interval = { left_strict; left; right; right_strict } } ->
+    | Forbid { clocks; left; right } ->
       error_recover
         ~context
         ~errors:[]
@@ -812,8 +832,7 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder
-         @@ Forbid { args = clocks; left_strict; left; right; right_strict };
+         Builder.logical builder @@ Forbid { args = clocks; left; right };
          Ok context)
     | AdditiveUnion (v, u, e) ->
       error_recover
@@ -836,7 +855,7 @@ let into_module { assumptions; structure; assertions } =
     let context, errors =
       accumulate_errors ~errors @@ compile_block ~scope:[] ~context ~builder stmts
     in
-    Context.dump_constraints context builder;
+    Context.extract_additive_constraints context builder;
     context, errors
   in
   let compile_top_blocks name list =

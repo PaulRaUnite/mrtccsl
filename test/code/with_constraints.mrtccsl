@@ -4,7 +4,7 @@ assume {
     global = periodic 5s with jitter j offset 2s;
 } structure {
     sensor {
-        start = skip 3 every 5 of global;
+        start = skip 3 every 5 with jitter 0 of global;
         end = start $ 10 on global;
     };
     controller {
@@ -26,9 +26,9 @@ assume {
     o = sample a on b;
     a1 = next a0;
     o = (a or b) and (c or d);
-    o = skip 5 every [3,5] of global;
+    o = skip 5 every 4 with jitter [-1,1] of global;
     a5 = a0 $ 5;
-    o = strict sporadic 5s;
+    o = sporadic 5s;
 } assert {
     a precedes b;
     b precedes c;

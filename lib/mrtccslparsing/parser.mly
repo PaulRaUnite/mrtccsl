@@ -143,7 +143,7 @@ clock_expr0 :
 | first=delim_clock_expr ; exprs=nonempty_list(preceded(XOR, delim_clock_expr)) ; ratios=option(delimited(LBRACKET, var, RBRACKET)) { CDisjUnion {args=(first::exprs); ratios} }
 | arg=delim_clock_expr ; DOLLAR ; delay=inline_relation(int_expr) ; on=option(ON ; e=delim_clock_expr {e}) { CTickDelay {arg;delay;on} }
 | NEXT ; arg=delim_clock_expr {CNext arg}
-| skip=option(skip) ; EVERY ; period=inline_relation(int_expr) ; OF ; base=delim_clock_expr { CPeriodic {skip;period;base}}
+| offset=option(skip) ; EVERY ; period=located(INT) ; WITH ; JITTER ; error=inline_relation(int_expr) ; OF ; base=delim_clock_expr { CPeriodic {offset;period;error;base}}
 | SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CSample{arg;base} }
 | FIRST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CFirstSample{arg;base} }
 | LAST ; SAMPLE ; arg=delim_clock_expr ; ON ; base=delim_clock_expr { CLastSample{arg;base} }
@@ -153,7 +153,7 @@ clock_expr0 :
 | PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodJitter {period;error;offset}}
 | PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodDrift {period;error;offset}}
 | DELAY ; arg=delim_clock_expr ; BY ; delay=inline_relation(duration_expr) {CTimeDelay {arg;delay}}
-| strict=option(STRICT) ; SPORADIC ; at_least=duration {CSporadic {at_least; strict=(Option.is_some strict)}}
+| SPORADIC ; at_least=duration {CSporadic {at_least}}
 
 %inline additive_union :
 | OR_EQ { AUnion }
@@ -169,8 +169,8 @@ statement0 :
 | DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
-| ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Allow{clocks;interval} }
-| FORBID ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Forbid{clocks;interval} }
+| ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; LBRACKET ; left=clock_expr ; COMMA ; right=clock_expr; LBRACKET {Allow{clocks;left;right} }
+| FORBID ; clocks=nonempty_list(clock_expr) ; IN ; LBRACKET ; left=clock_expr ; COMMA ; right=clock_expr; LBRACKET {Forbid{clocks;left;right} }
 | name=id ; LBRACE ; statements=statements ; RBRACE { Block {name ; statements } }
 | v=var ; u=additive_union ; e=clock_expr { AdditiveUnion (v,u,e) }
 
