@@ -1,5 +1,7 @@
 open Prelude
 
+(* TODO: implement intervals without infinite elements *)
+
 module type I = sig
   type num
 
@@ -25,13 +27,13 @@ module type I = sig
   val constant_bounds : t -> (num * num) option
   val inter : t -> t -> t
 
-  (**x is subset of y**)
+  (** x is subset of y**)
   val subset : t -> t -> bool
 
   val compare : t -> t -> int
   val is_empty : t -> bool
 
-  (**does interval contains a value**)
+  (** Does interval contains a value**)
   val contains : t -> num -> bool
 
   val shift_by : t -> num -> t

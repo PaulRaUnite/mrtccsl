@@ -73,6 +73,11 @@ module Option = struct
     | Some x -> f x
     | None -> default
   ;;
+
+  let value_mut ~default = function
+    | Some x -> x
+    | None -> default ()
+  ;;
 end
 
 module Result = struct
@@ -577,63 +582,6 @@ module Buffer = struct
     for _ = 0 to n - 1 do
       add_char b c
     done
-  ;;
-end
-
-(*TODO: maybe use doubleended list as discussed here: https://discuss.ocaml.org/t/how-to-represent-a-double-ended-linked-list/13354*)
-(*TODO: refactor out*)
-module ExpirationQueue = struct
-  open Sexplib0.Sexp_conv
-
-  type 'a t =
-    { mutable data : 'a list
-    ; cycling : 'a -> 'a option
-    }
-  [@@deriving sexp]
-
-  let create c : 'a t = { data = []; cycling = c }
-  let push q x = q.data <- q.data @ [ x ]
-
-  let pop q =
-    match q.data with
-    | [] -> None
-    | x :: tail ->
-      q.data <- tail;
-      Some x
-  ;;
-
-  let peek q =
-    match q.data with
-    | [] -> None
-    | x :: _ -> Some x
-  ;;
-
-  let expiration_step q =
-    let list, discard =
-      List.fold_right
-        (fun x (l, discard) ->
-           match q.cycling x with
-           | None -> l, true
-           | Some x -> x :: l, discard)
-        q.data
-        ([], false)
-    in
-    q.data <- list;
-    discard
-  ;;
-
-  let is_empty q = List.is_empty q.data
-  let last q = List.last q.data
-  let to_list q = q.data
-  let map q f c = { data = List.map f q.data; cycling = c }
-  let map_inplace q f = q.data <- List.map f q.data
-
-  let%test _ =
-    let q = create Option.some in
-    let _ = push q 2 in
-    let _ = push q 1 in
-    let _ = push q 0 in
-    peek q = Some 2
   ;;
 end
 
