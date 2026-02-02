@@ -131,7 +131,7 @@ mod alarm() {
 
 mod spec() {
 	_ := cyber(physical(), {});
-} upper interface { // Checking higher-level properties
+} assert { // Checking higher-level properties
 	// FUN.32: breathing is not obstructed, valve to exhale opens 
 	// at most 5 seconds after closing
 	// 5s is just an example
@@ -142,6 +142,6 @@ mod spec() {
 // - not empty => schedules exist;
 // - weakly live => there is potential infinite behaviour which involves 
 //   all clocks, not necessary in the same schedule
-// - safe => representation is finite, can be used safely as monitor
+// - safe => representation is finite, can be used (memory) safely as monitor
 // - property upper interface is checked automatically
 _ = spec() is schedulable and weak live and safe;
