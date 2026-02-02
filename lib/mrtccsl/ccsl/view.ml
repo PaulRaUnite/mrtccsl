@@ -42,7 +42,7 @@ module AsDefined = struct
     let def =
       match c with
       | Minus { out; arg; except } -> Some (arg :: except, out)
-      | Delay { out; arg; base; _ } -> Some ([ arg ] @ Option.to_list base, out)
+      | Delay { out; arg; base; _ } -> Some ([ arg; base ], out)
       | Fastest { out; args } | Slowest { out; args } -> Some (args, out)
       | Intersection { out; args }
       | Union { out; args }

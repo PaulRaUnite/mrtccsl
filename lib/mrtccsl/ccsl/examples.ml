@@ -53,7 +53,7 @@ module Macro = struct
          { out = timer; period = period_lower; error = Var error; offset = const offset };
     duration b @@ NumRelation (error, `MoreEq, const 0);
     duration b @@ NumRelation (error, `LessEq, const (period_upper - period_lower));
-    logical b @@ Delay { out = deadline; arg = timer; delay = const 1; base = Some timer };
+    logical b @@ Delay { out = deadline; arg = timer; delay = const 1; base = timer };
     logical b @@ Coincidence [ timer; ready ];
     task_with_deadline name exec_duration deadline b
   ;;

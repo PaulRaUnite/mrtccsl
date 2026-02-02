@@ -24,7 +24,7 @@ let example2 =
     [ (fun b ->
         logical b
         @@ CumulPeriodic { out = "b"; period = 50; error = Var "error"; offset = Const 5 };
-        duration b @@ NumRelation ("error", `LessEq, Const (2));
+        duration b @@ NumRelation ("error", `LessEq, Const 2);
         duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
     ]
     (fun b ->
@@ -73,12 +73,12 @@ let example4 d1 d2 n t =
     ]
     (fun b ->
        logical b @@ RTdelay { out = "b"; arg = "a"; delay = var "del1" };
-       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" };
+       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = "base" };
        logical b @@ RTdelay { out = "e"; arg = "d"; delay = var "del2" };
        logical b @@ FirstSampled { out = "fb"; arg = "b"; base = "base" };
        logical b @@ RTdelay { out = "fb"; arg = "fa"; delay = var "del3" }
        (* ; Causality { cause = "fa"; conseq = "fb" } *);
-       logical b @@ Subclocking { sub = "fa"; super = "a"; dist = None };
+       logical b @@ Subclocking { sub = "fa"; super = "a"; choice = None };
        logical b @@ RTdelay { out = "fad"; arg = "fa"; delay = var "del4" };
        let d11, d12 = d1 in
        let d21, d22 = d2 in
@@ -116,11 +116,11 @@ let example6 n =
     ; structure =
         constraints_only
           [ Sample { out = "c"; arg = "b"; base = "base" }
-          ; Delay { out = "d"; arg = "c"; delay = Const n; base = Some "base" }
+          ; Delay { out = "d"; arg = "c"; delay = Const n; base = "base" }
           ]
     ; assertions =
         [ constraints_only
-            [ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" } ]
+            [ Delay { out = "d"; arg = "b"; delay = Const n; base = "base" } ]
         ]
     }
 ;;
@@ -134,11 +134,11 @@ let example7 period n1 n2 d =
         duration b @@ NumRelation ("error", `MoreEq, Const (-2)))
     ]
     (fun b ->
-       logical b @@ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" };
+       logical b @@ Delay { out = "b"; arg = "a"; delay = Const n1; base = "base" };
        logical b @@ RTdelay { out = "c"; arg = "b"; delay = var "del" };
        logical b
-       @@ Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = None };
-       logical b @@ Delay { out = "d"; arg = "c"; delay = Const n2; base = Some "dbase" };
+       @@ Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = "base" };
+       logical b @@ Delay { out = "d"; arg = "c"; delay = Const n2; base = "dbase" };
        duration b @@ NumRelation ("del", `Eq, Const d))
     []
 ;;
@@ -148,8 +148,8 @@ let example8 n1 n2 =
     { assertions = []
     ; structure =
         constraints_only
-          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" }
-          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = Some "base" }
+          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = "base" }
+          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = "base" }
           ]
     ; assumptions = []
     }
@@ -160,9 +160,9 @@ let example9 n1 n2 =
     { assertions = []
     ; structure =
         constraints_only
-          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = Some "base" }
-          ; Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = None }
-          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = Some "dbase" }
+          [ Delay { out = "b"; arg = "a"; delay = Const n1; base = "base" }
+          ; Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = "base" }
+          ; Delay { out = "c"; arg = "b"; delay = Const n2; base = "dbase" }
           ]
     ; assumptions = []
     }
@@ -185,7 +185,7 @@ let param1 d1 d2 n t1 t2 =
     ]
     (fun b ->
        logical b @@ RTdelay { out = "b"; arg = "a"; delay = var "del1" };
-       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = Some "base" };
+       logical b @@ Delay { out = "d"; arg = "b"; delay = Const n; base = "base" };
        logical b @@ RTdelay { out = "e"; arg = "d"; delay = var "del2" };
        logical b @@ FirstSampled { out = "b"; arg = "b"; base = "base" };
        let d11, d12 = d1 in

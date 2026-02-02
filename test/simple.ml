@@ -63,13 +63,15 @@ let () =
           [ "(ab)(ab)" ] )
     ; ( "exclusion"
       , rglwt
-          (constraints_only [ Exclusion ([ "a"; "b"; "c" ], None) ])
+          (constraints_only [ Exclusion { args = [ "a"; "b"; "c" ]; choice = None } ])
           [ "abc" ]
           [ "(ab)"; "(abc)" ] )
     ; ( "periodic"
       , rglwt
           (constraints_only
-             [ Periodic { out = "o"; base = "b"; period = const 3; skip = None } ])
+             [ Periodic
+                 { out = "o"; base = "b"; period = 3; error = const 0; offset = const 0 }
+             ])
           [ "bb(bo)bb(bo)" ]
           [ "bbbbbb" ] )
     ; ( "sample"
@@ -80,20 +82,20 @@ let () =
     ; ( "delay-trivial"
       , rglwt
           (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 0; base = None } ])
+             [ Delay { out = "o"; arg = "i"; delay = const 0; base = "i" } ])
           [ "(oi)(oi)" ]
           [ "ooo"; "iiii" ] )
     ; ( "delay-simple"
       , rglwt
           (constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = const 2; base = None } ])
+             [ Delay { out = "o"; arg = "i"; delay = const 2; base = "i" } ])
           [ "ii(oi)(oi)" ]
           [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
     ; ( "delay-undet"
       , rglwt
           (of_decl (fun b ->
              logical b
-             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = None };
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = "i" };
              integer b @@ NumRelation ("duration", `LessEq, const 4);
              integer b @@ NumRelation ("duration", `MoreEq, const 2)))
           [ "ii(oi)(oi)"; "ii(oi)i"; "iiii(oi)(oi)" ]
@@ -102,7 +104,7 @@ let () =
       , rglwt
           (of_decl (fun b ->
              logical b
-             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = None };
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = "i" };
              integer b @@ NumRelation ("duration", `LessEq, const 2);
              integer b @@ NumRelation ("duration", `MoreEq, const 0)))
           [ "ii(oi)(oi)"; "(oi)(oi)"; "(oi)ii(oi)" ]
@@ -111,7 +113,7 @@ let () =
       , rglwt
           (of_decl (fun b ->
              logical b
-             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = Some "b" };
+             @@ Delay { out = "o"; arg = "i"; delay = var "duration"; base = "b" };
              integer b @@ NumRelation ("duration", `LessEq, const 2);
              integer b @@ NumRelation ("duration", `MoreEq, const 1)))
           [ "ib(ib)(ob)"; "(ib)(ob)(ib)b(ob)"; "iii"; "bbbb"; "(ib)b(ob)" ]
@@ -128,7 +130,7 @@ let () =
           [ "u"; "ab"; "ba"; "(ab)" ] )
     ; ( "alternate"
       , rglwt
-          (constraints_only [ Alternate { first = "a"; second = "b" ; strict=true} ])
+          (constraints_only [ Alternate { first = "a"; second = "b"; strict = true } ])
           [ "abab" ]
           [ "baba"; "aa" ] )
     ; ( "fastest"
@@ -143,18 +145,10 @@ let () =
           [ "ooo" ] )
     ; ( "allow[f,t)"
       , rglwt
-          (constraints_only
-             [ Allow
-                 { left = "f"
-                 ; right = "t"
-                 ; left_strict = false
-                 ; right_strict = true
-                 ; args = [ "a"; "b" ]
-                 }
-             ])
+          (constraints_only [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] } ])
           [ "fab(ab)t"; "(fa)t" ]
           [ "aftb"; "b" ] )
-    ; ( "allow(f,t]"
+      (* ; ( "allow(f,t]"
       , rglwt
           (constraints_only
              [ Allow
@@ -166,17 +160,11 @@ let () =
                  }
              ])
           [ "fabt"; "f(abt)" ]
-          [ "aft"; "ftb"; "(fab)t" ] )
+          [ "aft"; "ftb"; "(fab)t" ] ) *)
     ; ( "allow-prec"
       , rglwt
           (constraints_only
-             [ Allow
-                 { left = "f"
-                 ; right = "t"
-                 ; left_strict = false
-                 ; right_strict = true
-                 ; args = [ "a"; "b" ]
-                 }
+             [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] }
              ; Precedence { cause = "f"; conseq = "a" }
              ; Precedence { cause = "a"; conseq = "t" }
              ])
@@ -184,27 +172,13 @@ let () =
           [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
     ; ( "forbid[f,t)"
       , rglwt
-          (constraints_only
-             [ Forbid
-                 { left = "f"
-                 ; right = "t"
-                 ; left_strict = false
-                 ; right_strict = true
-                 ; args = [ "a" ]
-                 }
-             ])
+          (constraints_only [ Forbid { left = "f"; right = "t"; args = [ "a" ] } ])
           [ ""; "f"; "t"; "afta"; "f(ta)" ]
           [ "fat"; "ffatt"; "a(fa)" ] )
     ; ( "forbid-prec"
       , rglwt
           (constraints_only
-             [ Forbid
-                 { left = "f"
-                 ; right = "t"
-                 ; left_strict = false
-                 ; right_strict = true
-                 ; args = [ "a" ]
-                 }
+             [ Forbid { left = "f"; right = "t"; args = [ "a" ] }
              ; Precedence { cause = "f"; conseq = "a" }
              ; Precedence { cause = "a"; conseq = "t" }
              ])
@@ -220,7 +194,7 @@ let () =
           [ "ab"; "(lab)" ] )
     ; ( "subclock"
       , rglwt
-          (constraints_only [ Subclocking { sub = "a"; super = "b"; dist = None } ])
+          (constraints_only [ Subclocking { sub = "a"; super = "b"; choice = None } ])
           [ "(ab)b" ]
           [ "a" ] )
     ; ( "inter"
@@ -256,8 +230,7 @@ let () =
           [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
     ; ( "sporadic"
       , rtwt
-          (constraints_only
-             [ Sporadic { out = "a"; at_least = Const 2; strict = false } ])
+          (constraints_only [ Sporadic { out = "a"; at_least = Const 2 } ])
           [ "aaa", [ 1; 3; 5 ]; "aaa", [ 5; 10; 1000 ] ]
           [ "aa", [ 2; 3 ] ] )
     ]

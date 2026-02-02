@@ -611,8 +611,8 @@ struct
       match constr with
       | Precedence { cause; conseq } -> prec cause conseq true
       | Causality { cause; conseq } -> prec cause conseq false
-      | Exclusion (clocks, _) ->
-        let l = label_array ([] :: List.map (fun x -> [ x ]) clocks) in
+      | Exclusion { args; _ } ->
+        let l = label_array ([] :: List.map (fun x -> [ x ]) args) in
         stateless l
       | Coincidence clocks ->
         let l = label_array [ clocks; [] ] in
@@ -729,27 +729,34 @@ struct
             (NI.to_string (current_error ()))
         in
         g, t, p
-      | Sporadic { out = c; at_least = Const at_least; strict } ->
+      | Sporadic { out = c; at_least } ->
+        let current_delay, consume_delay =
+          VarSeq.get_handle_param NI.return durations at_least
+        in
         let last = ref None in
         let g now =
           match !last with
           | None -> [| L.singleton c, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some v ->
-            let next_after = N.(at_least + v) in
-            [| ( L.singleton c
-               , if strict then NI.pinf_strict next_after else NI.pinf next_after )
-             ; (L.empty, NI.(now <-> next_after))
+            let next_after = NI.shift_by (current_delay ()) v in
+            [| L.singleton c, next_after
+             ; L.empty, Option.get (NI.complement_left next_after)
             |]
         in
         let t _ (l, n') =
-          let _ = if L.mem c l then last := Some n' in
+          let _ =
+            if L.mem c l
+            then (
+              last := Some n';
+              consume_delay ())
+          in
           true
         in
         let p () =
           Printf.sprintf "last: %s" (Option.to_string ~default:"" N.to_string !last)
         in
         g, t, p
-      | Periodic { out; base; period = Const period; _ } ->
+      | Periodic { out; base; period; _ } ->
         let labels_eqp = label_array [ [ base; out ]; [] ] in
         let labels_lp = label_array [ [ base ]; [] ] in
         let c = ref 0 in
@@ -789,7 +796,6 @@ struct
           VarSeq.get_handle_param II.return integers delay
         in
         (* let _ = assert (d1 <= d2) in *)
-        let base = Option.value base ~default:arg in
         let diff_base = C.compare base arg <> 0 in
         let module Heap =
           Heap (struct
@@ -941,8 +947,10 @@ struct
           CMap.to_string C.to_string string_of_int count
         in
         g, t, p
-      | Allow { left = from; right = until; args; left_strict; right_strict }
-      | Forbid { left = from; right = until; args; left_strict; right_strict } ->
+      | Allow { left = from; right = until; args }
+      | Forbid { left = from; right = until; args } ->
+        let left_strict = false
+        and right_strict = true in
         let folds = ref 0 in
         let eventwith = [] in
         let eventwith = if left_strict then eventwith else [ from ] :: eventwith in
@@ -1097,7 +1105,6 @@ struct
         in
         let p () = List.to_string C.to_string !resources in
         g, t, p
-      | c -> failwithf "automata not implemented for %s" (name c)
     in
     let guard now = Iter.of_array (guard now) in
     correctness_decorator
@@ -1451,7 +1458,10 @@ let%test_module _ =
     let%test _ =
       let empty1 =
         A.of_spec
-        @@ constraints_only [ Coincidence [ "a"; "b" ]; Exclusion ([ "a"; "b" ], None) ]
+        @@ constraints_only
+             [ Coincidence [ "a"; "b" ]
+             ; Exclusion { args = [ "a"; "b" ]; choice = None }
+             ]
       in
       let empty2 = A.empty_sim in
       let steps = 10 in
@@ -1466,7 +1476,7 @@ let%test_module _ =
       let sampling1 =
         A.of_spec
         @@ constraints_only
-             [ Delay { out = "o"; arg = "i"; delay = Const 0; base = Some "b" } ]
+             [ Delay { out = "o"; arg = "i"; delay = Const 0; base = "b" } ]
       in
       let sampling2 =
         A.of_spec @@ constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]

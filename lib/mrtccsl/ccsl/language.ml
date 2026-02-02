@@ -11,6 +11,8 @@ type ('v, 'n) param =
 let var v = Var v
 let const c = Const c
 
+(*TODO: move constraints into a separate module? *)
+
 (**RTCCSL constraint type. ['c] is clock variable type, ['p] is parameter variable type, ['n] numerical constraint type. *)
 type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
   | Precedence of
@@ -21,12 +23,15 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
       { cause : 'c
       ; conseq : 'c
       }
-  | Exclusion of 'c list * 'iv option
+  | Exclusion of
+      { args : 'c list
+      ; choice : 'iv option
+      }
   | Coincidence of 'c list
   | Subclocking of
       { sub : 'c
       ; super : 'c
-      ; dist : 'iv option
+      ; choice : 'iv option
       }
   | Minus of
       { out : 'c
@@ -37,7 +42,7 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
       { out : 'c
       ; arg : 'c
       ; delay : ('iv, int) param
-      ; base : 'c option
+      ; base : 'c
       }
   | Fastest of
       { out : 'c
@@ -58,8 +63,9 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
   | Periodic of
       { out : 'c
       ; base : 'c
-      ; period : ('iv, int) param
-      ; skip : ('iv, int) param option
+      ; period : int
+      ; error : ('iv, int) param
+      ; offset : ('ip, int) param
       }
   | Sample of
       { out : 'c
@@ -69,7 +75,7 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
   | Alternate of
       { first : 'c
       ; second : 'c
-      ; strict: bool
+      ; strict : bool
       }
   | RTdelay of
       { out : 'c
@@ -103,29 +109,24 @@ type ('c, 'tp, 'ip, 'tv, 'iv, 't) constr =
       ; base : 'c
       }
   | Forbid of
-      { left_strict : bool
-      ; left : 'c
+      { left : 'c
       ; right : 'c
-      ; right_strict : bool
       ; args : 'c list
       }
   | Allow of
-      { left_strict : bool
-      ; left : 'c
+      { left : 'c
       ; right : 'c
-      ; right_strict : bool
       ; args : 'c list
       }
   | Sporadic of
       { out : 'c
       ; at_least : ('tp, 't) param
-      ; strict : bool
-      } (**Mutex is a special case of Pool where [n=1]*)
-  | Pool of int * ('c * 'c) list
+      }
+  | Pool of int * ('c * 'c) list (** Mutex is a special case of Pool where [n=1] *)
   | DisjunctiveUnion of
       { out : 'c
       ; args : 'c list
-      ; ratios : 'iv option
+      ; choice : 'iv option
       }
 [@@deriving map, show, fold]
 
@@ -133,6 +134,8 @@ let constr_to_string c tp ip tv iv t constr =
   let pp to_string fmt v = Format.fprintf fmt "%s" (to_string v) in
   Format.asprintf "%a" (pp_constr (pp c) (pp tp) (pp ip) (pp tv) (pp iv) (pp t)) constr
 ;;
+
+(* TODO: add some sort of universal invariants on the constraint definition? *)
 
 (*TODO: replace rt.constraints with just delay and offset. *)
 (* module Complex = struct
@@ -142,7 +145,7 @@ end *)
 type ('v, 'n) numeric_rel_constr = NumRelation of 'v * num_rel * ('v, 'n) param
 [@@deriving map, show, fold]
 
-(**Type of distributions that can be used in a simulation. *)
+(** Type of distributions that can be used in a simulation. *)
 type 'n distribution =
   | Uniform
   | Normal of
@@ -157,6 +160,7 @@ type ('iv, 'tv, 't) probability_constr =
       { name : 'iv
       ; ratios : (int * int) list
       }
+  (*TODO: it is not continuous, it is rational-valued *)
   | ContinuousProcess of
       { name : 'tv
       ; dist : 't distribution
@@ -190,22 +194,18 @@ let name = function
   | DisjunctiveUnion _ -> "disjunctive union"
 ;;
 
-(* | TimeVarRelation _ -> "time_var_rel"
-  | IntParameterRelation _ -> "int_param_rel"
-  | Distribution (_, d) -> String.cat (dist_name d) "distribution" *)
-
 let clocks = function
   | Precedence { cause; conseq } | Causality { cause; conseq } -> [ cause; conseq ]
-  | Exclusion (list, _) | Coincidence list -> list
+  | Exclusion { args; _ } | Coincidence args -> args
   | Subclocking { sub; super; _ } -> [ sub; super ]
   | Minus { out; arg; except } -> out :: arg :: except
-  | Delay { out; arg; base; _ } -> out :: arg :: Option.to_list base
+  | Delay { out; arg; base; _ } -> [ out; arg; base ]
   | Fastest { out; args } | Slowest { out; args } -> out :: args
   | Intersection { out; args } | Union { out; args } | DisjunctiveUnion { out; args; _ }
     -> out :: args
   | Periodic { out; base; _ } -> [ out; base ]
   | Sample { out; arg; base } -> [ out; arg; base ]
-  | Alternate { first; second ; _} -> [ first; second ]
+  | Alternate { first; second; _ } -> [ first; second ]
   | RTdelay { out; arg; _ } -> [ out; arg ]
   | CumulPeriodic { out; _ } | AbsPeriodic { out; _ } -> [ out ]
   | FirstSampled { out; arg; base } | LastSampled { out; arg; base } -> [ out; arg; base ]

@@ -84,7 +84,7 @@ module Make (C : Set.OrderedType) = struct
   let squish = function
     | Causality { cause; conseq } | Precedence { cause; conseq } ->
       List.powerset [ cause; conseq ]
-    | Exclusion (clocks, _) -> [] :: List.map List.return clocks
+    | Exclusion { args; _ } -> [] :: List.map List.return args
     | Coincidence clocks -> [ []; clocks ]
     | Subclocking { sub; super; _ } -> [ []; [ sub; super ]; [ super ] ]
     | Minus { out; arg; except } ->
@@ -92,10 +92,7 @@ module Make (C : Set.OrderedType) = struct
       @ List.powerset_nz except
       @ List.map (List.cons arg) (List.powerset_nz except)
     | Delay { out; arg; base; _ } ->
-      (match base with
-       | Some base ->
-         [ []; [ out; base ]; [ out; arg; base ]; [ arg ]; [ arg; base ]; [ base ] ]
-       | None -> [ []; [ out; arg ]; [ arg ] ])
+      [ []; [ out; base ]; [ out; arg; base ]; [ arg ]; [ arg; base ]; [ base ] ]
     | Fastest { out; args } | Slowest { out; args } ->
       let pws = List.powerset_nz args in
       let with_out = List.map (List.cons out) pws in

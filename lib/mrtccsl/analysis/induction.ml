@@ -112,7 +112,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | RTdelay { out; arg; delay = Var delay } ->
       let delay = Var (FreeVar delay) in
       out.@[i] &- arg.@[i] == delay && delay >= Const N.zero
-    | Delay { out; arg; delay = Const d1; base = None } -> out.@[i - d1] == arg.@[i]
+    | Delay { out; arg; delay = Const d1; base } when C.compare arg base = 0 ->
+      out.@[i - d1] == arg.@[i]
     | Fastest { out; args = [ left; right ] } -> out.@[i] == min left.@[i] right.@[i]
     | Slowest { out; args = [ left; right ] } -> out.@[i] == max left.@[i] right.@[i]
     | CumulPeriodic { out; period; error = Var error; offset } ->
@@ -130,15 +131,12 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       out.@[i] == (period &* Var (Index (i - 1)) &+ offset &+ error)
       && period > Const N.zero
       && offset >= Const N.zero
-    | Sporadic { out; at_least; strict } ->
-      let diff = out.@[i] &- out.@[i - 1] in
-      let at_least = num_expr_of_expr at_least in
-      if strict then diff > at_least else diff >= at_least
+    | Sporadic { out; at_least } -> num_expr_of_expr at_least == (out.@[i] &- out.@[i - 1])
     | _ -> raise (ExactRelationUnavailable c)
   ;;
 
   let var_relation = function
-    | NumRelation (v, op, p) -> Linear (Var (FreeVar v), op, num_expr_of_expr p)
+    | NumRelation (v, op, p) -> Comp (Var (FreeVar v), op, num_expr_of_expr p)
   ;;
 
   let of_spec cf Specification.{ logical; duration; _ } =
@@ -152,9 +150,9 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let open Syntax in
     let i = 0 in
     match c with
-    | Exclusion (list, _) ->
+    | Exclusion { args; _ } ->
       let pairwise_exclusions =
-        Seq.product (List.to_seq list) (List.to_seq list)
+        Seq.product (List.to_seq args) (List.to_seq args)
         |> Seq.filter (fun (c1, c2) -> C.compare c1 c2 <> 0)
         |> Seq.map (fun (c1, c2) -> c1.@[i] != c2.@[i])
         |> List.of_seq
@@ -177,7 +175,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     let open Syntax in
     let i = 0 in
     match c with
-    | Exclusion (list, _) ->
+    | Exclusion { args; _ } ->
       let maybe_pair_chain =
         List.fold_left
           (fun acc c ->
@@ -186,7 +184,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
              | Some (first, prev, conds) -> Some (first, c, (prev.@[i] < c.@[i]) :: conds))
              (*order the clocks*)
           None
-          list
+          args
       in
       let pair_chain =
         (Option.fold ~none:[] ~some:(fun (first, last, conds) ->
@@ -197,19 +195,21 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       And pair_chain
     | Subclocking { sub; super; _ } -> sub.@[i] == super.@[i]
     | Minus { out; arg; except } ->
-      let exclude_arg_except = under_rel (Exclusion (List.append except [ arg ], None)) in
+      let exclude_arg_except =
+        under_rel (Exclusion { args = arg :: except; choice = None })
+      in
       (out.@[i] == arg.@[i] || out.@[i - 1] == arg.@[i - 1]) && exclude_arg_except
     | Intersection { out; args } | Union { out; args } ->
       exact_rel (Coincidence (out :: args))
     | Sample { out; arg; base } ->
       base.@[i] == out.@[i] && base.@[i - 1] < arg.@[i] && arg.@[i] <= base.@[i]
-    | Delay { out; arg; delay = Const d1; base = Some base } ->
+    | Delay { out; arg; delay = Const d1; base } ->
       out.@[i - d1] == base.@[i]
       && base.@[i - 1 - d1] < arg.@[i - d1]
       && arg.@[i - d1] <= base.@[i - d1]
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
       base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
-    | Forbid { left; right; args; left_strict = false; right_strict = true } ->
+    | Forbid { left; right; args } ->
       And
         (List.map
            (fun a ->
@@ -218,7 +218,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                   && right.@[i - 1] < a.@[i]
                   && a.@[i] < left.@[i]))
            args)
-    | Allow { left; right; args; left_strict = false; right_strict = false } ->
+    | Allow { left; right; args } ->
       And (List.map (fun a -> left.@[i] <= a.@[i] && a.@[i] <= right.@[i]) args)
     | _ -> raise (UnderApproximationUnavailable c)
   ;;
