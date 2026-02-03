@@ -107,11 +107,13 @@ module Seq = struct
   include Seq
 
   (** [int_seq n] returns sequence [0...n] (not included).*)
-  let int_seq ?(step = 1) n = ints 0 |> take (n / step) |> map (Int.mul step)
+  let int_seq ?(step = 1) ?(start = 0) n =
+    ints start |> take (n / step) |> map (Int.mul step)
+  ;;
 
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
 
-  (** [int_seq n] returns sequence [0..=n] (not included).*)
+  (** [int_seq_inclusive (x,y)] returns sequence [x..=y].*)
   let int_seq_inclusive (starts, ends) =
     assert (ends >= starts);
     take (ends - starts + 1) (ints starts)
@@ -235,6 +237,10 @@ module Seq = struct
     let v, seq = uncons_exn seq in
     let w, _ = uncons_exn seq in
     x, y, z, v, w
+  ;;
+
+  let pp ?(sep = ", ") =
+    Format.pp_print_seq ~pp_sep:(fun fmt () -> Format.pp_print_string fmt sep)
   ;;
 end
 

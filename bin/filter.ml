@@ -48,7 +48,7 @@ let filter ~regexps input output =
     let label = Label.filter filter_clock label in
     if Label.is_empty label then None else Some { label; time }
   in
-  IO.CSV.write output clocks (Iter.filter_map filter_step trace)
+  IO.CSV.write output clocks (Seq.filter_map filter_step trace)
 ;;
 
 let cmd : (unit, string) result Cmd.t =

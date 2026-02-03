@@ -129,6 +129,7 @@ struct
   module A = Backend.Naive.Make (C) (N)
   module ST = Backend.Naive.Strategy (A)
   module CMap = Map.Make (A.C)
+  module Trace = Trace.MakeIO (N) (A.L)
 
   type chain_instance =
     { trace : N.t CMap.t
@@ -163,7 +164,7 @@ struct
         ~update_tick
         instructions
         (full_chains, (partial_chains : _ Queue.t array), counters)
-        (label, now)
+        Trace.{ label; time = now }
     =
     let targets_from i =
       let chain_target = Array.get counters i in
@@ -283,7 +284,7 @@ struct
       previous
     in
     let full_chains, dangling_chains, _ =
-      Iter.fold
+      Seq.fold_left
         (consume_label ~update_tick ~sem instructions)
         ( Dynarray.create ()
         , Array.init len_instr (fun _ -> Queue.create ())
@@ -302,10 +303,10 @@ struct
     =
     let env = A.of_spec ~debug system_spec in
     let trace, cut =
-      A.gen_trace s env |> A.Trace.take ~steps:n |> A.Trace.until ~horizon:time
+      A.gen_trace s env |> Trace.take ~steps:n |> Trace.until ~horizon:time
     in
-    let trace = A.Trace.persist ~size_hint:n trace in
-    let full_chains, dangling_chains = extract_chains sem chain (A.Trace.to_iter trace) in
+    let trace = Trace.persist ~size_hint:n trace in
+    let full_chains, dangling_chains = extract_chains sem chain trace in
     (* let _ =
       Printf.printf "There are %i dangling chains.\n" (List.length dangling_chains);
       Printf.printf
@@ -359,7 +360,7 @@ struct
         categories
     in
     let reaction_times =
-      Iter.map
+      Seq.map
         (fun ({ misses; _ } as chain : chain_instance) ->
            misses_into_category misses, reaction_time_of_span chain span)
         chain_instances
@@ -373,7 +374,7 @@ struct
     let span = start_finish_clocks chain in
     let links = links chain in
     let reaction_times =
-      Iter.flat_map
+      Seq.flat_map
         (fun chain ->
            let total = reaction_time_of_span chain span in
            let contributions =
@@ -397,7 +398,7 @@ struct
                 | Some discretize_range ->
                   let blind_spots = discretize_range blind_range in
                   (*"blind spot" here is an uncertain region of time between the period ticks*)
-                  Iter.map
+                  Seq.map
                     (fun blind_spot ->
                        let total = N.(blind_spot + total) in
                        let contributions = ("blind_spot", blind_spot) :: contributions in
@@ -406,10 +407,10 @@ struct
                 | None ->
                   let total = N.(blind_range + total) in
                   let contributions = ("blind_spot", blind_range) :: contributions in
-                  Iter.singleton (contributions, total))
-             | None -> Iter.singleton (contributions, total)
+                  Seq.return (contributions, total))
+             | None -> Seq.return (contributions, total)
            in
-           Iter.map
+           Seq.map
              (fun (contributions, total) -> compute_wights contributions total, total)
              reactions)
         chain_instances
@@ -418,7 +419,7 @@ struct
   ;;
 
   let reaction_times_to_string ~sep iter =
-    Iter.to_string
+    Seq.to_string
       ~sep
       (fun (_, t) ->
          t
@@ -439,7 +440,7 @@ struct
             (fun (f, s) -> Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s))
             pairs_to_print
           @ List.map C.to_string categories));
-    Iter.iter
+    Seq.iter
       (fun ({ misses; _ } as chain : chain_instance) ->
          Printf.fprintf
            ch

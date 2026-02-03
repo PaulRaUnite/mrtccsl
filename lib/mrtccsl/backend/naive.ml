@@ -118,20 +118,6 @@ module type Strategy = sig
   end
 end
 
-module type Trace = sig
-  type t
-  type solution
-  type num
-
-  val persist : ?size_hint:int -> t -> t
-  val to_iter : t -> solution Iter.t
-  val to_seq : t -> solution Seq.t
-  val of_seq : solution Seq.t -> t
-  val is_empty : t -> bool
-  val until : horizon:num -> t -> t * bool ref
-  val take : steps:int -> t -> t
-end
-
 module type S = sig
   module C : ID
 
@@ -158,8 +144,6 @@ module type S = sig
 
   type sim
 
-  module Trace : Trace with type solution := solution and type num := N.t
-
   val empty_sim : sim
 
   val of_spec
@@ -167,9 +151,11 @@ module type S = sig
     -> (clock, param, param, var, var, N.t) Language.Specification.t
     -> sim
 
-  val gen_trace : sol_strategy -> sim -> Trace.t
-  val bisimulate : sol_strategy -> sim -> sim -> Trace.t
-  val accept_trace : sim -> N.t -> Trace.t -> N.t option
+  type trace = (L.t, N.t) Trace.t
+
+  val gen_trace : sol_strategy -> sim -> trace
+  val bisimulate : sol_strategy -> sim -> sim -> trace
+  val accept_trace : sim -> N.t -> trace -> N.t option
 end
 
 module MakeWithBijection
@@ -265,41 +251,7 @@ struct
   type guard = (label * num_cond) Iter.t
   type solution = label * N.t
   type sol_strategy = guard -> solution option
-
-  module Trace = struct
-    type t = solution Iter.t
-
-    let persist ?size_hint t = t |> Iter.to_dynarray ?size_hint |> Iter.of_dynarray
-    let of_seq t = t |> Iter.of_seq
-    let to_iter = Fun.id
-    let to_seq seq = Iter.to_seq_persistent seq
-    let is_empty t = Iter.is_empty t
-
-    let until ~horizon trace =
-      let was_cut = ref false in
-      ( Iter.take_while
-          (fun[@inline hint] (_, n) ->
-             if N.less n horizon
-             then true
-             else (
-               was_cut := true;
-               false))
-          trace
-      , was_cut )
-    ;;
-
-    let take ~steps = Iter.take steps
-
-    let take_while p =
-      let was_cut = ref false in
-      Iter.take_while (fun x ->
-        if p x
-        then (
-          was_cut := true;
-          true)
-        else false)
-    ;;
-  end
+  type trace = (L.t, N.t) Trace.t
 
   module VarSeq = struct
     type 'v t =
@@ -493,7 +445,7 @@ struct
       let pot_solutions = Iter.product g1 g2 in
       let solutions = Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions in
       (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
-      let solutions = Trace.persist solutions in
+      let solutions = Iter.persistent solutions in
       (* let _ = Printf.printf "after: %s\n" (guard_to_string solutions) in *)
       solutions
     in
@@ -1233,34 +1185,36 @@ struct
       if sync_transitions a now sol then Some sol else None
   ;;
 
-  let gen_trace (sol_strat : sol_strategy) { automata; integers; durations } : Trace.t =
+  let gen_trace (sol_strat : sol_strategy) { automata; integers; durations } : trace =
     VarSeq.unsuppress integers;
     VarSeq.unsuppress durations;
-    Iter.unfoldr
+    Seq.unfold
       (fun now ->
-         let* l, now = next_step sol_strat automata now in
-         Some ((l, now), now))
+         let* label, time = next_step sol_strat automata now in
+         Some (Trace.{ label; time }, now))
       (N.neg N.one)
   ;;
 
-  let bisimulate s { automata = a1; _ } { automata = a2; _ } =
+  let bisimulate s { automata = a1; _ } { automata = a2; _ } : trace =
     (*TODO: investigate relation between the vrel1 and vrel2. *)
-    Iter.unfoldr
+    Seq.unfold
       (fun now ->
-         let* l, n = next_step s a1 now in
-         if sync_transitions a2 now (l, n) then Some ((l, n), n) else None)
+         let* label, time = next_step s a1 now in
+         if sync_transitions a2 now (label, time)
+         then Some (Trace.{ label; time }, time)
+         else None)
       N.zero
   ;;
 
-  let accept_trace { automata; integers; durations } n t =
+  let accept_trace { automata; integers; durations } n (t : trace) =
     VarSeq.suppress integers;
     VarSeq.suppress durations;
     let step a n sol = sync_transitions a n sol in
     let result =
-      Iter.fold
-        (fun n (l, n') ->
+      Seq.fold_left
+        (fun n Trace.{ label; time } ->
            match n with
-           | Some n -> if step automata n (l, n') then Some n' else None
+           | Some n -> if step automata n (label, time) then Some time else None
            | None -> None)
         (Some n)
         t
@@ -1432,18 +1386,18 @@ let%test_module _ =
 
     let%test _ =
       let a = A.of_spec @@ constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
-      not (A.Trace.is_empty (A.gen_trace slow_strat a))
+      not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
       let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
-      not (A.Trace.is_empty (A.gen_trace slow_strat a))
+      not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
       let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
       let trace = A.gen_trace random_strat a in
-      not (A.Trace.is_empty trace)
+      not (Trace.is_empty trace)
     ;;
 
     (* let%test _ =
@@ -1465,11 +1419,11 @@ let%test_module _ =
       in
       let empty2 = A.empty_sim in
       let steps = 10 in
-      let trace = A.bisimulate slow_strat empty1 empty2 |> A.Trace.take ~steps in
+      let trace = A.bisimulate slow_strat empty1 empty2 |> Trace.take ~steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Iter.length trace = steps
+      Trace.length trace = steps
     ;;
 
     let%test _ =
@@ -1482,87 +1436,32 @@ let%test_module _ =
         A.of_spec @@ constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
       in
       let steps = 10 in
-      let trace = A.bisimulate random_strat sampling1 sampling2 |> A.Trace.take ~steps in
+      let trace = A.bisimulate random_strat sampling1 sampling2 |> Trace.take ~steps in
       (* match trace with
       | Ok l | Error l ->
         Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace l; *)
-      Iter.length trace = steps
+      Trace.length trace = steps
     ;;
 
     let%test _ =
       let a =
         A.of_spec @@ constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
       in
-      let trace = A.gen_trace slow_strat a |> A.Trace.take ~steps:10 in
+      let trace = A.gen_trace slow_strat a |> Trace.take ~steps:10 in
       (* let g, _, _ = a in *)
       (* Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_guard (g 0.0);
       Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string @@ A.sexp_of_trace trace; *)
-      Iter.length trace = 10
+      Trace.length trace = 10
     ;;
   end)
 ;;
 
-module MakeExtendedString (N : Num) = struct
-  include Make (Clock.String) (N)
+let test_truncated a b mu sigma =
+  let v = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+  a <= v && v <= b
+;;
 
-  let trace_of_strings l =
-    let to_clock_seq (c, s) =
-      Seq.map (fun char -> if char = 'x' then Some c else None) (String.to_seq s)
-    in
-    let clock_traces = List.map to_clock_seq l in
-    let clocks_trace = Seq.zip_list clock_traces in
-    List.of_seq
-    @@ Seq.map
-         (fun cs ->
-            let clocks, _ = List.flatten_opt cs in
-            L.of_list clocks)
-         clocks_trace
-  ;;
-
-  let trace_of_regexp str =
-    let rec parse_single cs =
-      let single_clocks, par, rest =
-        Seq.fold_left_until
-          (fun c -> c <> '(')
-          (fun acc x ->
-             let label = L.singleton (String.init_char 1 x) in
-             acc @ [ label ])
-          []
-          cs
-      in
-      match par with
-      | Some _ -> single_clocks @ parse_group rest
-      | None -> single_clocks
-    and parse_group cs =
-      let label, par, rest =
-        Seq.fold_left_until
-          (fun c -> c <> ')')
-          (fun acc x ->
-             let c = String.init_char 1 x in
-             acc @ [ c ])
-          []
-          cs
-      in
-      let label = L.of_list label in
-      match par with
-      | Some _ -> label :: parse_single rest
-      | None -> [ label ]
-    in
-    parse_single (String.to_seq str)
-  ;;
-
-  let%test _ =
-    trace_of_regexp "ab(cd)"
-    = trace_of_strings [ "a", "x  "; "b", " x "; "c", "  x"; "d", "  x" ]
-  ;;
-
-  let test_truncated a b mu sigma =
-    let v = truncated_guassian_rvs ~a ~b ~mu ~sigma in
-    a <= v && v <= b
-  ;;
-
-  let%test _ =
-    let _ = Random.init 12312 in
-    test_truncated (-1.0) 1.0 0.0 0.5
-  ;;
-end
+let%test _ =
+  let _ = Random.init 12312 in
+  test_truncated (-1.0) 1.0 0.0 0.5
+;;

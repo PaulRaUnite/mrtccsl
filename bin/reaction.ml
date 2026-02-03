@@ -26,22 +26,22 @@ let extract_reaction
   let channel_to_trace filename =
     let ch = open_in_chan filename in
     (* print_endline filename; *)
-    snd (IO.CSV.read ch) |> Iter.map IO.step_to_pair |> Dynarray.of_iter
+    snd (IO.CSV.read ch) |> Dynarray.of_seq
   in
   let traces = List.map channel_to_trace trace_streams in
   let process_chain (chain_name, chain) =
     let categories = Chain.sampling_clocks chain
     and interest = Chain.spans_of_interest chain in
     let trace_to_chain_instances trace =
-      let trace = Dynarray.to_iter trace in
+      let trace = Dynarray.to_seq trace in
       let chains, _ = extract_chains semantics chain trace in
       chains
     in
     let chain_instances =
       traces
-      |> Iter.of_list
-      |> Iter.map (trace_to_chain_instances >> Dynarray.to_iter)
-      |> Iter.concat
+      |> List.to_seq
+      |> Seq.map (trace_to_chain_instances >> Dynarray.to_seq)
+      |> Seq.concat
     in
     Option.iter
       (fun dir ->
@@ -73,8 +73,8 @@ let extract_reaction
       let discretize_range right_bound =
         let open Number.Rational in
         let whole_parts = to_int (right_bound / scale) in
-        Iter.int_range ~start:0 ~stop:whole_parts
-        |> Iter.map (fun sample_point -> of_int sample_point * scale)
+        Seq.int_seq_inclusive (0, whole_parts)
+        |> Seq.map (fun sample_point -> of_int sample_point * scale)
       in
       let discretize_range =
         match mode with

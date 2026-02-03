@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 module A = Backend.Naive.Make (String) (Number.Rational)
 module ST = Backend.Naive.Strategy (A)
-module Export = Backend.Trace.MakeIO (Number.Rational) (A.L)
+module Trace = Backend.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
 let step = of_int 1 / of_int 1000
@@ -166,10 +166,10 @@ let verify_config config =
 let generate_trace ~config clocks spec i =
   let strategy = random_strat in
   let env = A.of_spec ~debug:false spec in
-  let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
+  let trace = A.gen_trace strategy env |> Trace.take ~steps:config.steps in
   let trace, was_cut =
     match config.horizon with
-    | Some horizon -> A.Trace.until ~horizon trace
+    | Some horizon -> Trace.until ~horizon trace
     | None -> trace, ref false
   in
   let size = ref 0 in
@@ -177,12 +177,11 @@ let generate_trace ~config clocks spec i =
     size := Int.succ i;
     x
   in
-  let trace = Iter.mapi monitor_size trace in
-  let trace = Iter.map Export.pair_to_step trace in
+  let trace = Seq.mapi monitor_size trace in
   let basename = Printf.sprintf "%s/%i" config.output_dir i in
   let _ =
     Sys.write_file ~filename:(Printf.sprintf "%s.trace" basename) (fun ch ->
-      Export.CSV.write ch clocks trace)
+      Trace.CSV.write ch clocks trace)
   in
   let deadlocked = if !was_cut then false else !size < config.steps in
   Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" deadlocked !was_cut !size;

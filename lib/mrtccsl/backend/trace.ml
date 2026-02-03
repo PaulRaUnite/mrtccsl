@@ -9,9 +9,24 @@ type 'c task =
   }
 [@@deriving map]
 
-module type Container = sig
+(* module type Container = sig
   type 'a t
-end
+
+  val of_seq : 'a Seq.t -> 'a t
+  val of_list : 'a list -> 'a t
+  val to_list : 'a t -> 'a list
+  val to_seq : 'a t -> 'a Seq.t
+  val zip : 'a t -> 'b t -> ('a * 'b) t
+  val map : ('a -> 'b) -> 'a t -> 'b t
+  val fold_left : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+
+  val pp_seq
+    :  ?sep:string
+    -> (Format.formatter -> 'a -> unit)
+    -> Format.formatter
+    -> 'a t
+    -> unit
+end *)
 
 module type Element = sig
   include Interface.Stringable
@@ -28,6 +43,7 @@ module type Label = sig
   val mem : elt -> t -> bool
   val to_iter : t -> (elt -> unit) -> unit
   val of_iter : elt Iter.t -> t
+  val singleton : elt -> t
 end
 
 module type Timestamp = sig
@@ -36,6 +52,7 @@ module type Timestamp = sig
   val ( + ) : t -> t -> t
   val ( - ) : t -> t -> t
   val zero : t
+  val less : t -> t -> bool
 
   include Interface.Stringable with type t := t
   include Interface.Parseble with type t := t
@@ -48,19 +65,66 @@ end
   module Import = struct end
 end *)
 
-type ('l, 'n) step =
-  { label : 'l
-  ; time : 'n
-  }
+module Generic = struct
+  type ('l, 'n) step =
+    { label : 'l
+    ; time : 'n
+    }
 
-module MakeIO (N : Timestamp) (L : Label) = struct
-  type nonrec step = (L.t, N.t) step
+  type ('l, 'n) t = ('l, 'n) step Seq.t
 
   let step_to_pair { label; time } = label, time
   let pair_to_step (label, time) = { label; time }
 
+  let persist ~size_hint:_ seq =
+    Seq.memoize seq (*TODO: maybe use dynarray or something *)
+  ;;
+
+  let is_empty = Seq.is_empty
+  let take ~steps = Seq.take steps
+  let length = Seq.length
+end
+
+include Generic
+
+module MakeIO (N : Timestamp) (L : Label) = struct
+  include Generic
+
+  type nonrec trace = (L.t, N.t) t
+
+
+  let until ~horizon trace =
+    let was_cut = ref false in
+    ( Seq.take_while
+        (fun[@inline hint] { time = n; _ } ->
+           if N.less n horizon
+           then true
+           else (
+             was_cut := true;
+             false))
+        trace
+    , was_cut )
+  ;;
+
+  let take_while p =
+    let was_cut = ref false in
+    Seq.take_while (fun x ->
+      if p x
+      then (
+        was_cut := true;
+        true)
+      else false)
+  ;;
+
   module Svgbob = struct
-    let print_horizontal ?(numbers = false) ?precision ~tasks clocks formatter trace =
+    let print_horizontal
+          ?(numbers = false)
+          ?precision
+          ~tasks
+          clocks
+          formatter
+          (trace : trace)
+      =
       if List.is_empty clocks
       then ()
       else (
@@ -187,7 +251,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
           task_state
         in
         let task_state =
-          Iter.fold
+          Seq.fold_left
             serialize_label
             (List.map (fun t -> t, (Buffer.create 32, false)) tasks)
             trace
@@ -215,7 +279,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
         Format.fprintf formatter "%s" (Buffer.contents total))
     ;;
 
-    let print_vertical ?(numbers = false) ~tasks clocks ch trace =
+    let print_vertical ?(numbers = false) ~tasks clocks ch (trace : trace) =
       if List.is_empty clocks
       then ()
       else (
@@ -352,7 +416,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
         in
         let task_states = tasks |> List.map (fun task -> task, 0, 0) |> Array.of_list in
         let clock_states = Array.map (fun clock -> clock, 0) clocks in
-        let _ = Iter.fold serialize_record (task_states, clock_states) trace in
+        let _ = Seq.fold_left serialize_record (task_states, clock_states) trace in
         let _ =
           for _ = 0 to width do
             Format.fprintf ch " "
@@ -394,7 +458,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
 
   (** Import/Export into comma-separated lists. *)
   module CSL = struct
-    let print ?step_sep ~tagger ~serialize formatter trace =
+    let print ?step_sep ~tagger ~serialize formatter (trace : trace) =
       let init_tagger, tag = tagger in
       let tag_state = init_tagger () in
       let pp_step f { label; time } =
@@ -402,7 +466,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
         let serialization = tag tag_state time @@ Iter.map L.E.to_string serialization in
         Iter.pp_seq ~sep:"," Format.pp_print_string f serialization
       in
-      Iter.pp_seq ~sep:(Option.value ~default:"," step_sep) pp_step formatter trace;
+      Seq.pp ~sep:(Option.value ~default:"," step_sep) pp_step formatter trace;
       Format.pp_print_flush formatter ()
     ;;
   end
@@ -410,7 +474,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
   module CSV = struct
     let timestamp_column = "t"
 
-    let read ch =
+    let read ch : string list * trace =
       let csv = Csv.of_channel ~has_header:true ch in
       ( Csv.Rows.header csv
         |> List.filter (not << String.equal timestamp_column)
@@ -439,15 +503,16 @@ module MakeIO (N : Timestamp) (L : Label) = struct
             |> Iter.map L.E.of_string
             |> L.of_iter
           in
-          { label; time = timestamp }) )
+          { label; time = timestamp })
+        |> Iter.to_seq_persistent )
     ;;
 
-    let write ch clocks trace =
+    let write ch clocks (trace : trace) =
       let clocks = List.sort_uniq L.E.compare clocks in
       let out = Csv.to_channel ~quote_all:false ch in
       let clock_strs = List.map L.E.to_string clocks in
       Csv.output_record out (timestamp_column :: clock_strs);
-      Iter.iter
+      Seq.iter
         (fun step ->
            let presence =
              clocks
@@ -462,4 +527,59 @@ module MakeIO (N : Timestamp) (L : Label) = struct
       Csv.close_out out
     ;;
   end
+
+  module String = struct
+    let labels_of_regexp str =
+      let rec parse_single cs =
+        let single_clocks, par, rest =
+          Seq.fold_left_until
+            (fun c -> c <> '(')
+            (fun acc x ->
+               let label = L.singleton (L.E.of_string (String.init_char 1 x)) in
+               acc @ [ label ])
+            []
+            cs
+        in
+        match par with
+        | Some _ -> single_clocks @ parse_group rest
+        | None -> single_clocks
+      and parse_group cs =
+        let label, par, rest =
+          Seq.fold_left_until
+            (fun c -> c <> ')')
+            (fun acc x ->
+               let c = L.E.of_string (String.init_char 1 x) in
+               acc @ [ c ])
+            []
+            cs
+        in
+        let label = L.of_iter (Iter.of_list label) in
+        match par with
+        | Some _ -> label :: parse_single rest
+        | None -> [ label ]
+      in
+      parse_single (String.to_seq str)
+    ;;
+
+    let trace_of_regexp str timestampts : trace =
+      let labels = List.to_seq (labels_of_regexp str) in
+      Seq.zip labels timestampts |> Seq.map pair_to_step
+    ;;
+  end
+end
+
+module TestWithString = struct
+  module L = struct
+    module E = String
+    include Set.Make (E)
+  end
+
+  module T = MakeIO (Number.Integer) (L)
+
+  let%test _ =
+    List.equal
+      L.equal
+      (T.String.labels_of_regexp "ab(cd)")
+      [ L.singleton "a"; L.singleton "b"; L.of_list [ "c"; "d" ] ]
+  ;;
 end

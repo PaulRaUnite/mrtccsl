@@ -37,17 +37,20 @@ let debug_trace spec_filename trace clock =
   let spec = Mrtccsl.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let clocks, trace = IO.CSV.read trace in
-  let trace = Iter.map IO.step_to_pair trace in
   if not (List.mem clock clocks)
   then print_endline "clock is not found in trace, check spelling"
   else (
     let a = A.of_spec spec in
-    let result = A.accept_trace a Number.Rational.minusone trace in
+    let result = A.accept_trace a Number.Rational.minusone (trace) in
     Option.iter
       (fun last_time ->
          let solutions = A.try_force_clock a last_time clock in
          Iter.iter
-           (fun (l, _) -> if A.L.is_empty l then (print_endline "is empty:" ; print_endline @@ A.L.to_string l))
+           (fun (l, _) ->
+              if A.L.is_empty l
+              then (
+                print_endline "is empty:";
+                print_endline @@ A.L.to_string l))
            solutions;
          print_endline @@ A.guard_to_string solutions)
       result)

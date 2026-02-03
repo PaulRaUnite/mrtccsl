@@ -26,14 +26,14 @@ struct
 
   let weighted_histogram
         round_to
-        (reaction_times : ((Category.t * Num.t) list * Num.t) Iter.t)
+        (reaction_times : ((Category.t * Num.t) list * Num.t) Seq.t)
     : t
     =
     let inc_category k w categories =
       Categories.entry (Num.add w) ~default:Num.zero k categories
     in
     let categories, bins, total =
-      Iter.fold
+      Seq.fold_left
         (fun (categories, bins, sum) (weights, v) ->
            let bin = round_to v in
            let categories, bins =
@@ -63,10 +63,10 @@ struct
     { bins = normalized_bins; categories; total }
   ;;
 
-  let category_histogram round_to (reaction_times : ('key * Num.t) Iter.t) : t =
+  let category_histogram round_to (reaction_times : ('key * Num.t) Seq.t) : t =
     let inc_category k categories = Categories.entry Int.succ ~default:0 k categories in
     let categories, bins, total =
-      Iter.fold
+      Seq.fold_left
         (fun (categories, bins, sum) (k, v) ->
            let bin = round_to v in
            let categories = CategorySet.add k categories
