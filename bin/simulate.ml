@@ -2,7 +2,7 @@ open Mrtccsl
 open Prelude
 module A = Backend.Naive.Make (String) (Number.Rational)
 module ST = Backend.Naive.Strategy (A)
-module Trace = Backend.Trace.MakeIO (Number.Rational) (A.L)
+module Trace = Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
 let step = of_int 1 / of_int 1000

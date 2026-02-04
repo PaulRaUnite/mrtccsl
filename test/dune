@@ -1,6 +1,11 @@
 (test
- (name simple)
- (modules simple)
+ (name naive)
+ (modules naive correctness)
+ (libraries mrtccsl alcotest))
+
+(test
+ (name symbolic)
+ (modules symbolic correctness)
  (libraries mrtccsl alcotest))
 
 (test
@@ -11,7 +16,8 @@
 (test
  (name parser)
  (libraries mrtccsl.mrtccslparsing mrtccsl)
- (deps (glob_files code/*.mrtccsl)))
+ (deps
+  (glob_files code/*.mrtccsl)))
 
 (env
  (dev

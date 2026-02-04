@@ -4,6 +4,7 @@ open Language
 open Language.Specification.Builder
 
 module type BackendS = sig
+  val test_name : string
   module N : sig
     type t
 
@@ -19,15 +20,15 @@ module type BackendS = sig
     end
   end
 
-  module A : sig
+  module Backend : sig
     type sim
 
     val of_spec
       :  ?debug:bool
-      -> (string, string, string, string, string, int) Specification.t
+      -> (string, string, string, string, string, N.t) Specification.t
       -> sim
 
-    val accept_trace : sim -> N.t -> Trace.t -> N.t option
+    val accept_trace : sim -> Trace.t -> bool
   end
 end
 
@@ -37,9 +38,12 @@ module Make (B : BackendS) = struct
   let wall_test spec names_traces_results =
     let check (name, case, expected) =
       let test () =
-        let automaton = A.of_spec spec in
-        let trace_exist = Option.is_some (A.accept_trace automaton N.zero case) in
-        Alcotest.(check bool) "same result" expected trace_exist
+        let automaton =
+          Backend.of_spec
+            (Specification.map Fun.id Fun.id Fun.id Fun.id Fun.id N.of_int spec)
+        in
+        let trace_accepted = Backend.accept_trace automaton case in
+        Alcotest.(check bool) "same result" expected trace_accepted
       in
       Alcotest.(test_case name `Quick) test
     in
@@ -72,7 +76,7 @@ module Make (B : BackendS) = struct
 
   let () =
     Alcotest.run
-      "Naive Backend"
+      B.test_name
       [ ( "causality"
         , order_test
             (constraints_only [ Causality { cause = "a"; conseq = "b" } ])
@@ -265,15 +269,3 @@ module Make (B : BackendS) = struct
   ;;
 end
 
-module NaiveBackend = struct
-  module N = Number.Integer
-  module A = Backend.Naive.Make (String) (N)
-
-  module Trace = struct
-    include Trace.MakeIO (N) (A.L)
-
-    type t = trace
-  end
-end
-
-module Naive = Make (NaiveBackend)

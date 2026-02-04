@@ -219,18 +219,17 @@ module Interpretation = struct
   (** Evaluate Boolean formula given state and input values. *)
   let rec eval_bool (state : 'sv state_interface) (inputs : 'iv input_interface)
     : ('sv, 'iv) bool_expr -> bool
-    =
-    let evalb = eval_bool state inputs in
-    function
+    = function
     | BConst c -> c
     | BStateVar v -> state.bool ~default:false v
     | BInputVar v -> inputs.bool ~default:false v
-    | BNot e -> not (evalb e)
-    | BAnd conjunctions -> List.for_all evalb conjunctions
-    | BOr disjunctions -> List.exists evalb disjunctions
-    | BEq (e1, e2) -> Bool.equal (evalb e1) (evalb e2)
-    | BNeq (e1, e2) -> not (Bool.equal (eval_bool state inputs e1) (evalb e2))
-    | BImply (e1, e2) -> (not (evalb e1)) || evalb e2
+    | BNot e -> not (eval_bool state inputs e)
+    | BAnd conjunctions -> List.for_all (eval_bool state inputs) conjunctions
+    | BOr disjunctions -> List.exists (eval_bool state inputs) disjunctions
+    | BEq (e1, e2) -> Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2)
+    | BNeq (e1, e2) ->
+      not (Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
+    | BImply (e1, e2) -> (not (eval_bool state inputs e1)) || eval_bool state inputs e2
     | IntComp (e1, rel, e2) ->
       do_rel Int.compare rel (eval_integer state inputs e1) (eval_integer state inputs e2)
     | RatComp (e1, rel, e2) ->
@@ -240,7 +239,9 @@ module Interpretation = struct
         (eval_rational state inputs e1)
         (eval_rational state inputs e2)
     | BITE { cond; if_true; if_false } ->
-      if evalb cond then evalb if_true else evalb if_false
+      if eval_bool state inputs cond
+      then eval_bool state inputs if_true
+      else eval_bool state inputs if_false
     | IntQueuePositive q ->
       Queue.for_all (Integer.less_eq 0) (eval_int_queue state inputs q)
 
@@ -277,8 +278,8 @@ module Interpretation = struct
   (** Evaluate rational expression given state and input values. *)
   and eval_rational state inputs = function
     | RConst c -> c
-    | RStateVar var -> state.rational ~default:Rational.minusone var
-    | RInputVar var -> inputs.rational ~default:Rational.minusone var
+    | RStateVar var -> state.rational ~default:Rational.minus_one var
+    | RInputVar var -> inputs.rational ~default:Rational.minus_one var
     | RBinOp (e1, op, e2) ->
       let e1 = eval_rational state inputs e1
       and e2 = eval_rational state inputs e2 in

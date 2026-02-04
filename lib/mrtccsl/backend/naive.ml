@@ -52,6 +52,7 @@ module type Num = sig
 
   val zero : t
   val one : t
+  val minus_one : t
   val neg : t -> t
   val ( - ) : t -> t -> t
   val random : t -> t -> t
@@ -155,7 +156,7 @@ module type S = sig
 
   val gen_trace : sol_strategy -> sim -> trace
   val bisimulate : sol_strategy -> sim -> sim -> trace
-  val accept_trace : sim -> N.t -> trace -> N.t option
+  val accept_trace : sim -> trace -> bool
 end
 
 module MakeWithBijection
@@ -1192,7 +1193,7 @@ struct
       (fun now ->
          let* label, time = next_step sol_strat automata now in
          Some (Trace.{ label; time }, now))
-      (N.neg N.one)
+      (N.minus_one)
   ;;
 
   let bisimulate s { automata = a1; _ } { automata = a2; _ } : trace =
@@ -1206,7 +1207,7 @@ struct
       N.zero
   ;;
 
-  let accept_trace { automata; integers; durations } n (t : trace) =
+  let accept_trace { automata; integers; durations } (t : trace) =
     VarSeq.suppress integers;
     VarSeq.suppress durations;
     let step a n sol = sync_transitions a n sol in
@@ -1216,10 +1217,10 @@ struct
            match n with
            | Some n -> if step automata n (label, time) then Some time else None
            | None -> None)
-        (Some n)
+        (Some N.minus_one)
         t
     in
-    result
+    Option.is_some result
   ;;
 
   let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace

@@ -29,7 +29,7 @@ open Mrtccsl
 module A = Backend.Naive.Make (String) (Number.Rational)
 module ST = Backend.Naive.Strategy (A)
 module Opt = Optimization.Order.Make (String)
-module IO = Backend.Trace.MakeIO (Number.Rational) (A.L)
+module IO = Trace.MakeIO (Number.Rational) (A.L)
 
 let debug_trace spec_filename trace clock =
   let _, m = Mrtccslparsing.load_with_string spec_filename Format.err_formatter in
@@ -41,8 +41,9 @@ let debug_trace spec_filename trace clock =
   then print_endline "clock is not found in trace, check spelling"
   else (
     let a = A.of_spec spec in
-    let result = A.accept_trace a Number.Rational.minusone (trace) in
-    Option.iter
+    let result = A.accept_trace a trace in
+    Printf.printf "result %b" result
+    (* Option.iter
       (fun last_time ->
          let solutions = A.try_force_clock a last_time clock in
          Iter.iter
@@ -53,7 +54,7 @@ let debug_trace spec_filename trace clock =
                 print_endline @@ A.L.to_string l))
            solutions;
          print_endline @@ A.guard_to_string solutions)
-      result)
+      result *))
 ;;
 
 let cmd : (unit, string) result Cmd.t =

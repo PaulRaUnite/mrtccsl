@@ -19,7 +19,7 @@ include Interface.Number.Operators.Make (struct
     ;; *)
   end)
 
-let minusone = of_int (-1)
+let minus_one = of_int (-1)
 
 let sexp_of_t x =
   let nom = get_num x in

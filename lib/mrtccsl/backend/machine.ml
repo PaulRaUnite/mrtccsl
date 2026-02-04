@@ -71,7 +71,7 @@ let exclusion_as_machine clocks choice_var =
   let clocks = clocks_to_bvars clocks in
   let choice_var = Option.map iinvar choice_var in
   (* doing nothing should be still possible *)
-  let guard = !(BAnd clocks) || build_excl_dec_tree choice_var clocks in
+  let guard = !(BOr clocks) || build_excl_dec_tree choice_var clocks in
   stateless_as_machine @@ choice_range_cond (List.length clocks) guard choice_var
 ;;
 
@@ -470,6 +470,7 @@ let sporadic_as_machine ~now out at_least =
 let constraint_as_machine now
   : _ Ccsl.Language.constr -> (string, string) Symbolic.Machine.t
   =
+  let now = rinvar now in
   let open Ccsl.Language in
   function
   | Exclusion { args; choice } -> exclusion_as_machine args choice
@@ -503,4 +504,57 @@ let constraint_as_machine now
   | Pool (1, open_close_pairs) -> mutex_as_machine open_close_pairs
   | Pool _ ->
     failwith "pool constraint with n > 1 is not supported in symbolic representation"
+;;
+
+let empty_machine = { transitions = [ t @@@ t |-> [] ]; invariant = t }
+
+let relation_as_machine invar of_param comp (Ccsl.Language.NumRelation (var, rel, param)) =
+  let e1 = invar var
+  and e2 = of_param param in
+  [ t @@@ comp (e1, rel, e2) |-> [] ] &&& t
+;;
+
+open Interpretation
+
+type sim = var * (var, var) t
+
+let of_spec ?debug:_ Language.Specification.{ logical; integer; duration; _ } : sim =
+  let now = "@now" in
+  let open Symbolic.Machine in
+  let icomp (e1, rel, e2) = IntComp (e1, rel, e2)
+  and rcomp (e1, rel, e2) = RatComp (e1, rel, e2) in
+  let logical = Seq.map (constraint_as_machine now) (List.to_seq logical)
+  and int_relations =
+    Seq.map (relation_as_machine iinvar iparam_to_expr icomp) (List.to_seq integer)
+  and rat_relations =
+    Seq.map (relation_as_machine rinvar rparam_to_expr rcomp) (List.to_seq duration)
+  in
+  let combined_machine =
+    Seq.fold_left
+      sync_machines
+      empty_machine
+      (Seq.append_list [ logical; int_relations; rat_relations ])
+  in
+  now, combined_machine
+;;
+
+let step_as_inputs now Trace.{ label; time } =
+  { bools = VarMap.of_seq (Seq.map (fun c -> c, true) (List.to_seq label))
+  ; integers = VarMap.empty
+  ; rationals = VarMap.singleton now time
+  }
+;;
+
+let accept_trace (now, machine) trace =
+  let state = default_state in
+  let state =
+    Seq.fold_left
+      (fun state step ->
+         Result.bind state (fun state ->
+           let inputs = step_as_inputs now step in
+           apply_transition machine state inputs))
+      (Ok state)
+      trace
+  in
+  Result.is_ok state
 ;;
