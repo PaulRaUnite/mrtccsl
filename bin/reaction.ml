@@ -62,6 +62,7 @@ let extract_reaction
            in
            let stats =
              Stats.category_histogram
+               scale
                (Number.Rational.round_floor scale)
                tagged_reaction_times
            in
@@ -85,7 +86,10 @@ let extract_reaction
         FnCh.weighted_full_reaction_times ?discretize_range chain chain_instances
       in
       let stats =
-        Stats.weighted_histogram (Number.Rational.round_floor scale) tagged_reaction_times
+        Stats.weighted_histogram
+          scale
+          (Number.Rational.round_floor scale)
+          tagged_reaction_times
       in
       let filename = weighted_histogram_name output_dir chain_name span in
       Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv stats)

@@ -11,6 +11,7 @@ module Make
        include Interface.Stringable with type t := t
 
        val from_pair : int * int -> t
+       val to_int : t -> int
      end) =
 struct
   module Categories = Map.Make (Category)
@@ -22,9 +23,11 @@ struct
       bins : Num.t Categories.t Bins.t
     ; categories : CategorySet.t
     ; total : int
+    ; step_width : Num.t
     }
 
   let weighted_histogram
+        step_width
         round_to
         (reaction_times : ((Category.t * Num.t) list * Num.t) Seq.t)
     : t
@@ -60,10 +63,10 @@ struct
         (Categories.map (fun count -> Num.div count (Num.from_pair (total, 1))))
         bins
     in
-    { bins = normalized_bins; categories; total }
+    { bins = normalized_bins; categories; total; step_width }
   ;;
 
-  let category_histogram round_to (reaction_times : ('key * Num.t) Seq.t) : t =
+  let category_histogram step_width round_to (reaction_times : ('key * Num.t) Seq.t) : t =
     let inc_category k categories = Categories.entry Int.succ ~default:0 k categories in
     let categories, bins, total =
       Seq.fold_left
@@ -78,10 +81,10 @@ struct
     let normalized_bins =
       Bins.map (Categories.map (fun count -> Num.from_pair (count, total))) bins
     in
-    { bins = normalized_bins; categories; total }
+    { bins = normalized_bins; categories; total; step_width }
   ;;
 
-  let to_csv { bins; categories; _ } fmt =
+  let to_csv { bins; categories; step_width; _ } fmt =
     (* Printf.printf "number of bins: %i\n" (Bins.cardinal bins) ; *)
     let pp_category = fun fmt c -> Format.fprintf fmt "%s" (Category.to_string c) in
     let pp_num fmt n = Format.fprintf fmt "%s" (Num.to_string n) in
@@ -97,15 +100,41 @@ struct
       |> Seq.map (fun k -> k, Num.zero)
       |> Categories.of_seq
     in
-    Bins.iter
-      (fun bin cats ->
-         let cats = Categories.union (fun _k v1 _v2 -> Some v1) cats categories in
-         let sum = Categories.fold (fun _ v sum -> Num.add v sum) cats Num.zero in
-         let pp_map fmt map =
-           Format.pp_print_seq ~pp_sep pp_num fmt (Seq.map snd (Categories.to_seq map))
-         in
-         Format.fprintf fmt "%a,%a,%a\n" pp_num bin pp_num sum pp_map cats)
-      bins;
+    ignore
+    @@ Bins.fold
+         (fun bin cats prev ->
+            let cats = Categories.union (fun _k v1 _v2 -> Some v1) cats categories in
+            let sum = Categories.fold (fun _ v sum -> Num.add v sum) cats Num.zero in
+            let pp_map fmt map =
+              Format.pp_print_seq ~pp_sep pp_num fmt (Seq.map snd (Categories.to_seq map))
+            in
+            let fill_the_gap prev =
+              let diff = Num.sub bin prev in
+              if Num.compare diff step_width > 0
+              then (
+                let rec iteration now =
+                  if Num.compare now bin >= 0
+                  then now
+                  else (
+                    Format.fprintf
+                      fmt
+                      "%a,%a,%a\n"
+                      pp_num
+                      now
+                      pp_num
+                      Num.zero
+                      (Format.pp_print_seq ~pp_sep pp_num)
+                      (Seq.repeat Num.zero |> Seq.take (Categories.cardinal cats));
+                    iteration @@ Num.add now step_width)
+                in
+                ignore @@ iteration @@ Num.add prev step_width)
+              else ()
+            in
+            Option.iter fill_the_gap prev;
+            Format.fprintf fmt "%a,%a,%a\n" pp_num bin pp_num sum pp_map cats;
+            Some bin)
+         bins
+         None;
     Format.pp_print_flush fmt ()
   ;;
 end
