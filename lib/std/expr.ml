@@ -21,10 +21,15 @@ let string_of_num_op = function
   | `Div -> "/"
 ;;
 
-type num_rel =
+type reduced_num_rel =
   [ `Less (** < *)
   | `LessEq (** <= *)
   | `Eq (** = *)
+  ]
+[@@deriving sexp, compare, show]
+
+type num_rel =
+  [ reduced_num_rel
   | `More (** > *)
   | `MoreEq (** >= *)
   | `Neq (* != *)

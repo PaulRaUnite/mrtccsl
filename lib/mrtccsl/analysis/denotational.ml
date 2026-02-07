@@ -5,25 +5,26 @@ open Sexplib0.Sexp_conv
 (*Cannot refactor further, because the implementations and definitions depend on each other which requires mutually recursive modules which are simply annoying.*)
 open Ppx_compare_lib.Builtin
 
+(** Type of denotational variables. *)
 type 'v var =
-  | FreeVar of 'v
-  | ClockVar of 'v * int
-  | Index of int
+  | FreeVar of 'v (** free variable such as argument variable *)
+  | ClockVar of 'v * int (** clock variable [c[i]] *)
+  | Index of int (** index [i] *)
 [@@deriving sexp, compare]
 
 type ('c, 'n) num_expr =
   | Var of 'c var
   | Const of 'n
   | Op of ('c, 'n) num_expr * num_op * ('c, 'n) num_expr
-  | ZeroCond of ('c, 'n) num_expr * ('c, 'n) num_expr
   (** [ZeroCond] variant is needed because otherwise will collide with max in factoring out min/max*)
+  | ZeroCond of ('c, 'n) num_expr * ('c, 'n) num_expr
   | Min of ('c, 'n) num_expr * ('c, 'n) num_expr
   | Max of ('c, 'n) num_expr * ('c, 'n) num_expr
 [@@deriving sexp, compare]
 
 let num_expr_of_expr = function
-  | Language.Var v -> Var (FreeVar v)
-  | Language.Const c -> Const c
+  | Language.Cstr.Var v -> Var (FreeVar v)
+  | Language.Cstr.Const c -> Const c
 ;;
 
 type ('c, 'n) bool_expr =

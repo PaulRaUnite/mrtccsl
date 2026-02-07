@@ -1,7 +1,9 @@
 open Mrtccsl
 open Prelude
 open Language
-open Specification.Builder
+open Cstr
+open Specification
+open Builder
 open Analysis
 
 let time_const_interval = Tuple.map2 (fun v -> Const v)
@@ -114,12 +116,12 @@ let example6 n =
   Module.
     { assumptions = []
     ; structure =
-        constraints_only
+        clock_constraints_only
           [ Sample { out = "c"; arg = "b"; base = "base" }
           ; Delay { out = "d"; arg = "c"; delay = Const n; base = "base" }
           ]
     ; assertions =
-        [ constraints_only
+        [ clock_constraints_only
             [ Delay { out = "d"; arg = "b"; delay = Const n; base = "base" } ]
         ]
     }
@@ -147,7 +149,7 @@ let example8 n1 n2 =
   Module.
     { assertions = []
     ; structure =
-        constraints_only
+        clock_constraints_only
           [ Delay { out = "b"; arg = "a"; delay = Const n1; base = "base" }
           ; Delay { out = "c"; arg = "b"; delay = Const n2; base = "base" }
           ]
@@ -159,7 +161,7 @@ let example9 n1 n2 =
   Module.
     { assertions = []
     ; structure =
-        constraints_only
+        clock_constraints_only
           [ Delay { out = "b"; arg = "a"; delay = Const n1; base = "base" }
           ; Delay { out = "dbase"; arg = "base"; delay = Const (n1 + 1); base = "base" }
           ; Delay { out = "c"; arg = "b"; delay = Const n2; base = "dbase" }

@@ -4,7 +4,7 @@ open Prelude
 let derive_order spec =
   spec
   |> List.filter_map
-       Language.(
+       Language.Cstr.(
          function
          | Causality { cause; conseq } -> Some (cause, conseq)
          | RTdelay { arg; out; _ } -> Some (arg, out)

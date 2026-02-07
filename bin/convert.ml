@@ -3,10 +3,12 @@ open Cmdliner
 open Cmdliner.Term.Syntax
 open Number
 open Common
-module Label = struct 
-  include Set.Make(String)
+
+module Label = struct
+  include Set.Make (String)
   module E = String
 end
+
 module Export = Mrtccsl.Trace.MakeIO (Rational) (Label)
 
 let input_arg =
@@ -93,7 +95,7 @@ module Native = struct
           (fun spec ->
              Export.Serialize.respect_microstep
                (Mrtccsl.Ccsl.MicroStep.derive_order
-                  Mrtccsl.Ccsl.Language.Specification.(spec.logical)))
+                  Mrtccsl.Ccsl.Language.Specification.(spec.clock)))
           serialize
       in
       let to_scl =

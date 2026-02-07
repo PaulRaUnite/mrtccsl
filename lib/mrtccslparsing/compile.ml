@@ -212,9 +212,9 @@ module Context = struct
         |> VarMap.to_list
         |> List.map (fun ((t, v), args) ->
           match t with
-          | Ast.AUnion -> Mrtccsl.Language.Union { out = Explicit v; args }
+          | Ast.AUnion -> Mrtccsl.Language.Cstr.Union { out = Explicit v; args }
           | Ast.ADisjunctiveUnion ->
-            Mrtccsl.Language.DisjunctiveUnion { out = Explicit v; args; choice = None })
+            Mrtccsl.Language.Cstr.DisjunctiveUnion { out = Explicit v; args; choice = None })
       | None -> []
     in
     List.iter (Mrtccsl.Language.Specification.Builder.logical builder) constraints
@@ -375,6 +375,7 @@ let[@inline] finilize_errors (context, errors) = context, List.rev errors
 
 let into_module { assumptions; structure; assertions } =
   let open Mrtccsl.Language in
+  let open Cstr in
   let open Specification in
   let open Result.Syntax in
   let wrap_var v = Var v in
@@ -653,7 +654,7 @@ let into_module { assumptions; structure; assertions } =
       let* context, var =
         Context.add_anon_variable ~context ~prefix:scope ~var_type:`Int location
       in
-      Builder.probab builder @@ DiscreteProcess { name = var; ratios };
+      Builder.probab builder @@ DiscreteValued { name = var; ratios };
       Ok (context, var))
   in
   let rec compile_stmt ~context ~scope ~builder stmt =
@@ -773,7 +774,7 @@ let into_module { assumptions; structure; assertions } =
          in
          Option.iter (Builder.logical builder) constr;
          Ok context)
-    | DiscreteProcess { var; values; ratios } ->
+    | DiscreteValued { var; values; ratios } ->
       error_recover
         ~context
         ~errors:[]
@@ -781,15 +782,15 @@ let into_module { assumptions; structure; assertions } =
          and ratios = Loc.unwrap ratios in
          let* context, name = Context.resolve ~context ~scope ~expect:`Int var in
          Builder.probab builder
-         @@ DiscreteProcess { name; ratios = List.combine values ratios };
+         @@ DiscreteValued { name; ratios = List.combine values ratios };
          Ok context)
-    | ContinuousProcess { var; dist } ->
+    | ContinuousValued { var; dist } ->
       error_recover
         ~context
         ~errors:[]
         (let* context, name = Context.resolve ~context ~scope ~expect:`Duration var in
          Builder.probab builder
-         @@ ContinuousProcess { name; dist = compile_distribution (Loc.unwrap dist) };
+         @@ ContinuousValued { name; dist = compile_distribution (Loc.unwrap dist) };
          Ok context)
     | Pool (n, pairs) ->
       (*TODO: make it mutex only *)

@@ -81,7 +81,9 @@ module Make (C : Set.OrderedType) = struct
       optimize graph group_size (next :: front) (L.union (G.V.label next).clocks clocks))
   ;;
 
-  let squish = function
+  let squish =
+    let open Cstr in
+    function
     | Causality { cause; conseq } | Precedence { cause; conseq } ->
       List.powerset [ cause; conseq ]
     | Exclusion { args; _ } -> [] :: List.map List.return args
@@ -135,7 +137,7 @@ module Make (C : Set.OrderedType) = struct
   ;;
 
   let graph (spec : _ Specification.t) =
-    let constr = Array.of_list spec.logical in
+    let constr = Array.of_list spec.clock in
     let vertices =
       Array.mapi
         (fun i c ->
@@ -144,8 +146,8 @@ module Make (C : Set.OrderedType) = struct
              { solutions = List.length labels
              ; labels
              ; constr = i
-             ; constr_str = Language.name c
-             ; clocks = L.of_list @@ clocks c
+             ; constr_str = Cstr.name c
+             ; clocks = L.of_list @@ Cstr.clocks c
              })
         constr
     in
@@ -187,7 +189,7 @@ module Make (C : Set.OrderedType) = struct
         (fun v -> constr.((G.V.label v).constr))
         (List.flat_map optimize_component components)
     in
-    assert (List.length spec.logical = List.length constraints);
-    { spec with logical = constraints }
+    assert (List.length spec.clock = List.length constraints);
+    { spec with clock = constraints }
   ;;
 end

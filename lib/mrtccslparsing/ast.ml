@@ -139,12 +139,12 @@ type statement' =
   | DurationRelation of duration_expr * (num_rel * duration_expr) list
   | ClockRelation of clock_expr * clock_rel * clock_expr
   | AdditiveUnion of var * additive_union * clock_expr
-  | DiscreteProcess of
+  | DiscreteValued of
       { var : var
       ; values : int list Loc.t
       ; ratios : int list Loc.t
       }
-  | ContinuousProcess of
+  | ContinuousValued of
       { var : var
       ; dist : contdist
       }

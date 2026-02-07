@@ -38,7 +38,7 @@ module AsDefined = struct
   type 'c definition = string * ('c list * 'c list)
 
   let of_constraint c : _ definition option =
-    let open Language in
+    let open Language.Cstr in
     let def =
       match c with
       | Minus { out; arg; except } -> Some (arg :: except, out)
@@ -81,7 +81,7 @@ module AsDefined = struct
         ~default:()
         (let* name, (inputs, outputs) =
            of_constraint
-             (Language.map_constr map_clock Fun.id Fun.id Fun.id Fun.id Fun.id constr)
+             (Language.Cstr.map_clock_constr map_clock Fun.id Fun.id Fun.id Fun.id Fun.id constr)
          in
          let constraint_vertex = G.V.create (Constraint name) in
          List.iter
@@ -94,7 +94,7 @@ module AsDefined = struct
            outputs;
          Some ())
     in
-    List.iter process_constraint Language.Specification.(spec.logical);
+    List.iter process_constraint Language.Specification.(spec.clock);
     graph
   ;;
 end

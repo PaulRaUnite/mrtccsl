@@ -4,7 +4,7 @@
  (public_name mrtccsl.symbolic)
  (name symbolic)
  (inline_tests)
- (libraries containers sexplib0 iter std)
+ (libraries sexplib0 std vpl-core)
  (preprocess
   (pps
    ppx_inline_test

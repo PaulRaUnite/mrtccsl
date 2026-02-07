@@ -1,10 +1,13 @@
 open Mrtccsl
 open Prelude
 open Language
-open Language.Specification.Builder
+open Cstr
+open Language.Specification
+open Builder
 
 module type BackendS = sig
   val test_name : string
+
   module N : sig
     type t
 
@@ -51,12 +54,18 @@ module Make (B : BackendS) = struct
   ;;
 
   let order_test spec true_cases false_cases =
-    let map v =
-      List.map (fun labels_str ->
-        let trace =
-          Trace.String.trace_of_regexp labels_str (Seq.map N.of_int (Seq.ints 1))
-        in
-        labels_str, trace, v)
+    let timestamps = Seq.map N.of_int (Seq.ints 0) in
+    let map v cases =
+      let tests =
+        List.map
+          (fun labels_str ->
+             let trace = Trace.String.trace_of_regexp labels_str timestamps in
+             labels_str, trace, v)
+          cases
+      in
+      if v
+      then ("empty", Trace.String.trace_of_regexp "()" timestamps, true) :: tests
+      else tests
     in
     let trues = map true true_cases in
     let falses = map false false_cases in
@@ -74,27 +83,29 @@ module Make (B : BackendS) = struct
     wall_test spec cases
   ;;
 
+  let cco = clock_constraints_only
+
   let () =
     Alcotest.run
       B.test_name
       [ ( "causality"
         , order_test
-            (constraints_only [ Causality { cause = "a"; conseq = "b" } ])
+            (cco [ Causality { cause = "a"; conseq = "b" } ])
             [ "(ab)(ab)(ab)" ]
             [ "bbb"; "bababa" ] )
       ; ( "precedence"
         , order_test
-            (constraints_only [ Precedence { cause = "a"; conseq = "b" } ])
+            (cco [ Precedence { cause = "a"; conseq = "b" } ])
             [ "a(ab)(ab)" ]
             [ "(ab)(ab)" ] )
       ; ( "exclusion"
         , order_test
-            (constraints_only [ Exclusion { args = [ "a"; "b"; "c" ]; choice = None } ])
+            (cco [ Exclusion { args = [ "a"; "b"; "c" ]; choice = None } ])
             [ "abc" ]
             [ "(ab)"; "(abc)" ] )
       ; ( "periodic"
         , order_test
-            (constraints_only
+            (cco
                [ Periodic
                    { out = "o"
                    ; base = "b"
@@ -107,19 +118,17 @@ module Make (B : BackendS) = struct
             [ "bbbbbb" ] )
       ; ( "sample"
         , order_test
-            (constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ])
+            (cco [ Sample { out = "o"; arg = "i"; base = "b" } ])
             [ "ii(bo)"; "bbi(bo)" ]
             [ "bbo"; "(bo)" ] )
       ; ( "delay-trivial"
         , order_test
-            (constraints_only
-               [ Delay { out = "o"; arg = "i"; delay = const 0; base = "i" } ])
+            (cco [ Delay { out = "o"; arg = "i"; delay = const 0; base = "i" } ])
             [ "(oi)(oi)" ]
             [ "ooo"; "iiii" ] )
       ; ( "delay-simple"
         , order_test
-            (constraints_only
-               [ Delay { out = "o"; arg = "i"; delay = const 2; base = "i" } ])
+            (cco [ Delay { out = "o"; arg = "i"; delay = const 2; base = "i" } ])
             [ "ii(oi)(oi)" ]
             [ "ooo"; "iiii"; "iii(oi)(oi)"; "(oi)(oi)" ] )
       ; ( "delay-undet"
@@ -151,37 +160,37 @@ module Make (B : BackendS) = struct
             [ "ooo"; "(ib)bbb(ob)" ] )
       ; ( "minus"
         , order_test
-            (constraints_only [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ])
+            (cco [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ])
             [ "(ma)"; "(ab)(ac)(abc)"; "bc" ]
             [ "a" ] )
       ; ( "union"
         , order_test
-            (constraints_only [ Union { out = "u"; args = [ "a"; "b" ] } ])
+            (cco [ Union { out = "u"; args = [ "a"; "b" ] } ])
             [ "(uab)(ua)(ub)" ]
             [ "u"; "ab"; "ba"; "(ab)" ] )
       ; ( "alternate"
         , order_test
-            (constraints_only [ Alternate { first = "a"; second = "b"; strict = true } ])
+            (cco [ Alternate { first = "a"; second = "b"; strict = true } ])
             [ "abab" ]
             [ "baba"; "aa" ] )
       ; ( "fastest"
         , order_test
-            (constraints_only [ Fastest { out = "o"; args = [ "a"; "b" ] } ])
+            (cco [ Fastest { out = "o"; args = [ "a"; "b" ] } ])
             [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)" ]
             [ "aaaa"; "bbb"; "ooo" ] )
       ; ( "slowest"
         , order_test
-            (constraints_only [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
+            (cco [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
             [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
             [ "ooo" ] )
       ; ( "allow[f,t)"
         , order_test
-            (constraints_only [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] } ])
+            (cco [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] } ])
             [ "fab(ab)t"; "(fa)t" ]
             [ "aftb"; "b" ] )
         (* ; ( "allow(f,t]"
       , rglwt
-          (constraints_only
+          (cco
              [ Allow
                  { left = "f"
                  ; right = "t"
@@ -194,7 +203,7 @@ module Make (B : BackendS) = struct
           [ "aft"; "ftb"; "(fab)t" ] ) *)
       ; ( "allow-prec"
         , order_test
-            (constraints_only
+            (cco
                [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] }
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
@@ -203,12 +212,12 @@ module Make (B : BackendS) = struct
             [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
       ; ( "forbid[f,t)"
         , order_test
-            (constraints_only [ Forbid { left = "f"; right = "t"; args = [ "a" ] } ])
-            [ ""; "f"; "t"; "afta"; "f(ta)" ]
-            [ "fat"; "ffatt"; "a(fa)" ] )
+            (cco [ Forbid { left = "f"; right = "t"; args = [ "a" ] } ])
+            [ "f"; "afta"; "f(ta)"; "(ft)" ]
+            [ "fat"; "ffatt"; "a(fa)"; "t" ] )
       ; ( "forbid-prec"
         , order_test
-            (constraints_only
+            (cco
                [ Forbid { left = "f"; right = "t"; args = [ "a" ] }
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
@@ -217,7 +226,7 @@ module Make (B : BackendS) = struct
             [ "fat" ] )
       ; ( "fl-sampled"
         , order_test
-            (constraints_only
+            (cco
                [ FirstSampled { out = "f"; arg = "a"; base = "b" }
                ; LastSampled { out = "l"; arg = "a"; base = "b" }
                ])
@@ -225,12 +234,12 @@ module Make (B : BackendS) = struct
             [ "ab"; "(lab)" ] )
       ; ( "subclock"
         , order_test
-            (constraints_only [ Subclocking { sub = "a"; super = "b"; choice = None } ])
+            (cco [ Subclocking { sub = "a"; super = "b"; choice = None } ])
             [ "(ab)b" ]
             [ "a" ] )
       ; ( "inter"
         , order_test
-            (constraints_only [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ])
+            (cco [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ])
             [ "(iabc)abc"; "(ab)" ]
             [ "(abc)"; "(iab)" ] )
       ; ( "rt-delay"
@@ -262,10 +271,9 @@ module Make (B : BackendS) = struct
             [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
       ; ( "sporadic"
         , rtime_test
-            (constraints_only [ Sporadic { out = "a"; at_least = Const 2 } ])
+            (cco [ Sporadic { out = "a"; at_least = Const 2 } ])
             [ "aaa", [ 1; 3; 5 ] ]
             [ "aa", [ 2; 3 ] ] )
       ]
   ;;
 end
-

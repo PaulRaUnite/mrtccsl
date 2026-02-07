@@ -199,5 +199,9 @@ let to_int n =
   let result = Mpzf.fdiv_q nom denom in
   Mpz.get_int result
 ;;
+let to_int2 n =
+  let nom, denom = to_mpzf2 n in
+  Mpz.get_int nom, Mpz.get_int denom
+;;
 
 let pp fmt x = Format.pp_print_string fmt (to_string x)

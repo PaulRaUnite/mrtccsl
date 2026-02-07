@@ -165,8 +165,8 @@ statement0 :
 | INTEGER ; COLON ; e=int_expr ; l=pair(num_rel,int_expr)+ {IntRelation (e,l)}
 | DURATION ; COLON ; e=duration_expr ; l=pair(num_rel,duration_expr)+ {DurationRelation (e,l)}
 | e1=clock_expr ; r=clock_rel ; e2=clock_expr {ClockRelation (e1,r,e2)}
-| CONTINUOUS ; PROCESS ; var=var ; WITH ; dist=contdist {ContinuousProcess { var ; dist } }
-| DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteProcess { var ; values ; ratios }}
+| CONTINUOUS ; PROCESS ; var=var ; WITH ; dist=contdist {ContinuousValued { var ; dist } }
+| DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteValued { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
 | ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; LBRACKET ; left=clock_expr ; COMMA ; right=clock_expr; LBRACKET {Allow{clocks;left;right} }

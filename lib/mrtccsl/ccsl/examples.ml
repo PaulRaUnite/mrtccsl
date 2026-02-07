@@ -1,4 +1,4 @@
-open Language
+open Language.Cstr
 
 module Macro = struct
   open Language.Specification.Builder

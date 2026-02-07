@@ -70,6 +70,7 @@ module Generic = struct
     { label : 'l
     ; time : 'n
     }
+  [@@deriving sexp]
 
   type ('l, 'n) t = ('l, 'n) step Seq.t
 
@@ -91,7 +92,6 @@ module MakeIO (N : Timestamp) (L : Label) = struct
   include Generic
 
   type nonrec trace = (L.t, N.t) t
-
 
   let until ~horizon trace =
     let was_cut = ref false in
@@ -582,4 +582,6 @@ module TestWithString = struct
       (T.String.labels_of_regexp "ab(cd)")
       [ L.singleton "a"; L.singleton "b"; L.of_list [ "c"; "d" ] ]
   ;;
+
+  let%test _ = List.equal L.equal (T.String.labels_of_regexp "()") [ L.empty ]
 end

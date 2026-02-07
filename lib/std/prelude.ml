@@ -186,7 +186,7 @@ module Seq = struct
   let append_list l = List.fold_left append empty l
 
   (**[reduce_left] is similar to [fold_left], except it uses first element as as its init.*)
-  let reduce_left f acc (seq : 'a t) : 'a t =
+  let reduce_left (f : 'acc -> 'a -> 'acc) (acc : 'a -> 'acc) (seq : 'a t) : 'acc =
     match seq () with
     | Nil -> invalid_arg "empty seq"
     | Cons (x, xs) -> fold_left f (acc x) xs
@@ -242,6 +242,19 @@ module Seq = struct
   let pp ?(sep = ", ") =
     Format.pp_print_seq ~pp_sep:(fun fmt () -> Format.pp_print_string fmt sep)
   ;;
+
+  let rec fold_leftir_aux f (accu : ('acc, _) result) i xs =
+    match xs () with
+    | Nil -> accu
+    | Cons (x, xs) ->
+      let open Result.Syntax in
+      let* accu = accu in
+      let accu = f accu i x in
+      fold_leftir_aux f accu (i + 1) xs
+  ;;
+
+  let[@inline] fold_leftir f accu xs = fold_leftir_aux f accu 0 xs
+  let[@inline] fold_leftr f accu xs = fold_leftir (fun acc _ e -> f acc e) accu xs
 end
 
 module List = struct

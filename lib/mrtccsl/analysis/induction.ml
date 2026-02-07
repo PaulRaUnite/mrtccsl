@@ -69,6 +69,7 @@ end
 
 module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t) = struct
   open Language
+  open Cstr
   open Denotational
   include MakeDebug (C) (N)
 
@@ -79,11 +80,11 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
 
   include MakeExpr (C) (N)
 
-  exception ExactRelationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
-  exception OverApproximationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
+  type constr = (C.t, C.t, C.t, C.t, C.t, N.t) clock_constr
 
-  exception
-    UnderApproximationUnavailable of (C.t, C.t, C.t, C.t, C.t, N.t) Language.constr
+  exception ExactRelationUnavailable of constr
+  exception OverApproximationUnavailable of constr
+  exception UnderApproximationUnavailable of constr
 
   (** Returns exact semi-linear denotational relation of a RTCCSL constraint. Raises [ExactRelationUnavailable] otherwise.*)
   let exact_rel c =
@@ -139,8 +140,8 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
     | NumRelation (v, op, p) -> Comp (Var (FreeVar v), op, num_expr_of_expr p)
   ;;
 
-  let of_spec cf Specification.{ logical; duration; _ } =
-    let constraints = List.map (BoolExpr.norm << cf) logical in
+  let of_spec cf Specification.{ clock; duration; _ } =
+    let constraints = List.map (BoolExpr.norm << cf) clock in
     let relations = List.map var_relation duration in
     List.append constraints relations
   ;;
@@ -1512,7 +1513,7 @@ struct
   let%test_unit _ = assert (not @@ D.is_bottom (P.to_polyhedra "i" (And [])))
 
   let%test_unit _ =
-    let c = Language.Precedence { cause = "a"; conseq = "b" } in
+    let c = Language.Cstr.Precedence { cause = "a"; conseq = "b" } in
     let formula = P.exact_rel c in
     let domain = P.to_polyhedra "i" formula in
     assert (not @@ D.is_bottom domain)

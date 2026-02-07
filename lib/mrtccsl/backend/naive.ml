@@ -1,5 +1,6 @@
 open Prelude
 open Language
+open Cstr
 
 let factor = 1000.0
 
@@ -186,7 +187,6 @@ struct
     include Interval.MakeDebug (N)
 
     let of_var_rel =
-      let open Language in
       function
       | NumRelation (v, rel, Const c) ->
         let cond_f =
@@ -209,7 +209,6 @@ struct
     include Interval.MakeDebug (Number.Integer)
 
     let of_var_rel =
-      let open Language in
       function
       | NumRelation (v, rel, Const c) ->
         let cond_f =
@@ -943,7 +942,7 @@ struct
             fun n ->
               let labels =
                 match !folds with
-                | 0 -> on without eventwith
+                | 0 -> on [ [] ] [ [ from; until ]; [ from ] ]
                 | 1 -> off without eventwith
                 | _ -> forbid_more
               in
@@ -1062,7 +1061,7 @@ struct
     let guard now = Iter.of_array (guard now) in
     correctness_decorator
       { name =
-          (constr_to_string
+          (Cstr.to_string
              C.to_string
              C.to_string
              C.to_string
@@ -1148,8 +1147,8 @@ struct
     and integer_dists, duration_dists =
       List.partition_map
         (function
-          | DiscreteProcess { name; ratios } -> Either.Left (name, discr_dist_value ratios)
-          | ContinuousProcess { name; dist } -> Either.Right (name, cont_dist_value dist))
+          | DiscreteValued { name; ratios } -> Either.Left (name, discr_dist_value ratios)
+          | ContinuousValued { name; dist } -> Either.Right (name, cont_dist_value dist))
         spec.probabilistic
     in
     let integer_dists, duration_dists =
@@ -1169,7 +1168,7 @@ struct
     CMap.merge (process_combination II.inf II.return) integer_bounds integer_dists
     |> CMap.iter (VarSeq.declare_variable integers);
     let constraints =
-      List.map (of_constr (integers, durations)) Language.Specification.(spec.logical)
+      List.map (of_constr (integers, durations)) Language.Specification.(spec.clock)
     in
     { durations
     ; integers
@@ -1193,7 +1192,7 @@ struct
       (fun now ->
          let* label, time = next_step sol_strat automata now in
          Some (Trace.{ label; time }, now))
-      (N.minus_one)
+      N.minus_one
   ;;
 
   let bisimulate s { automata = a1; _ } { automata = a2; _ } : trace =
@@ -1383,20 +1382,20 @@ let%test_module _ =
            ~rand:Float.random)
     ;;
 
-    open Specification.Builder
+    open Specification
 
     let%test _ =
-      let a = A.of_spec @@ constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
+      let a = A.of_spec @@ clock_constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
       not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let a = A.of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
       not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let a = A.of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
       let trace = A.gen_trace random_strat a in
       not (Trace.is_empty trace)
     ;;
@@ -1413,7 +1412,7 @@ let%test_module _ =
     let%test _ =
       let empty1 =
         A.of_spec
-        @@ constraints_only
+        @@ clock_constraints_only
              [ Coincidence [ "a"; "b" ]
              ; Exclusion { args = [ "a"; "b" ]; choice = None }
              ]
@@ -1430,11 +1429,12 @@ let%test_module _ =
     let%test _ =
       let sampling1 =
         A.of_spec
-        @@ constraints_only
+        @@ clock_constraints_only
              [ Delay { out = "o"; arg = "i"; delay = Const 0; base = "b" } ]
       in
       let sampling2 =
-        A.of_spec @@ constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
+        A.of_spec
+        @@ clock_constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
       in
       let steps = 10 in
       let trace = A.bisimulate random_strat sampling1 sampling2 |> Trace.take ~steps in
@@ -1446,7 +1446,7 @@ let%test_module _ =
 
     let%test _ =
       let a =
-        A.of_spec @@ constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
+        A.of_spec @@ clock_constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
       in
       let trace = A.gen_trace slow_strat a |> Trace.take ~steps:10 in
       (* let g, _, _ = a in *)
