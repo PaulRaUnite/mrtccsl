@@ -129,7 +129,10 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       out.@[i] == (period &* Var (Index (i - 1)) &+ offset &+ error)
       && period > Const N.zero
       && offset >= Const N.zero
-    | Sporadic { out; at_least } -> num_expr_of_expr at_least == (out.@[i] &- out.@[i - 1])
+    | Sporadic { out; at_least; strict } ->
+      if strict
+      then num_expr_of_expr at_least < (out.@[i] &- out.@[i - 1])
+      else num_expr_of_expr at_least <= (out.@[i] &- out.@[i - 1])
     | _ -> raise (ExactRelationUnavailable c)
   ;;
 

@@ -123,7 +123,7 @@ and clock_expr' =
       { arg : clock_expr
       ; delay : duration_expr inline_relation
       }
-  | CSporadic of { at_least : duration }
+  | CSporadic of { at_least : duration ;strict: bool}
 
 and clock_expr = clock_expr' Loc.t
 

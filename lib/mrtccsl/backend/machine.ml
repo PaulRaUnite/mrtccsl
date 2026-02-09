@@ -488,8 +488,7 @@ let jitter_periodic_as_machine ~now out period error offset =
   &&& t
 ;;
 
-(* TODO: sporadic seems to lost its purpose, it is sort of periodic with arbitrary offset. *)
-let sporadic_as_machine ~now out at_least =
+let sporadic_as_machine ~now out at_least strict =
   let last_name = Printf.sprintf "last[%s]" out in
   let out = binvar out
   and at_least = rparam_to_expr at_least
@@ -497,10 +496,9 @@ let sporadic_as_machine ~now out at_least =
   let update = [ last_name =. rite out now last ] in
   [ (last <. r0) @@@ t |-> update
   ; (last >=. r0)
-    @@@ ((* forbid progress ahead of when [out] should occur *)
-         now <=. last +. at_least
-         (* [out] occurs precisely *)
-         && out <=> (last +. at_least ==. now))
+    @@@ ((* is [out] occurs then current time should depass previous + delay. *)
+         out
+         ==> if strict then last +. at_least <. now else last +. at_least <=. now)
     |-> update
   ]
   &&& t
@@ -537,7 +535,7 @@ let constraint_as_machine now
     jitter_periodic_as_machine ~now out period error offset
   | Forbid { left; right; args } -> forbid_as_machine left right args
   | Allow { left; right; args } -> allow_as_machine left right args
-  | Sporadic { out; at_least } -> sporadic_as_machine ~now out at_least
+  | Sporadic { out; at_least; strict } -> sporadic_as_machine ~now out at_least strict
   | Pool (1, open_close_pairs) -> mutex_as_machine open_close_pairs
   | Pool _ ->
     failwith "pool constraint with n > 1 is not supported in symbolic representation"

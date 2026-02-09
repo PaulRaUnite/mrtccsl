@@ -271,7 +271,7 @@ module Make (B : BackendS) = struct
             [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
       ; ( "sporadic"
         , rtime_test
-            (cco [ Sporadic { out = "a"; at_least = Const 2 } ])
+            (cco [ Sporadic { out = "a"; at_least = Const 2; strict = false } ])
             [ "aaa", [ 1; 3; 5 ] ]
             [ "aa", [ 2; 3 ] ] )
       ]

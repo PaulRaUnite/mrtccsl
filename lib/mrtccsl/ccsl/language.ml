@@ -131,6 +131,7 @@ module Cstr = struct
     | Sporadic of
         { out : 'c
         ; at_least : ('tp, 't) arg
+        ; strict : bool
         }
     | Pool of int * ('c * 'c) list (** Mutex is a special case of Pool where [n=1] *)
     | DisjunctiveUnion of

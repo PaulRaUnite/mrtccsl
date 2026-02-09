@@ -153,7 +153,7 @@ clock_expr0 :
 | PERIODIC ; period=duration ; WITH ; JITTER ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodJitter {period;error;offset}}
 | PERIODIC ; period=duration ; WITH ; DRIFT ; error=inline_relation(duration_expr) ; offset=option(offset) { CPeriodDrift {period;error;offset}}
 | DELAY ; arg=delim_clock_expr ; BY ; delay=inline_relation(duration_expr) {CTimeDelay {arg;delay}}
-| SPORADIC ; at_least=duration {CSporadic {at_least}}
+| strict=option(STRICT) ; SPORADIC ; at_least=duration {CSporadic {at_least;strict=(Option.is_some strict)}}
 
 %inline additive_union :
 | OR_EQ { AUnion }

@@ -679,7 +679,7 @@ struct
             (NI.to_string (current_error ()))
         in
         g, t, p
-      | Sporadic { out = c; at_least } ->
+      | Sporadic { out = c; at_least; strict } ->
         let current_delay, consume_delay =
           VarSeq.get_handle_param NI.return durations at_least
         in
@@ -688,9 +688,16 @@ struct
           match !last with
           | None -> [| L.singleton c, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some v ->
-            let next_after = NI.shift_by (current_delay ()) v in
-            [| L.singleton c, next_after
-             ; L.empty, Option.get (NI.complement_left next_after)
+            let delay = current_delay () in
+            let next_after = NI.shift_by delay v in
+            let left_bound = Option.get @@ NI.left_bound_opt next_after in
+            (* has to be present *)
+            [| ( L.singleton c
+               , if strict then NI.pinf_strict left_bound else NI.pinf left_bound )
+             ; ( L.empty
+               , Option.value
+                   ~default:NI.inf
+                   (Option.map NI.ninf_strict (NI.right_bound_opt next_after)) )
             |]
         in
         let t _ (l, n') =

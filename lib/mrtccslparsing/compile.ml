@@ -626,9 +626,9 @@ let into_module { assumptions; structure; assertions } =
         in
         Builder.logical builder @@ RTdelay { out; arg; delay };
         Ok context
-      | CSporadic { at_least } ->
+      | CSporadic { at_least; strict } ->
         let at_least = const (compile_duration at_least) in
-        Builder.logical builder @@ Sporadic { out; at_least };
+        Builder.logical builder @@ Sporadic { out; at_least; strict };
         Ok context
     in
     Ok (context, result_variable)
