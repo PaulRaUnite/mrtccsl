@@ -704,8 +704,8 @@ struct
           let _ =
             if L.mem c l
             then (
-              last := Some n';
-              consume_delay ())
+              if Option.is_some !last then consume_delay ();
+              last := Some n')
           in
           true
         in
@@ -713,20 +713,53 @@ struct
           Printf.sprintf "last: %s" (Option.to_string ~default:"" N.to_string !last)
         in
         g, t, p
-      | Periodic { out; base; period; _ } ->
+      | Periodic { out; base; period; error; offset } ->
+        let current_offset, consume_offset =
+          VarSeq.get_handle_param II.return integers offset
+        in
+        let current_error, consume_error =
+          VarSeq.get_handle_param II.return integers error
+        in
         let labels_eqp = label_array [ [ base; out ]; [] ] in
+        let labels_nondet = label_array [ [ base; out ]; [ base ]; [] ] in
         let labels_lp = label_array [ [ base ]; [] ] in
         let c = ref 0 in
+        let nominal = ref false in
         let g now =
-          let labels = if !c = period - 1 then labels_eqp else labels_lp in
+          Printf.printf "counter %i\n" !c;
+          Printf.printf "%s\n" @@ II.to_string (current_error ());
+          let labels =
+            if !nominal
+            then
+              if II.contains (II.shift_by (current_error ()) !c) 1
+              then (
+                let right = Option.get @@ II.right_bound_opt @@ current_error () in
+                if !c + right = 1 then labels_eqp else labels_nondet)
+              else labels_lp
+            else if II.contains (current_offset ()) !c
+            then labels_eqp
+            else labels_lp
+          in
           lo_guard labels now
         in
         let t _ (l, _) =
           let _ =
-            if L.mem base l then c := !c + 1;
-            if L.mem out l then c := 0
+            if !nominal
+            then (
+              if L.mem base l then c := !c - 1;
+              if L.mem out l
+              then (
+                c := period;
+                consume_error ()))
+            else (
+              if L.mem base l then c := !c + 1;
+              if L.mem out l
+              then (
+                nominal := true;
+                c := period;
+                consume_offset ()))
           in
-          0 <= !c && !c < period
+          true
         in
         let p () = string_of_int !c in
         g, t, p

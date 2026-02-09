@@ -277,6 +277,7 @@ let slowest_fastest_as_machine ~slowest out args =
   [ t @@@ guard |-> updates ] &&& BAnd counter_invariants
 ;;
 
+(* same as with the delays, error value has to be present immediately, not when [out] happens *)
 let periodic_as_machine out base period error offset =
   let period_counter_name =
     Printf.sprintf
@@ -292,17 +293,47 @@ let periodic_as_machine out base period error offset =
   and period = IConst period
   and error = iparam_to_expr error
   and nominal = BStateVar nominal_name in
-  [ !nominal
-    @@@ (period_counter < offset ==> !out || period_counter == offset ==> (out <=> base))
-    |-> [ period_counter_name = iite out (period + error) (period_counter + i1)
-        ; nominal_name =& (period_counter == offset)
+  [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
+    |-> [ period_counter_name
+          = iite out (period + error) (iite base (period_counter + i1) period_counter)
+        ; nominal_name =& out
         ]
   ; nominal @@@ (period_counter > i0 ==> !out || period_counter == i0 ==> (out <=> base))
-    |-> [ period_counter_name = iite out (period + error) (period_counter - i1)
+    |-> [ period_counter_name
+          = iite out (period + error) (iite base (period_counter - i1) period_counter)
         ; nominal_name =& t
         ]
   ]
   &&& (i0 <= period_counter)
+;;
+
+let periodic_as_late_acceptor out base period error offset =
+  let period_counter_name =
+    Printf.sprintf
+      "period[%s,%s,%s]"
+      base
+      (string_of_int period)
+      (iparam_to_string offset)
+  and nominal_name = Printf.sprintf "skip[%s]" (iparam_to_string offset) in
+  let period_counter = IStateVar period_counter_name
+  and out = BInputVar out
+  and base = BInputVar base
+  and offset = iparam_to_expr offset
+  and period = IConst period
+  and error = iparam_to_expr error
+  and nominal = BStateVar nominal_name in
+  [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
+    |-> [ period_counter_name
+          = iite out (period - i1) (iite base (period_counter + i1) period_counter)
+        ; nominal_name =& out
+        ]
+  ; nominal @@@ ((period_counter == error && base) <=> out)
+    |-> [ period_counter_name
+          = iite out (period - i1) (iite base (period_counter - i1) period_counter)
+        ; nominal_name =& t
+        ]
+  ]
+  &&& (!nominal ==> (i0 <= period_counter))
 ;;
 
 let first_sampled_as_machine out arg base =
@@ -336,7 +367,7 @@ let forbid_as_machine left right args =
   let forbid_args = !(BOr args) in
   let stack = IStateVar stack_counter_name in
   let stack_update = [ diff_counter_update stack_counter_name stack left right ] in
-  [ (stack == i0) @@@ (left ==> forbid_args) |-> stack_update
+  [ (stack == i0) @@@ bite left forbid_args !right |-> stack_update
   ; (stack == i1) @@@ bite (right && !left) t forbid_args |-> stack_update
   ; (stack > i1) @@@ forbid_args |-> stack_update
   ]
@@ -527,7 +558,7 @@ let constraint_as_machine now
   | FirstSampled { out; arg; base } -> first_sampled_as_machine out arg base
   | LastSampled { out; arg; base } -> last_sampled_as_machine out arg base
   | Periodic { out; base; period; error; offset } ->
-    periodic_as_machine out base period error offset
+    periodic_as_late_acceptor out base period error offset
   | RTdelay { out; arg; delay } -> rtdelay_as_late_acceptor ~now out arg delay
   | CumulPeriodic { out; period; error; offset } ->
     drift_periodic_as_machine ~now out period error offset
@@ -618,5 +649,11 @@ let accept_trace (now, machine) trace =
       (Ok state)
       trace
   in
+  Result.iter_error
+    (function
+      | FailedInvariant -> failwith "failed (at out) state invariant"
+      | NoValidTransition -> failwith "failed (at in) state invariant"
+      | _ -> ())
+    state;
   Result.is_ok state
 ;;

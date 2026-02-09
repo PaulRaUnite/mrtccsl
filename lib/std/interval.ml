@@ -33,7 +33,7 @@ module type I = sig
   val compare : t -> t -> int
   val is_empty : t -> bool
 
-  (** Inclusion test. **)
+  (** Inclusion test. *)
   val contains : t -> num -> bool
 
   val shift_by : t -> num -> t

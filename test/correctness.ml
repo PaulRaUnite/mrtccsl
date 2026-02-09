@@ -91,19 +91,24 @@ module Make (B : BackendS) = struct
       [ ( "causality"
         , order_test
             (cco [ Causality { cause = "a"; conseq = "b" } ])
-            [ "(ab)(ab)(ab)" ]
-            [ "bbb"; "bababa" ] )
+            [ "(ab)(ab)(ab)"; "a(ab)b"; "aabb" ]
+            [ "bbb"; "bababa"; "aaabbbb" ] )
       ; ( "precedence"
         , order_test
             (cco [ Precedence { cause = "a"; conseq = "b" } ])
-            [ "a(ab)(ab)" ]
-            [ "(ab)(ab)" ] )
+            [ "a(ab)(ab)"; "aaabbb" ]
+            [ "(ab)(ab)"; "aabbb"; "bbb" ] )
       ; ( "exclusion"
         , order_test
             (cco [ Exclusion { args = [ "a"; "b"; "c" ]; choice = None } ])
             [ "abc" ]
             [ "(ab)"; "(abc)" ] )
-      ; ( "periodic"
+      ; ( "coincidence"
+        , order_test
+            (cco [ Coincidence [ "a"; "b"; "c" ] ])
+            [ "(abc)(abc)(cab)" ]
+            [ "a"; "b"; "c"; "(bc)"; "(abc)a" ] )
+      ; ( "periodic[p=3;offset=0]"
         , order_test
             (cco
                [ Periodic
@@ -114,13 +119,41 @@ module Make (B : BackendS) = struct
                    ; offset = const 0
                    }
                ])
-            [ "bb(bo)bb(bo)" ]
-            [ "bbbbbb" ] )
+            [ "(bo)bb(bo)bb(bo)" ]
+            [ "bbbbbb"; "(bo)bbbbbb(bo)" ] )
+      ; ( "periodic[p=3,offset=2]"
+        , order_test
+            (cco
+               [ Periodic
+                   { out = "o"
+                   ; base = "b"
+                   ; period = 3
+                   ; error = const 0
+                   ; offset = const 2
+                   }
+               ])
+            [ "bb(bo)bb(bo)"; "bb" ]
+            [ "bbbbbb"; "(bo)bb"; "b(bo)" ] )
+      ; ( "periodic[p=3,offset=2,error=+-1]"
+        , order_test
+            (of_decl (fun b ->
+               logical b
+               @@ Periodic
+                    { out = "o"
+                    ; base = "b"
+                    ; period = 3
+                    ; error = var "e"
+                    ; offset = const 2
+                    };
+               integer b @@ NumRelation ("e", `LessEq, const 1);
+               integer b @@ NumRelation ("e", `MoreEq, const (-1))))
+            [ "bb(bo)bb(bo)"; "bb"; "bb(bo)b(bo)bbb(bo)" ]
+            [ "bbbbbbbbb"; "bb(bo)(bo)"; "bb(bo)bbbbb(bo)" ] )
       ; ( "sample"
         , order_test
             (cco [ Sample { out = "o"; arg = "i"; base = "b" } ])
             [ "ii(bo)"; "bbi(bo)" ]
-            [ "bbo"; "(bo)" ] )
+            [ "bbo"; "(bo)"; "biib" ] )
       ; ( "delay-trivial"
         , order_test
             (cco [ Delay { out = "o"; arg = "i"; delay = const 0; base = "i" } ])
@@ -162,27 +195,37 @@ module Make (B : BackendS) = struct
         , order_test
             (cco [ Minus { out = "m"; arg = "a"; except = [ "b"; "c" ] } ])
             [ "(ma)"; "(ab)(ac)(abc)"; "bc" ]
-            [ "a" ] )
+            [ "a"; "(mabc)" ] )
       ; ( "union"
         , order_test
             (cco [ Union { out = "u"; args = [ "a"; "b" ] } ])
             [ "(uab)(ua)(ub)" ]
             [ "u"; "ab"; "ba"; "(ab)" ] )
-      ; ( "alternate"
+      ; ( "disj-union"
+        , order_test
+            (cco [ DisjunctiveUnion { out = "u"; args = [ "a"; "b" ]; choice = None } ])
+            [ "(au)"; "(bu)" ]
+            [ "a"; "b"; "(uab)"; "(ab)"; "u" ] )
+      ; ( "alternate-strict"
         , order_test
             (cco [ Alternate { first = "a"; second = "b"; strict = true } ])
             [ "abab" ]
+            [ "baba"; "aa"; "a(ab)b" ] )
+      ; ( "alternate-nonstrict"
+        , order_test
+            (cco [ Alternate { first = "a"; second = "b"; strict = false } ])
+            [ "abab"; "a(ab)b" ]
             [ "baba"; "aa" ] )
       ; ( "fastest"
         , order_test
             (cco [ Fastest { out = "o"; args = [ "a"; "b" ] } ])
-            [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)" ]
-            [ "aaaa"; "bbb"; "ooo" ] )
+            [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)bbb" ]
+            [ "aaaa"; "bbb"; "ooo"; "(ao)(bo)"; "(ao)a" ] )
       ; ( "slowest"
         , order_test
             (cco [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
             [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
-            [ "ooo" ] )
+            [ "ooo"; "ab"; "bo" ] )
       ; ( "allow[f,t)"
         , order_test
             (cco [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] } ])
@@ -232,16 +275,21 @@ module Make (B : BackendS) = struct
                ])
             [ "(falb)(fa)(al)b" ]
             [ "ab"; "(lab)" ] )
-      ; ( "subclock"
+      ; ( "subclocking"
         , order_test
             (cco [ Subclocking { sub = "a"; super = "b"; choice = None } ])
             [ "(ab)b" ]
             [ "a" ] )
-      ; ( "inter"
+      ; ( "intersection"
         , order_test
             (cco [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ])
             [ "(iabc)abc"; "(ab)" ]
-            [ "(abc)"; "(iab)" ] )
+            [ "(abc)"; "(iab)"; "i" ] )
+      ; ( "rt-delay-const"
+        , rtime_test
+            (cco [ RTdelay { arg = "i"; out = "o"; delay = const 4 } ])
+            [ "io", [ 4; 8 ]; "i(io)o", [ 2; 6; 10 ]; "i", [ 500 ] ]
+            [ "io", [ 1; 2 ]; "io", [ 1; 10 ]; "o", [ 5 ] ] )
       ; ( "rt-delay"
         , rtime_test
             (of_decl (fun b ->
@@ -269,11 +317,24 @@ module Make (B : BackendS) = struct
                duration b @@ NumRelation ("e", `MoreEq, Const (-1))))
             [ "ooo", [ 2; 6; 10 ]; "ooo", [ 2; 5; 11 ] ]
             [ "o", [ 4 ]; "ooo", [ 1; 4; 7 ] ] )
-      ; ( "sporadic"
+      ; ( "sporadic-nonstrict"
         , rtime_test
             (cco [ Sporadic { out = "a"; at_least = Const 2; strict = false } ])
             [ "aaa", [ 1; 3; 5 ] ]
             [ "aa", [ 2; 3 ] ] )
+      ; ( "sporadic-strict"
+        , rtime_test
+            (cco [ Sporadic { out = "a"; at_least = Const 2; strict = true } ])
+            [ "aaa", [ 1; 4; 7 ] ]
+            [ "aaa", [ 1; 3; 5 ] ] )
+      ; ( "sporadic-strict-undet"
+        , rtime_test
+            (of_decl (fun b ->
+               logical b @@ Sporadic { out = "a"; at_least = var "d"; strict = true };
+               duration b @@ NumRelation ("d", `MoreEq, const 2);
+               duration b @@ NumRelation ("d", `LessEq, const 4)))
+            [ "aaa", [ 1; 4; 7 ] ]
+            [ "aaa", [ 1; 3; 5 ] ] )
       ]
   ;;
 end
