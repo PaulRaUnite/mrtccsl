@@ -2,6 +2,7 @@ open Prelude
 open Number
 open Expr
 
+(** Map from variables to (typically) their values. *)
 module VarMap = struct
   include Map.Make (String)
   open Sexplib0.Sexp_conv
@@ -36,10 +37,11 @@ end
 open Ppx_compare_lib.Builtin
 open Ppx_sexp_conv_lib.Conv
 
-type ('b, 'v) ite =
-  { cond : 'b
-  ; if_true : 'v
-  ; if_false : 'v
+(** Generic if-then-else type. *)
+type ('bool, 'expr) ite =
+  { cond : 'bool (** If guard. *)
+  ; if_true : 'expr (** To be evaluated when the condition is true. *)
+  ; if_false : 'expr (** To be evaluated when the condition is false. *)
   }
 [@@deriving compare, sexp]
 
@@ -47,6 +49,7 @@ type ('b, 'v) ite =
   Used to prune possibilities in polymorphic types.*)
 type empty = |
 
+(** Type of Boolean expressions. *)
 type ('sv, 'iv) bool_expr =
   | BConst of bool
   | BStateVar of 'sv
@@ -62,6 +65,7 @@ type ('sv, 'iv) bool_expr =
   | BITE of (('sv, 'iv) bool_expr, ('sv, 'iv) bool_expr) ite
   | IntQueuePositive of 'sv
 
+  (** Type of integer expressions. *)
 and ('sv, 'iv) int_expr =
   | IConst of int
   | IStateVar of 'sv
@@ -73,6 +77,7 @@ and ('sv, 'iv) int_expr =
   | IntQueueLength of 'sv
   | RatQueueLength of 'sv
 
+  (** Type of rational expressions. *)
 and ('sv, 'iv) rat_expr =
   | RConst of Rational.t
   | RStateVar of 'sv
@@ -83,6 +88,7 @@ and ('sv, 'iv) rat_expr =
   | RPeekLastQueue of 'sv
 [@@deriving compare, sexp]
 
+(** Type of integer queue expressions. *)
 type ('sv, 'iv) int_queue_expr =
   | IQVar of 'sv
   | IPushQueue of ('sv, 'iv) int_queue_expr * ('sv, 'iv) int_expr
@@ -92,6 +98,7 @@ type ('sv, 'iv) int_queue_expr =
   | IQITE of (('sv, 'iv) bool_expr, ('sv, 'iv) int_queue_expr) ite
 [@@deriving compare]
 
+(** Type of rational queue expressions. *)
 type ('sv, 'iv) rat_queue_expr =
   | RQVar of 'sv
   | RPushQueue of ('sv, 'iv) rat_queue_expr * ('sv, 'iv) rat_expr
@@ -99,6 +106,7 @@ type ('sv, 'iv) rat_queue_expr =
   | RQITE of (('sv, 'iv) bool_expr, ('sv, 'iv) rat_queue_expr) ite
 [@@deriving compare]
 
+(** Type of expressions. *)
 type ('sv, 'iv) expr =
   | BoolExpr of ('sv, 'iv) bool_expr
   | IntExpr of ('sv, 'iv) int_expr
@@ -107,7 +115,10 @@ type ('sv, 'iv) expr =
   | RatQueueExpr of ('sv, 'iv) rat_queue_expr
 [@@deriving compare]
 
+(** Type of transition guards. *)
 type ('sv, 'iv) guard = ('sv, 'iv) bool_expr [@@deriving compare]
+
+(** Type of transition assignments. *)
 type ('sv, 'iv) assignment = 'sv * ('sv, 'iv) expr [@@deriving compare]
 
 (** Transition type. Consists of conditions on state (preselect), inputs and state, and state update. *)
@@ -256,13 +267,13 @@ module Interpretation = struct
       | BImply (e1, e2) -> (not (eval_bool state inputs e1)) || eval_bool state inputs e2
       | IntComp (e1, rel, e2) ->
         do_rel
-          Int.compare
+          ~compare:Int.compare
           rel
           (eval_integer state inputs e1)
           (eval_integer state inputs e2)
       | RatComp (e1, rel, e2) ->
         do_rel
-          Rational.compare
+          ~compare:Rational.compare
           rel
           (eval_rational state inputs e1)
           (eval_rational state inputs e2)
@@ -525,6 +536,7 @@ module Interpretation = struct
     ;;
 
     module DQZ = struct
+      (** Reduced domain on [Q x Z]. *)
       type t = DQ.t * DZ.t
 
       let top = DQ.top, DZ.top
@@ -559,6 +571,7 @@ module Interpretation = struct
     end
 
     module Disj (Conj : Conj) = struct
+      (** Type of disjunctions. Represented as list of conjunctions. *)
       type t = Conj.t list
 
       let return e : t = [ e ]
@@ -603,9 +616,12 @@ module Interpretation = struct
       let bool_equal x y = (x && y) || ((not x) && not y)
     end
 
+    (** Module of propositions on [Q x Z]. *)
     module DQZF = Disj (DQZ)
 
-    module B = struct
+    (** Module for partial Boolean function evaluation.*)
+    module Dual = struct
+      (** Type representing conditions on numerical variables of when Boolean function returns true and false. *)
       type bool_result = DQZF.t * DQZF.t
 
       let wrap_const_bool c = if c then DQZF.top, DQZF.bottom else DQZF.bottom, DQZF.top
@@ -620,27 +636,28 @@ module Interpretation = struct
       let all = List.reduce_left ( && ) Fun.id
       let any = List.reduce_left ( || ) Fun.id
 
+      (** Type of numerical function returns, conditioned with a proposition on variables. *)
       type 'e result = (DQZF.t * 'e) list
+
       type int_result = DZ.a_expr result
       type rat_result = DQ.a_expr result
 
-      let int_do_rel (l : int_result) (r : int_result) rel : bool_result =
+      (** Constructs pair of conditions for when the relation is satisfied and not. *)
+      let do_rel ~of_relation ~apply (l : 'a result) (r : 'a result) rel : bool_result =
         let open Vpl.Cstr_type in
         List.cartesian l r
         |> List.map (fun ((d1, e1), (d2, e2)) ->
           let both = DQZF.(d1 && d2) in
-          let assume_in_formula cond =
-            List.map (fun (q, z) -> q, DZ.assume cond z) both
-          in
+          let assume_in_formula cond = List.map (apply cond) both in
           let convex_comparisons relt relf =
-            let tcond = DZ.of_cond @@ DZ.Cond.Atom (e1, relt, e2)
-            and fcond = DZ.of_cond @@ DZ.Cond.Atom (e1, relf, e2) in
+            let tcond = of_relation (e1, relt, e2)
+            and fcond = of_relation (e1, relf, e2) in
             assume_in_formula tcond, assume_in_formula fcond
           in
           let equal_comparisons swap_branches =
-            let t = DZ.of_cond @@ DZ.Cond.Atom (e1, EQ, e2)
-            and f1 = DZ.of_cond @@ DZ.Cond.Atom (e1, LT, e2)
-            and f2 = DZ.of_cond @@ DZ.Cond.Atom (e1, GT, e2) in
+            let t = of_relation (e1, EQ, e2)
+            and f1 = of_relation (e1, LT, e2)
+            and f2 = of_relation (e1, GT, e2) in
             let t = assume_in_formula t
             and f = List.append (assume_in_formula f1) (assume_in_formula f2) in
             if swap_branches then f, t else t, f
@@ -655,159 +672,55 @@ module Interpretation = struct
         |> List.reduce_left ( || ) Fun.id
       ;;
 
-      let rat_do_rel (l : rat_result) (r : rat_result) rel : bool_result =
-        let open Vpl.Cstr_type in
-        List.cartesian l r
-        |> List.map (fun ((d1, e1), (d2, e2)) ->
-          let both = DQZF.(d1 && d2) in
-          let assume_in_formula cond =
-            List.map (fun (q, z) -> DQ.assume cond q, z) both
-          in
-          let convex_comparisons relt relf =
-            let tcond = DQ.of_cond @@ DQ.Cond.Atom (e1, relt, e2)
-            and fcond = DQ.of_cond @@ DQ.Cond.Atom (e1, relf, e2) in
-            assume_in_formula tcond, assume_in_formula fcond
-          in
-          let equal_comparisons swap_branches =
-            let t = DQ.of_cond @@ DQ.Cond.Atom (e1, EQ, e2)
-            and f1 = DQ.of_cond @@ DQ.Cond.Atom (e1, LT, e2)
-            and f2 = DQ.of_cond @@ DQ.Cond.Atom (e1, GT, e2) in
-            let t = assume_in_formula t
-            and f = List.append (assume_in_formula f1) (assume_in_formula f2) in
-            if swap_branches then f, t else t, f
-          in
-          match rel with
-          | `Less -> convex_comparisons LT GE
-          | `LessEq -> convex_comparisons LE GT
-          | `More -> convex_comparisons GT LE
-          | `MoreEq -> convex_comparisons GE LT
-          | `Eq -> equal_comparisons false
-          | `Neq -> equal_comparisons false)
-        |> List.reduce_left ( || ) Fun.id
+      let int_do_rel (l : int_result) (r : int_result) rel : bool_result =
+        let of_relation (e1, rel, e2) = DZ.of_cond @@ DZ.Cond.Atom (e1, rel, e2)
+        and apply cond (q, z) = q, DZ.assume cond z in
+        do_rel ~of_relation ~apply l r rel
       ;;
 
-      let wrap_result e = [ DQZF.top, e ]
+      let rat_do_rel (l : rat_result) (r : rat_result) rel : bool_result =
+        let of_relation (e1, rel, e2) = DQ.of_cond @@ DQ.Cond.Atom (e1, rel, e2)
+        and apply cond (q, z) = DQ.assume cond q, z in
+        do_rel ~of_relation ~apply l r rel
+      ;;
+
+      (** When expression is not conditioned with a predicate, such as constant. *)
+      let wrap_const_result e = [ DQZF.top, e ]
     end
-    (* module B = struct
-      type bool_result = DQZF.t
-
-      let wrap_const_bool c = if c then DQZF.top else DQZF.bottom
-
-      include DQZF
-
-      let equal = DQZF.bool_equal
-      let all = List.reduce_left ( && ) Fun.id
-      let any = List.reduce_left ( || ) Fun.id
-
-      type 'e result = (DQZF.t * 'e) list
-      type int_result = DZ.a_expr result
-      type rat_result = DQ.a_expr result
-
-      let int_do_rel (l : int_result) (r : int_result) rel : bool_result =
-        let open Vpl.Cstr_type in
-        List.cartesian l r
-        |> List.map (fun ((d1, e1), (d2, e2)) ->
-          let both = DQZF.(d1 && d2) in
-          let assume_in_formula cond =
-            List.map (fun (q, z) -> q, DZ.assume cond z) both
-          in
-          let convex_comparisons relt =
-            let tcond = DZ.of_cond @@ DZ.Cond.Atom (e1, relt, e2) in
-            assume_in_formula tcond
-          in
-          let equal_comparisons swap_branches =
-            let t = DZ.of_cond @@ DZ.Cond.Atom (e1, EQ, e2)
-            and f1 = DZ.of_cond @@ DZ.Cond.Atom (e1, LT, e2)
-            and f2 = DZ.of_cond @@ DZ.Cond.Atom (e1, GT, e2) in
-            let t = assume_in_formula t
-            and f = List.append (assume_in_formula f1) (assume_in_formula f2) in
-            if swap_branches then f else t
-          in
-          match rel with
-          | `Less -> convex_comparisons LT
-          | `LessEq -> convex_comparisons LE
-          | `More -> convex_comparisons GT
-          | `MoreEq -> convex_comparisons GE
-          | `Eq -> equal_comparisons false
-          | `Neq -> equal_comparisons true)
-        |> List.reduce_left ( || ) Fun.id
-      ;;
-
-      let rat_do_rel (l : rat_result) (r : rat_result) rel : bool_result =
-        let open Vpl.Cstr_type in
-        List.cartesian l r
-        |> List.map (fun ((d1, e1), (d2, e2)) ->
-          let both = DQZF.(d1 && d2) in
-          let assume_in_formula cond =
-            List.map (fun (q, z) -> DQ.assume cond q, z) both
-          in
-          let convex_comparisons relt =
-            let tcond = DQ.of_cond @@ DQ.Cond.Atom (e1, relt, e2) in
-            assume_in_formula tcond
-          in
-          let equal_comparisons swap_branches =
-            let t = DQ.of_cond @@ DQ.Cond.Atom (e1, EQ, e2)
-            and f1 = DQ.of_cond @@ DQ.Cond.Atom (e1, LT, e2)
-            and f2 = DQ.of_cond @@ DQ.Cond.Atom (e1, GT, e2) in
-            let t = assume_in_formula t
-            and f = List.append (assume_in_formula f1) (assume_in_formula f2) in
-            if swap_branches then f else t
-          in
-          match rel with
-          | `Less -> convex_comparisons LT
-          | `LessEq -> convex_comparisons LE
-          | `More -> convex_comparisons GT
-          | `MoreEq -> convex_comparisons GE
-          | `Eq -> equal_comparisons false
-          | `Neq -> equal_comparisons true)
-        |> List.reduce_left ( || ) Fun.id
-      ;;
-
-      let wrap_result e = [ DQZF.top, e ]
-    end *)
 
     let get_iqueue state var = state.int_queue var
     let get_rqueue state var = state.rat_queue var
 
-    let trace expr (t, f) =
-      Format.printf
-        "EXPRESSION:%a\n"
-        Sexplib0.Sexp.pp_hum
-        (sexp_of_bool_expr sexp_of_string sexp_of_string expr);
-      Format.printf "-------------------------------------------\n";
-      Format.printf "-> TRUE:\n%s\n" (DQZF.to_string t);
-      Format.printf "-> FALSE:\n%s\n\n" (DQZF.to_string f)
-    ;;
-
-    (** Evaluate Boolean formula given state and input values. *)
+    (** Paritally evaluate Boolean formula given state and input values. Returns conditions of when the function returns true and false. *)
     let rec eval_bool
               (state : 'sv state_interface)
               (inputs : ('iv, DZ.t, DQ.t) input_interface)
               (expr : ('sv, 'iv) bool_expr)
-      : B.bool_result
+      : Dual.bool_result
       =
       let result =
         match expr with
-        | BConst c -> B.wrap_const_bool c
-        | BStateVar v -> B.wrap_const_bool (state.bool v)
-        | BInputVar v -> B.wrap_const_bool (inputs.bool v)
-        | BNot e -> B.not (eval_bool state inputs e)
-        | BAnd conjunctions -> List.map (eval_bool state inputs) conjunctions |> B.all
-        | BOr disjunctions -> List.map (eval_bool state inputs) disjunctions |> B.any
-        | BEq (e1, e2) -> B.equal (eval_bool state inputs e1) (eval_bool state inputs e2)
+        | BConst c -> Dual.wrap_const_bool c
+        | BStateVar v -> Dual.wrap_const_bool (state.bool v)
+        | BInputVar v -> Dual.wrap_const_bool (inputs.bool v)
+        | BNot e -> Dual.not (eval_bool state inputs e)
+        | BAnd conjunctions -> List.map (eval_bool state inputs) conjunctions |> Dual.all
+        | BOr disjunctions -> List.map (eval_bool state inputs) disjunctions |> Dual.any
+        | BEq (e1, e2) ->
+          Dual.equal (eval_bool state inputs e1) (eval_bool state inputs e2)
         | BNeq (e1, e2) ->
-          B.not (B.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
+          Dual.not (Dual.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
         | BImply (e1, e2) ->
-          B.((not (eval_bool state inputs e1)) || eval_bool state inputs e2)
+          Dual.((not (eval_bool state inputs e1)) || eval_bool state inputs e2)
         | IntComp (e1, rel, e2) ->
           let l = eval_integer state inputs e1
           and r = eval_integer state inputs e2 in
-          
-          Format.printf "LEFT: %s\n" @@ List.to_string Fun.id  (List.map (fun (d, e) -> Printf.sprintf "%s -> %s" (DQZF.to_string d) (DZ.a_expr_to_string e) ) l);
-          Format.printf "RIGHT: %s\n" @@ List.to_string Fun.id  (List.map (fun (d, e) -> Printf.sprintf "%s -> %s" (DQZF.to_string d) (DZ.a_expr_to_string e) ) r);
-          B.int_do_rel l r rel
+          Dual.int_do_rel l r rel
         | RatComp (e1, rel, e2) ->
-          B.rat_do_rel (eval_rational state inputs e1) (eval_rational state inputs e2) rel
+          Dual.rat_do_rel
+            (eval_rational state inputs e1)
+            (eval_rational state inputs e2)
+            rel
         | BITE { cond; if_true; if_false } ->
           let t, f = eval_bool state inputs cond in
           let tt, tf =
@@ -821,16 +734,16 @@ module Interpretation = struct
           in
           DQZF.((t && tt) || (f && ft), (t && tf) || (f && ff))
         | IntQueuePositive q ->
-          B.wrap_const_bool @@ Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
+          Dual.wrap_const_bool @@ Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
       in
       (* trace expr result; *)
       result
 
     (** Evaluate integer expression given state and input values. *)
-    and eval_integer state inputs : _ -> B.int_result = function
-      | IConst c -> B.wrap_result @@ DZ.Term.Cte (DZ.Coeff.of_int c)
+    and eval_integer state inputs : _ -> Dual.int_result = function
+      | IConst c -> Dual.wrap_const_result @@ DZ.Term.Cte (DZ.Coeff.of_int c)
       | IStateVar var ->
-        B.wrap_result @@ DZ.Term.Cte (DZ.Coeff.of_int @@ state.integer var)
+        Dual.wrap_const_result @@ DZ.Term.Cte (DZ.Coeff.of_int @@ state.integer var)
       | IInputVar var -> [ [ DQ.top, inputs.integer var ], DZ.Term.Var (Ident.toVar var) ]
       | IBinOp (e1, op, e2) ->
         let r1 = eval_integer state inputs e1
@@ -844,14 +757,16 @@ module Interpretation = struct
             | `Sub -> DZ.Term.Add (e1, DZ.Term.Opp e2)
             | `Mul -> DZ.Term.Mul (e1, e2) ))
       | IPeekFirstQueue qe ->
-        B.wrap_result @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.peek @@ get_iqueue state qe)
+        Dual.wrap_const_result
+        @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.peek @@ get_iqueue state qe)
       | IPeekLastQueue qe ->
-        B.wrap_result @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.last @@ get_iqueue state qe)
+        Dual.wrap_const_result
+        @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.last @@ get_iqueue state qe)
       | IntQueueLength qe ->
-        B.wrap_result
+        Dual.wrap_const_result
         @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.length @@ get_iqueue state qe)
       | RatQueueLength qe ->
-        B.wrap_result
+        Dual.wrap_const_result
         @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.length @@ get_rqueue state qe)
       | IITE { cond; if_true; if_false } ->
         let t, f = eval_bool state inputs cond
@@ -862,10 +777,10 @@ module Interpretation = struct
           (List.map (fun (d, e) -> DQZF.(f && d), e) rf)
 
     (** Evaluate rational expression given state and input values. *)
-    and eval_rational state inputs : _ -> B.rat_result = function
-      | RConst c -> B.wrap_result @@ DQ.Term.Cte (DQ.of_rational c)
+    and eval_rational state inputs : _ -> Dual.rat_result = function
+      | RConst c -> Dual.wrap_const_result @@ DQ.Term.Cte (DQ.of_rational c)
       | RStateVar var ->
-        B.wrap_result @@ DQ.Term.Cte (DQ.of_rational @@ state.rational var)
+        Dual.wrap_const_result @@ DQ.Term.Cte (DQ.of_rational @@ state.rational var)
       | RInputVar var ->
         [ [ inputs.rational var, DZ.top ], DQ.Term.Var (Ident.toVar var) ]
       | RBinOp (e1, op, e2) ->
@@ -880,9 +795,11 @@ module Interpretation = struct
             | `Sub -> DQ.Term.Add (e1, DQ.Term.Opp e2)
             | `Mul -> DQ.Term.Mul (e1, e2) ))
       | RPeekFirstQueue qe ->
-        B.wrap_result @@ DQ.Term.Cte (DQ.of_rational @@ Queue.peek @@ get_rqueue state qe)
+        Dual.wrap_const_result
+        @@ DQ.Term.Cte (DQ.of_rational @@ Queue.peek @@ get_rqueue state qe)
       | RPeekLastQueue qe ->
-        B.wrap_result @@ DQ.Term.Cte (DQ.of_rational @@ Queue.last @@ get_rqueue state qe)
+        Dual.wrap_const_result
+        @@ DQ.Term.Cte (DQ.of_rational @@ Queue.last @@ get_rqueue state qe)
       | RITE { cond; if_true; if_false } ->
         let t, f = eval_bool state inputs cond
         and rt = eval_rational state inputs if_true
@@ -911,7 +828,6 @@ module Interpretation = struct
         state
         inputs
     =
-    Printf.printf "%s\n" @@ Sexplib0.Sexp.to_string (sexp_of_state state);
     let statei = state_to_interface state in
     let abstract_inputs = input_to_interface inputs in
     let real_inputs = Full.input_to_interface inputs in
@@ -935,14 +851,15 @@ module Interpretation = struct
     | None -> Error NoValidTransition
   ;;
 
+  (** Full evaluate the step in a transition, expects all variables to have defined values. *)
   let apply_transition =
     do_transition ~input_to_interface:Full.input_to_interface ~eval_guard:Full.eval_bool
   ;;
 
+  (** Evaluate the step in a transition, while existentially quantifying the numerical variables. Allows to check specification satisfaction on traces with only timestampts and clocks. *)
   let accept_transition =
     do_transition ~input_to_interface:Partial.input_to_interface ~eval_guard:(fun s i c ->
       let t, _ = Partial.eval_bool s i c in
-      Format.printf "END OF GUARD EVALUATION:\n%s\n" (Partial.DQZF.to_string t);
       not @@ Partial.DQZF.is_bottom t)
   ;;
 end

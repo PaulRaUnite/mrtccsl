@@ -214,7 +214,8 @@ module Context = struct
           match t with
           | Ast.AUnion -> Mrtccsl.Language.Cstr.Union { out = Explicit v; args }
           | Ast.ADisjunctiveUnion ->
-            Mrtccsl.Language.Cstr.DisjunctiveUnion { out = Explicit v; args; choice = None })
+            Mrtccsl.Language.Cstr.DisjunctiveUnion
+              { out = Explicit v; args; choice = None })
       | None -> []
     in
     List.iter (Mrtccsl.Language.Specification.Builder.logical builder) constraints
@@ -689,12 +690,12 @@ let into_module { assumptions; structure; assertions } =
                 let* _ =
                   match left, right with
                   | Const cl, Const cr ->
-                    if Expr.do_rel Number.Rational.compare comp cl cr
+                    if Expr.do_rel ~compare:Number.Rational.compare comp cl cr
                     then Ok ()
                     else
                       Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
                   | Const cl, Var v ->
-                    Builder.duration builder (NumRelation (v, Expr.swap comp, Const cl));
+                    Builder.duration builder (NumRelation (v, Expr.flip comp, Const cl));
                     Ok ()
                   | Var v, x ->
                     Builder.duration builder (NumRelation (v, comp, x));
@@ -718,12 +719,12 @@ let into_module { assumptions; structure; assertions } =
                 let* _ =
                   match left, right with
                   | Const cl, Const cr ->
-                    if Expr.do_rel Int.compare comp cl cr
+                    if Expr.do_rel ~compare:Int.compare comp cl cr
                     then Ok ()
                     else
                       Error (IncorrectComparison (Loc.repack [ left_ast; right_ast ]).loc)
                   | Const cl, Var v ->
-                    Builder.integer builder (NumRelation (v, Expr.swap comp, Const cl));
+                    Builder.integer builder (NumRelation (v, Expr.flip comp, Const cl));
                     Ok ()
                   | Var v, x ->
                     Builder.integer builder (NumRelation (v, comp, x));

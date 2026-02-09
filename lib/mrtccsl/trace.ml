@@ -30,8 +30,8 @@ end *)
 
 module type Element = sig
   include Interface.Stringable
-  include Interface.OrderedType with type t := t
-  include Interface.Parseble with type t := t
+  include Interface.TotalOrder with type t := t
+  include Interface.Parseable with type t := t
 end
 
 module type Label = sig
@@ -55,7 +55,7 @@ module type Timestamp = sig
   val less : t -> t -> bool
 
   include Interface.Stringable with type t := t
-  include Interface.Parseble with type t := t
+  include Interface.Parseable with type t := t
 end
 
 (* module Make (C : Container) (L : Label) (T : Timestamp) = struct

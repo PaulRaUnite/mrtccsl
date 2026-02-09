@@ -1,35 +1,44 @@
 open Sexplib0.Sexp_conv
 open Ppx_compare_lib.Builtin
 
-(** Function composition, [f << g] if the same as f(g(x)).*)
+(** Right-to-left function composition, [f << g] if the same as [f(g(x))].*)
 let ( << ) f g x = f (g x)
 
+(** Left-to-right function composition, [g >> f] if the same as [f(g(x))].*)
 let ( >> ) g f x = f (g x)
+
 let ( >== ) = Option.bind
+
+(** Option let-bind syntax. *)
 let ( let* ) = Option.bind
 
+(** Option and-bind syntax. *)
 let ( and* ) x y =
   let* x = x in
   let* y = y in
   Some (x, y)
 ;;
 
+(** Raise exception with the given format string and parameters. *)
 let failwithf f = Printf.ksprintf failwith f
 
 module Fun = struct
   include Fun
 
+  (** Returns [None] when [f v] raises an error. [Some (f v)] otherwise. *)
   let catch_to_opt f v =
     try Some (f v) with
     | _ -> None
   ;;
 
-  let catch_with_default f v default = catch_to_opt f v |> Option.value ~default
+  (** Returns [~default] when catches error in application of [f v]. *)
+  let catch_with_default ~default f v = catch_to_opt f v |> Option.value ~default
 end
 
 module Int = struct
   include Int
 
+  (** Returns [a^n]. *)
   let rec pow a = function
     | 0 -> 1
     | 1 -> a
@@ -93,30 +102,31 @@ module Result = struct
     ;;
   end
 
-  let unwrap_to_ch ~msg ch = function
+  (** Returns [x] from [Ok x] or prints an error as message to the specified formatter. @raises ~msg as exception. *)
+  let get_ok_or_print ~msg fmt = function
     | Ok x -> x
     | Error e ->
-      Format.fprintf ch "%a" e ();
+      Format.fprintf fmt "%a" e ();
       failwith msg
   ;;
 
-  let unwrap = unwrap_to_ch Format.std_formatter
+  (** Same as {!get_ok_or_print}, but prints into std. *)
+  let get_ok_or_print_std = get_ok_or_print Format.std_formatter
 end
 
 module Seq = struct
   include Seq
 
-  (** [int_seq n] returns sequence [0...n] (not included).*)
-  let int_seq ?(step = 1) ?(start = 0) n =
-    ints start |> take (n / step) |> map (Int.mul step)
-  ;;
+  (** [int_seq ~start n] returns sequence [start...start+n] (not included). @param start defaults to 0*)
+  let int_seq ?(start = 0) n = ints start |> take n
 
   let%test _ = List.of_seq (int_seq 3) = [ 0; 1; 2 ]
+  let%test _ = List.of_seq (int_seq ~start:2 3) = [ 2; 3; 4 ]
 
   (** [int_seq_inclusive (x,y)] returns sequence [x..=y].*)
-  let int_seq_inclusive (starts, ends) =
-    assert (ends >= starts);
-    take (ends - starts + 1) (ints starts)
+  let int_seq_inclusive (start, ends) =
+    assert (ends >= start);
+    int_seq ~start (ends - start + 1)
   ;;
 
   let%test _ = List.of_seq (int_seq_inclusive (0, 2)) = [ 0; 1; 2 ]
@@ -135,6 +145,7 @@ module Seq = struct
         Cons (values, zip_list seqs))
   ;;
 
+  (** Folds the sequence until predicate [p] is not satisfied. @returns accumulator, first non-satisfied element and the rest of the sequence. *)
   let rec fold_left_until p f acc xs =
     match xs () with
     | Nil -> acc, None, xs
@@ -153,15 +164,17 @@ module Seq = struct
     left = [ 4; 3; 2; 1; 0 ] && delim = Some 5 && List.of_seq right = [ 6; 7; 8; 9 ]
   ;;
 
+  (** Returns sequence of [x] followed by [y]. *)
   let return2 x y = cons y (return x)
 
-  let to_string ?(sep = ", ") ets seq =
+  (** Returns string representation of the sequence given [to_string] of the elements. *)
+  let to_string ?(sep = ", ") e_to_string seq =
     let buf = Buffer.create 32 in
     let _ =
       Seq.fold_left
         (fun first x ->
            if not first then Buffer.add_string buf sep;
-           Buffer.add_string buf (ets x);
+           Buffer.add_string buf (e_to_string x);
            false)
         true
         seq
@@ -169,6 +182,7 @@ module Seq = struct
     Buffer.contents buf
   ;;
 
+  (** Returns an unfolding sequences seeded with [init] state, until predicate [p] is satisfied on that sequence or until the sequence length is less than [n]. @returns the sequence and bool reference that indicates that the sequences was cut according to the conditions. *)
   let unfold_for_while f init n p =
     let was_cut = ref false in
     ( Seq.unfold f init
@@ -183,17 +197,20 @@ module Seq = struct
     , was_cut )
   ;;
 
+  (** Appends all sequences in the list. *)
   let append_list l = List.fold_left append empty l
 
-  (**[reduce_left] is similar to [fold_left], except it uses first element as as its init.*)
+  (** [reduce_left] folds the sequence just as [fold_left], except it uses the first element as as its accumulator.*)
   let reduce_left (f : 'acc -> 'a -> 'acc) (acc : 'a -> 'acc) (seq : 'a t) : 'acc =
     match seq () with
     | Nil -> invalid_arg "empty seq"
     | Cons (x, xs) -> fold_left f (acc x) xs
   ;;
 
+  (** Converts pait into a sequence, left element is first. *)
   let of_pair (x, y) = return2 x y
 
+  (** Returns a sequence of cartesian products between the input sequences. *)
   let product_seq (seq : 'a t t) : 'a t t =
     reduce_left
       (fun acc seq -> product acc seq |> map (fun (f, s) -> cons s f))
@@ -207,21 +224,25 @@ module Seq = struct
       [ [ 0; 0 ]; [ 0; 1 ]; [ 1; 0 ]; [ 1; 1 ] ]
   ;;
 
+  (** Returns the first element and rest of the sequence. Raises exception when empty. *)
   let uncons_exn seq = Option.get @@ uncons seq
 
+  (** Unpacks sequence into a pair. *)
   let to_tuple2 seq =
     let x, seq = uncons_exn seq in
     let y, _ = uncons_exn seq in
     x, y
   ;;
-
+  
+  (** Unpacks sequence into a triple. *)
   let to_tuple3 seq =
     let x, seq = uncons_exn seq in
     let y, seq = uncons_exn seq in
     let z, _ = uncons_exn seq in
     x, y, z
   ;;
-
+  
+  (** Unpacks sequence into a 4-element tuple. *)
   let to_tuple4 seq =
     let x, seq = uncons_exn seq in
     let y, seq = uncons_exn seq in
@@ -229,7 +250,8 @@ module Seq = struct
     let v, _ = uncons_exn seq in
     x, y, z, v
   ;;
-
+  
+  (** Unpacks sequence into a 5-element tuple. *)
   let to_tuple5 seq =
     let x, seq = uncons_exn seq in
     let y, seq = uncons_exn seq in
@@ -239,6 +261,7 @@ module Seq = struct
     x, y, z, v, w
   ;;
 
+  (** Pretty prints a sequence into a formatter. *)
   let pp ?(sep = ", ") =
     Format.pp_print_seq ~pp_sep:(fun fmt () -> Format.pp_print_string fmt sep)
   ;;
@@ -253,7 +276,10 @@ module Seq = struct
       fold_leftir_aux f accu (i + 1) xs
   ;;
 
+  (** Folds an indexed sequence with a [Result] accumulator. *)
   let[@inline] fold_leftir f accu xs = fold_leftir_aux f accu 0 xs
+
+  (** Folds a sequence with a [Result] accumulator. *)
   let[@inline] fold_leftr f accu xs = fold_leftir (fun acc _ e -> f acc e) accu xs
 end
 
@@ -706,12 +732,12 @@ module Hashtbl = struct
   module Make (H : HashedType) = struct
     include Make (H)
 
-    let entry f default key tbl =
+    let entry ~default f key tbl =
       let v = find_opt tbl key |> Option.value ~default in
       replace tbl key (f v)
     ;;
 
-    let entry_mut f default key tbl =
+    let entry_else ~default f key tbl =
       let v = find_opt tbl key |> Option.bind_else default in
       replace tbl key (f v)
     ;;
@@ -721,7 +747,7 @@ module Hashtbl = struct
         let tbl = create size in
         Seq.fold_left
           (fun tbl v ->
-             entry (Int.add 1) 0 v tbl;
+             entry ~default:0 (Int.add 1) v tbl;
              tbl)
           tbl
           seq
@@ -729,7 +755,9 @@ module Hashtbl = struct
 
       let by_tags ?(size = 64) seq =
         let tbl = create size in
-        Seq.iter (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) [] k tbl) kl) seq;
+        Seq.iter
+          (fun (kl, v) -> List.iter (fun k -> entry (List.cons v) ~default:[] k tbl) kl)
+          seq;
         tbl
       ;;
     end

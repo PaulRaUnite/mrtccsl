@@ -38,9 +38,9 @@ type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
 
 module type ID = sig
   open Interface
-  include OrderedType
+  include TotalOrder
   include Stringable with type t := t
-  include Parseble with type t := t
+  include Parseable with type t := t
   include Sexplib0.Sexpable.S with type t := t
 end
 
@@ -48,8 +48,8 @@ module type Num = sig
   include Interval.Num
   include Interface.ExpOrder.S with type t := t
   include Interface.Stringable with type t := t
-  include Interface.Parseble with type t := t
-  include Interface.OrderedType with type t := t
+  include Interface.Parseable with type t := t
+  include Interface.TotalOrder with type t := t
 
   val zero : t
   val one : t
@@ -186,8 +186,7 @@ struct
   module NI = struct
     include Interval.MakeDebug (N)
 
-    let of_var_rel =
-      function
+    let of_var_rel = function
       | NumRelation (v, rel, Const c) ->
         let cond_f =
           match rel with
@@ -208,8 +207,7 @@ struct
   module II = struct
     include Interval.MakeDebug (Number.Integer)
 
-    let of_var_rel =
-      function
+    let of_var_rel = function
       | NumRelation (v, rel, Const c) ->
         let cond_f =
           match rel with

@@ -420,6 +420,8 @@ let rtdelay_as_machine ~now out arg delay =
   &&& t
 ;;
 
+(* TODO: another way to do acceptance is to capture symbolic value of the variable as entrace and check satisfaction when out.*)
+
 let rtdelay_as_late_acceptor ~now out arg delay =
   let queue_name, queue, out, arg, delay = rtdelay_vars out arg delay in
   let push = rqite arg (rpush queue now) queue in
@@ -541,7 +543,8 @@ let constraint_as_machine now
     failwith "pool constraint with n > 1 is not supported in symbolic representation"
 ;;
 
-let empty_machine =
+(** Empty (as it does not constrain any clocks) machine with the basic condition of strict monotonicity on the real-time progression. *)
+let empty =
   let now = "@now"
   and prev = "@prev" in
   ( now
@@ -552,7 +555,8 @@ let empty_machine =
     } )
 ;;
 
-let relation_as_machine
+(** Converts numerical relation into an abstract machine. *)
+let numerical_relation_as_machine
       invar
       of_param
       comp
@@ -567,16 +571,21 @@ open Interpretation
 
 type sim = var * (var, var) t
 
+(** Converts the specification constraints into a synchronized abstract machine. *)
 let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : sim =
   let open Symbolic.Machine in
   let icomp (e1, rel, e2) = IntComp (e1, rel, e2)
   and rcomp (e1, rel, e2) = RatComp (e1, rel, e2) in
-  let now, empty_machine = empty_machine in
+  let now, empty_machine = empty in
   let logical = Seq.map (constraint_as_machine now) (List.to_seq clock)
   and int_relations =
-    Seq.map (relation_as_machine iinvar iparam_to_expr icomp) (List.to_seq integer)
+    Seq.map
+      (numerical_relation_as_machine iinvar iparam_to_expr icomp)
+      (List.to_seq integer)
   and rat_relations =
-    Seq.map (relation_as_machine rinvar rparam_to_expr rcomp) (List.to_seq duration)
+    Seq.map
+      (numerical_relation_as_machine rinvar rparam_to_expr rcomp)
+      (List.to_seq duration)
   in
   let combined_machine =
     Seq.fold_left
@@ -600,18 +609,16 @@ let sexp_of_step =
     Number.Rational.sexp_of_t
 ;;
 
+(** Checks if machine accepts a trace. *)
 let accept_trace (now, machine) trace =
   let state = default_state in
   let state =
-    Seq.fold_leftir
-      (fun state i step ->
-         Printf.printf "step %i %s\n" i (Sexplib0.Sexp.to_string @@ sexp_of_step step);
+    Seq.fold_leftr
+      (fun state step ->
          let inputs = step_as_inputs now step in
          accept_transition machine state inputs)
       (Ok state)
       trace
   in
-  Result.iter_error (Printf.printf "error: %s\n" << transition_error_to_string) state;
-  Format.print_flush ();
   Result.is_ok state
 ;;

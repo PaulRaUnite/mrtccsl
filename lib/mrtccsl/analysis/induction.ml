@@ -2,13 +2,13 @@ open Prelude
 
 module type Var = sig
   open Interface
-  include OrderedType
+  include TotalOrder
   include Debug with type t := t
 end
 
 module type Num = sig
   open Interface
-  include OrderedType
+  include TotalOrder
   include Number.Field with type t := t
   include Debug with type t := t
 end
@@ -23,9 +23,6 @@ module Solver = struct
     type f = (v, n) bool_expr
 
     val of_formula : f -> t
-    val sat : t -> bool
-    val ( <= ) : t -> t -> bool
-    val ( && ) : t -> t -> t
     val diff : t -> t -> t list
     val more_precise : t -> t -> bool
     val index_name : v

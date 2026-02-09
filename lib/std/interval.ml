@@ -27,13 +27,13 @@ module type I = sig
   val constant_bounds : t -> (num * num) option
   val inter : t -> t -> t
 
-  (** x is subset of y**)
+  (** Is [x] subset of [y], [x <= y].**)
   val subset : t -> t -> bool
 
   val compare : t -> t -> int
   val is_empty : t -> bool
 
-  (** Does interval contains a value**)
+  (** Inclusion test. **)
   val contains : t -> num -> bool
 
   val shift_by : t -> num -> t
@@ -53,7 +53,7 @@ module type I = sig
 end
 
 module type Num = sig
-  include Set.OrderedType
+  include Interface.TotalOrder
   include Sexplib0.Sexpable.S with type t := t
 
   val ( + ) : t -> t -> t

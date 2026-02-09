@@ -149,7 +149,7 @@ module NumExpr = struct
 end
 
 module type Num = sig
-  include Interface.OrderedType
+  include Interface.TotalOrder
   include Interface.Number.Field with type t := t
 end
 
@@ -358,7 +358,7 @@ module BoolExpr = struct
   ;;
 end
 
-module MakeExpr (V : Interface.OrderedType) (N : Num) = struct
+module MakeExpr (V : Interface.TotalOrder) (N : Num) = struct
   module NumExpr = MakeExtNumExpr (N)
 
   module BoolExpr = struct

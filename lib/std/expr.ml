@@ -1,19 +1,22 @@
+(** Numeric unary operations. *)
 type num_unop =
-  [ `Neg
-  | `Floor
-  | `Ceil
-  | `Round
+  [ `Neg (** [-x]*)
+  | `Floor (** [floor(x)]*)
+  | `Ceil (** [ceil(x)]*)
+  | `Round (** [round(x)]*)
   ]
 [@@deriving sexp, compare, show]
 
+(** Numeric binary operations. *)
 type num_op =
-  [ `Add
-  | `Sub
-  | `Mul
-  | `Div
+  [ `Add (** [x + y] *)
+  | `Sub (** [x - y] *)
+  | `Mul (** [x * y] *)
+  | `Div (** [x / y] *)
   ]
 [@@deriving sexp, compare, show]
 
+(** String representation of binary numeric operations. *)
 let string_of_num_op = function
   | `Add -> "+"
   | `Sub -> "-"
@@ -21,6 +24,7 @@ let string_of_num_op = function
   | `Div -> "/"
 ;;
 
+(** Reduced set of numeric relations. *)
 type reduced_num_rel =
   [ `Less (** < *)
   | `LessEq (** <= *)
@@ -28,6 +32,7 @@ type reduced_num_rel =
   ]
 [@@deriving sexp, compare, show]
 
+(** Numeric relations. *)
 type num_rel =
   [ reduced_num_rel
   | `More (** > *)
@@ -36,6 +41,7 @@ type num_rel =
   ]
 [@@deriving sexp, compare, show]
 
+(** String representation of numeric relations. *)
 let string_of_num_rel = function
   | `Neq -> "<>"
   | `Eq -> "="
@@ -45,17 +51,19 @@ let string_of_num_rel = function
   | `LessEq -> "<="
 ;;
 
-let do_rel comp op a b =
+(** Execute the relation between operands, using the domains [~compare] function. *)
+let do_rel ~compare op a b =
   let open Number.Integer.Operators in
   match op with
-  | `Less -> comp a b < 0
-  | `LessEq -> comp a b <= 0
-  | `Eq -> comp a b = 0
-  | `More -> comp a b > 0
-  | `MoreEq -> comp a b >= 0
-  | `Neq -> comp a b <> 0
+  | `Less -> compare a b < 0
+  | `LessEq -> compare a b <= 0
+  | `Eq -> compare a b = 0
+  | `More -> compare a b > 0
+  | `MoreEq -> compare a b >= 0
+  | `Neq -> compare a b <> 0
 ;;
 
+(** Relation negation. *)
 let invert = function
   | `Less -> `MoreEq
   | `LessEq -> `More
@@ -65,7 +73,8 @@ let invert = function
   | `Neq -> `Eq
 ;;
 
-let swap = function
+(** Flips the relation. Used in normalization. *)
+let flip = function
   | `Less -> `More
   | `LessEq -> `MoreEq
   | `Eq -> `Eq

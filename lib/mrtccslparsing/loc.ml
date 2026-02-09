@@ -47,7 +47,7 @@ let highlight ~warning lexbuf (s : Lexing.position) (f : Lexing.position) (msg :
       Fun.catch_with_default
         (Bytes.index_from lexbuf f.pos_cnum)
         '\n'
-        (Bytes.length lexbuf)
+        ~default:(Bytes.length lexbuf)
       - s.pos_bol
     in
     let line =
@@ -125,9 +125,9 @@ let highlight ~color ~symbol loc msg =
       and linenum = Format.sprintf "%i |" s.pos_lnum
       and linewidth =
         Fun.catch_with_default
+          ~default:(Bytes.length lexbuf)
           (Bytes.index_from lexbuf f.pos_cnum)
           '\n'
-          (Bytes.length lexbuf)
         - s.pos_bol
       in
       let line =

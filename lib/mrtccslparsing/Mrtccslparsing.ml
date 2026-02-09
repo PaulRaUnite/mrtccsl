@@ -6,7 +6,7 @@ let load filename error_ch =
     Parse.from_file filename
     |> Result.map_error (fun pp_e ->
       fun fmt -> Format.fprintf fmt "Parsing error: %a" pp_e)
-    |> Result.unwrap_to_ch ~msg:"Failed in parsing." error_ch
+    |> Result.get_ok_or_print ~msg:"Failed in parsing." error_ch
   in
   let context, m, errors = Compile.into_module ast in
   if not (List.is_empty errors)

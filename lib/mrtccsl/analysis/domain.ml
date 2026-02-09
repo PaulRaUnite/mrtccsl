@@ -2,7 +2,7 @@ open Prelude
 
 module type Var = sig
   open Interface
-  include OrderedType
+  include TotalOrder
   include Interface.Debug with type t := t
 end
 
