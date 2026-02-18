@@ -1,14 +1,20 @@
 open Prelude
+open Number
+
+module type P = sig
+  include Interface.TotalOrder
+  include Sexplib0.Sexpable.S with type t := t
+end
 
 module type T = sig
   module Place : Interface.TotalOrder
   module Transition : Interface.TotalOrder
-  module Color : Interface.TotalOrder
-  module Event : Interface.TotalOrder
+  module Color : P
+  module Event : P
   module Probe : Interface.TotalOrder
 
   module Time : sig
-    include Interface.TotalOrder
+    include P
     include Interface.Number.Ring with type t := t
   end
 
@@ -21,18 +27,26 @@ module type T = sig
 end
 
 module Network (T : T) = struct
+  open Ppx_compare_lib.Builtin
+  open Ppx_sexp_conv_lib.Conv
   include T
 
   type place_type =
     | Variable
     | Queue
 
-  module Coloring = Set.Make (Color)
+  module Coloring = struct
+    include Set.Make (Color)
+
+    let sexp_of_t = sexp_of_list Color.sexp_of_t << to_list
+    let t_of_sexp = list_of_sexp Color.t_of_sexp >> of_list
+  end
 
   type token =
-    { visits : (event * time) list
+    { visits : (Event.t * Time.t) list
     ; coloring : Coloring.t
     }
+  [@@deriving compare, sexp]
 
   let empty_token = { visits = []; coloring = Coloring.empty }
 
@@ -90,7 +104,7 @@ module Network (T : T) = struct
   type t =
     { places : inner_place Places.t
     ; transitions : inner_transition Transitions.t
-    ; probes : (color_match * transition) Probes.t
+    ; probes : (color_match * Transition.t) Probes.t
     }
 
   let empty =
@@ -105,7 +119,7 @@ module Network (T : T) = struct
     | IncompatibleProbeDefinition of probe
 
   (** Adds variable place to the network. *)
-  let add_variable net id =
+  let add_variable id net =
     match Places.find_opt id net.places with
     | Some (Variable _) -> Ok net
     | Some _ -> Error (IncompatiblePlaceDefinition id)
@@ -114,7 +128,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds queue variable to the network. *)
-  let add_queue net id =
+  let add_queue id net =
     match Places.find_opt id net.places with
     | Some (Queue _) -> Ok net
     | Some _ -> Error (IncompatiblePlaceDefinition id)
@@ -122,7 +136,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds an empty transition with an event. *)
-  let add_transition net id event =
+  let add_transition id event net =
     match Transitions.find_opt id net.transitions with
     | None ->
       Ok
@@ -140,7 +154,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds dependency (input arc) to a transition. All inputs need to have data in order to activate the transition. *)
-  let add_dependency net id source =
+  let add_dependency id source net =
     match Transitions.find_opt id net.transitions with
     | None -> Error (MissingTransition id)
     | Some t ->
@@ -155,7 +169,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds cause (output arc) to a transition. *)
-  let add_cause net id target =
+  let add_cause id target net =
     match Transitions.find_opt id net.transitions with
     | None -> Error (MissingTransition id)
     | Some t ->
@@ -170,7 +184,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds coloring to output tokens of a transition. *)
-  let inject_color net at color =
+  let inject_color at color net =
     match Transitions.find_opt at net.transitions with
     | None -> Error (MissingTransition at)
     | Some t ->
@@ -185,7 +199,7 @@ module Network (T : T) = struct
   ;;
 
   (** Adds a probe on output tokens of the transition. *)
-  let add_probe net id m at =
+  let add_probe id m at net =
     match Probes.find_opt id net.probes with
     | None -> Ok { net with probes = Probes.add id (m, at) net.probes }
     | Some (existing_m, existing_at) ->
@@ -228,7 +242,9 @@ module Network (T : T) = struct
       let fold_transition id { input_arcs; output_arcs; event; coloring } index =
         let inputs = place_list input_arcs in
         let outputs = place_list output_arcs in
-        let extracts = Transitions.find id transition_to_probe in
+        let extracts =
+          Option.value ~default:[] @@ Transitions.find_opt id transition_to_probe
+        in
         let transition = { inputs; outputs; coloring; extracts } in
         Events.entry ~default:[] (List.cons transition) event index
       in
@@ -290,17 +306,17 @@ struct
   include Network (T)
 
   (** Adds a place under a variable and arcs in transitions reading and writing to the place. *)
-  let declare_data_connection construct_place net variable_name writes reads =
+  let declare_data_connection construct_place variable_name writes reads net =
     let open Result.Syntax in
-    let* net = construct_place net variable_name in
-    let populate_transition net event = add_transition net event event in
+    let* net = construct_place variable_name net in
+    let populate_transition net event = add_transition event event net in
     let populate_read net event =
       let* net = populate_transition net event in
-      add_dependency net event variable_name
+      add_dependency event variable_name net
     in
     let populate_write net event =
       let* net = populate_transition net event in
-      add_cause net event variable_name
+      add_cause event variable_name net
     in
     let* net = List.fold_leftr populate_write net writes in
     let* net = List.fold_leftr populate_read net reads in
@@ -401,3 +417,83 @@ struct
     aux chains trace
   ;;
 end
+
+let%test_module "causal witness flow network" =
+  (module struct
+    include EventEqTransition (struct
+        module Event = String
+        module Transition = String
+        module Place = String
+        module Probe = Integer
+        module Color = String
+        module Time = Integer
+
+        type place = Place.t
+        type event = Event.t
+        type probe = Probe.t
+        type time = Time.t
+        type color = Color.t
+        type transition = Transition.t
+      end)
+
+    let s = "sensor"
+    let c = "controller"
+    let a = "actuator"
+    let q = "queue"
+    let v = "variable"
+    let chain_color = "test"
+    let chain_probe = 0
+
+    (** s -> c ? a
+     s period = 3
+     c event-triggered on s
+     a period = 5 *)
+    let net =
+      Result.get_ok
+        Result.Syntax.(
+          let net = empty in
+          let* net = queueing q [ s ] [ c ] net in
+          let* net = sampling_variable v [ c ] [ a ] net in
+          let* net = inject_color s chain_color net in
+          let* net = add_probe chain_probe (Single chain_color) a net in
+          Ok net)
+    ;;
+
+    let trace1 =
+      Trace.
+        [ { label = [ s; c; a ]; time = 0 }
+        ; { label = []; time = 1 }
+        ; { label = []; time = 2 }
+        ; { label = [ s; c ]; time = 3 }
+        ; { label = []; time = 4 }
+        ; { label = [ a ]; time = 5 }
+        ; { label = [ s; c ]; time = 6 }
+        ]
+    ;;
+
+    let trace2 = Trace.[ { label = [ s; a; c ]; time = 0 } ]
+
+    open Ppx_sexp_conv_lib.Conv
+    open Ppx_compare_lib.Builtin
+
+    let get_chains trace =
+      let compiled_net = Compiled.of_dynamic net in
+      let compiled_net =
+        Compiled.consume_seq_trace ~to_iter:List.to_seq compiled_net (List.to_seq trace)
+      in
+      let probes = Compiled.extracted compiled_net in
+      let chains = Probes.find chain_probe probes in
+      Dynarray.to_list chains
+    ;;
+
+    let%test_unit "nominal" =
+      [%test_eq: token list]
+        (get_chains trace1)
+        [ { visits = [ a, 0; c, 0; s, 0 ]; coloring = Coloring.singleton chain_color }
+        ; { visits = [ a, 5; c, 3; s, 3 ]; coloring = Coloring.singleton chain_color }
+        ]
+    ;;
+
+    let%test_unit "unfavorable microstep" = [%test_eq: token list] (get_chains trace2) []
+  end)
+;;
