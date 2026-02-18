@@ -227,13 +227,19 @@ module Seq = struct
   (** Returns the first element and rest of the sequence. Raises exception when empty. *)
   let uncons_exn seq = Option.get @@ uncons seq
 
+  let uncons_opt seq =
+    match seq () with
+    | Nil -> None, empty
+    | Cons (x, xs) -> Some x, xs
+  ;;
+
   (** Unpacks sequence into a pair. *)
   let to_tuple2 seq =
     let x, seq = uncons_exn seq in
     let y, _ = uncons_exn seq in
     x, y
   ;;
-  
+
   (** Unpacks sequence into a triple. *)
   let to_tuple3 seq =
     let x, seq = uncons_exn seq in
@@ -241,7 +247,7 @@ module Seq = struct
     let z, _ = uncons_exn seq in
     x, y, z
   ;;
-  
+
   (** Unpacks sequence into a 4-element tuple. *)
   let to_tuple4 seq =
     let x, seq = uncons_exn seq in
@@ -250,7 +256,7 @@ module Seq = struct
     let v, _ = uncons_exn seq in
     x, y, z, v
   ;;
-  
+
   (** Unpacks sequence into a 5-element tuple. *)
   let to_tuple5 seq =
     let x, seq = uncons_exn seq in
@@ -281,6 +287,20 @@ module Seq = struct
 
   (** Folds a sequence with a [Result] accumulator. *)
   let[@inline] fold_leftr f accu xs = fold_leftir (fun acc _ e -> f acc e) accu xs
+
+  let minmax compare seq =
+    let select_min_or_max state element =
+      match state with
+      | None -> Some (element, element)
+      | Some (min, max) ->
+        if compare min element > 0
+        then Some (element, max)
+        else if compare element max > 0
+        then Some (min, element)
+        else Some (min, max)
+    in
+    fold_left select_min_or_max None seq
+  ;;
 end
 
 module List = struct
@@ -596,6 +616,18 @@ module List = struct
       | x :: l -> Result.bind (f accu x) (fun (accu, x) -> aux accu (x :: l_accu) l)
     in
     aux accu [] l
+  ;;
+
+  let fold_leftr f accu l =
+    let open Result.Syntax in
+    let rec aux acc = function
+      | [] -> acc
+      | x :: l ->
+        let* acc = acc in
+        let acc = f acc x in
+        aux acc l
+    in
+    aux (Ok accu) l
   ;;
 
   let rec insert list x index =
