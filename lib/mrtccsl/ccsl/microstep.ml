@@ -18,7 +18,7 @@ let derive_order spec =
        (Hashtbl.create 16)
 ;;
 
-(*WARNING: this implementation orders any present causaly-related clocks inside the step, thus the information about causality should be supplied per step basis.*)
+(** Orders present causaly-related clocks inside the [label] as indicated in [restrictions], thus the information about causality should be supplied per step basis.*)
 let arrange_randomly restrictions label =
   let module I = Interval.Make (Number.Integer) in
   let label, _ =

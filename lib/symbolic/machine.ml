@@ -65,7 +65,7 @@ type ('sv, 'iv) bool_expr =
   | BITE of (('sv, 'iv) bool_expr, ('sv, 'iv) bool_expr) ite
   | IntQueuePositive of 'sv
 
-  (** Type of integer expressions. *)
+(** Type of integer expressions. *)
 and ('sv, 'iv) int_expr =
   | IConst of int
   | IStateVar of 'sv
@@ -77,7 +77,7 @@ and ('sv, 'iv) int_expr =
   | IntQueueLength of 'sv
   | RatQueueLength of 'sv
 
-  (** Type of rational expressions. *)
+(** Type of rational expressions. *)
 and ('sv, 'iv) rat_expr =
   | RConst of Rational.t
   | RStateVar of 'sv
@@ -654,21 +654,21 @@ module Interpretation = struct
             and fcond = of_relation (e1, relf, e2) in
             assume_in_formula tcond, assume_in_formula fcond
           in
-          let equal_comparisons swap_branches =
+          let equal_comparisons () =
             let t = of_relation (e1, EQ, e2)
             and f1 = of_relation (e1, LT, e2)
             and f2 = of_relation (e1, GT, e2) in
             let t = assume_in_formula t
             and f = List.append (assume_in_formula f1) (assume_in_formula f2) in
-            if swap_branches then f, t else t, f
+            t, f
           in
           match rel with
           | `Less -> convex_comparisons LT GE
           | `LessEq -> convex_comparisons LE GT
           | `More -> convex_comparisons GT LE
           | `MoreEq -> convex_comparisons GE LT
-          | `Eq -> equal_comparisons false
-          | `Neq -> equal_comparisons true)
+          | `Eq -> equal_comparisons ()
+          | `Neq -> not @@ equal_comparisons ())
         |> List.reduce_left ( || ) Fun.id
       ;;
 
@@ -979,9 +979,18 @@ module Syntax = struct
   (** Transition description with invariant. *)
   let ( &&& ) transitions invariant = { transitions; invariant }
 
+  (** Assigns integer expression to an integer variable. *)
   let ( = ) v' e = v', IntExpr e
+
+  (** Assigns rational expression to a rational variable. *)
   let ( =. ) v' e = v', RatExpr e
+
+  (** Assigns Boolean expression to a Boolean variable. *)
   let ( =& ) v' e = v', BoolExpr e
+
+  (** Assigns integer queue expression to an integer queue variable. *)
   let ( =| ) v' e = v', IntQueueExpr e
+
+  (** Assigns rational queue expression to an rational queue variable. *)
   let ( =|. ) v' e = v', RatQueueExpr e
 end

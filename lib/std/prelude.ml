@@ -78,6 +78,11 @@ module Option = struct
     | None -> failwithf "expected: %s" expect
   ;;
 
+  let unwrap_exn ~expect = function
+    | Some x -> x
+    | None -> raise expect
+  ;;
+
   let to_string ~default f = function
     | Some x -> f x
     | None -> default
@@ -949,6 +954,75 @@ module Dynarray = struct
 
   let to_iter a f = iter f a
   let map_inplace f a = iteri (fun i v -> Dynarray.set a i (f v)) a
+
+  let append_alloc a1 a2 =
+    let new_len = Dynarray.length a1 + Dynarray.length a2 in
+    let a = Dynarray.create () in
+    Dynarray.ensure_capacity a new_len;
+    Dynarray.append a a1;
+    Dynarray.append a a2;
+    a
+  ;;
+
+  let singleton e = Dynarray.make 1 e
+  let t_of_sexp e_of_sexp = Dynarray.of_list << Sexplib0.Sexp_conv.list_of_sexp e_of_sexp
+  let sexp_of_t sexp_of_e = Dynarray.to_list >> Sexplib0.Sexp_conv.sexp_of_list sexp_of_e
+  let cutoff = 5
+
+  (** Sorts the array. Copied from [Array] module. *)
+  let stable_sort cmp a =
+    let merge src1ofs src1len src2 src2ofs src2len dst dstofs =
+      let src1r = src1ofs + src1len
+      and src2r = src2ofs + src2len in
+      let rec loop i1 s1 i2 s2 d =
+        if cmp s1 s2 <= 0
+        then (
+          set dst d s1;
+          let i1 = i1 + 1 in
+          if i1 < src1r
+          then loop i1 (get a i1) i2 s2 (d + 1)
+          else blit ~src:src2 ~src_pos:i2 ~dst ~dst_pos:(d + 1) ~len:(src2r - i2))
+        else (
+          set dst d s2;
+          let i2 = i2 + 1 in
+          if i2 < src2r
+          then loop i1 s1 i2 (get src2 i2) (d + 1)
+          else blit ~src:a ~src_pos:i1 ~dst ~dst_pos:(d + 1) ~len:(src1r - i1))
+      in
+      loop src1ofs (get a src1ofs) src2ofs (get src2 src2ofs) dstofs
+    in
+    let isortto srcofs dst dstofs len =
+      for i = 0 to len - 1 do
+        let e = get a (srcofs + i) in
+        let j = ref (dstofs + i - 1) in
+        while !j >= dstofs && cmp (get dst !j) e > 0 do
+          set dst (!j + 1) (get dst !j);
+          decr j
+        done;
+        set dst (!j + 1) e
+      done
+    in
+    let rec sortto srcofs dst dstofs len =
+      if len <= cutoff
+      then isortto srcofs dst dstofs len
+      else (
+        let l1 = len / 2 in
+        let l2 = len - l1 in
+        sortto (srcofs + l1) dst (dstofs + l1) l2;
+        sortto srcofs a (srcofs + l2) l1;
+        merge (srcofs + l2) l1 dst (dstofs + l1) l2 dst dstofs)
+    in
+    let l = length a in
+    if l <= cutoff
+    then isortto 0 a 0 l
+    else (
+      let l1 = l / 2 in
+      let l2 = l - l1 in
+      let t = make l2 (get a 0) in
+      sortto l1 t 0 l2;
+      sortto 0 a l2 l1;
+      merge l2 l1 t 0 l2 a 0)
+  ;;
 end
 
 module Iter = struct

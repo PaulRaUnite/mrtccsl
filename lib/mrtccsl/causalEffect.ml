@@ -7,11 +7,11 @@ module type P = sig
 end
 
 module type T = sig
-  module Place : Interface.TotalOrder
+  module Place : P
   module Transition : Interface.TotalOrder
   module Color : P
   module Event : P
-  module Probe : Interface.TotalOrder
+  module Probe : P
 
   module Time : sig
     include P
@@ -27,9 +27,24 @@ module type T = sig
 end
 
 module Network (T : T) = struct
-  open Ppx_compare_lib.Builtin
   open Ppx_sexp_conv_lib.Conv
   include T
+  module Places = Map.Make (Place)
+  module Transitions = Map.Make (Transition)
+
+  module Events = struct
+    include Map.Make (Event)
+
+    let sexp_of_t sexp_of_e =
+      sexp_of_list (sexp_of_pair Event.sexp_of_t sexp_of_e) << to_list
+    ;;
+
+    let t_of_sexp e_of_sexp =
+      list_of_sexp (pair_of_sexp Event.t_of_sexp e_of_sexp) >> of_list
+    ;;
+  end
+
+  module Probes = Map.Make (Probe)
 
   type place_type =
     | Variable
@@ -43,19 +58,34 @@ module Network (T : T) = struct
   end
 
   type token =
-    { visits : (Event.t * Time.t) list
+    { visits : Time.t Dynarray.t Events.t
     ; coloring : Coloring.t
     }
   [@@deriving compare, sexp]
 
-  let empty_token = { visits = []; coloring = Coloring.empty }
+  let empty_token = { visits = Events.empty; coloring = Coloring.empty }
 
   let merge_tokens { visits = v1; coloring = c1 } { visits = v2; coloring = c2 } =
-    { visits = List.append v1 v2; coloring = Coloring.union c1 c2 }
+    { visits =
+        Events.union
+          (fun _ a1 a2 ->
+             let arr = Dynarray.append_alloc a1 a2 in
+             Dynarray.stable_sort Time.compare arr;
+             Some arr)
+          v1
+          v2
+    ; coloring = Coloring.union c1 c2
+    }
   ;;
 
   let visit { visits; coloring } event time more_color =
-    { visits = (event, time) :: visits; coloring = Coloring.union coloring more_color }
+    let update_array arr =
+      Dynarray.add_last arr time;
+      arr
+    in
+    { visits = Events.entry_mut ~default:Dynarray.create update_array event visits
+    ; coloring = Coloring.union coloring more_color
+    }
   ;;
 
   type inner_place =
@@ -95,11 +125,6 @@ module Network (T : T) = struct
     | And (m1, m2) -> check_color_match coloring m1 && check_color_match coloring m2
     | Or (m1, m2) -> check_color_match coloring m1 || check_color_match coloring m2
   ;;
-
-  module Places = Map.Make (Place)
-  module Transitions = Map.Make (Transition)
-  module Events = Map.Make (Event)
-  module Probes = Map.Make (Probe)
 
   type t =
     { places : inner_place Places.t
@@ -253,37 +278,35 @@ module Network (T : T) = struct
     ;;
 
     let consume_seq_trace ~to_iter:to_seq network trace : t =
+      let try_transition time event { inputs; outputs; coloring; extracts } =
+        let can_read input_place =
+          let token, _ = read_from_place !input_place in
+          Option.is_some token
+        in
+        let can_read_all = List.for_all can_read inputs in
+        if can_read_all
+        then (
+          let read_token input_place =
+            let token, new_place = read_from_place !input_place in
+            input_place := new_place;
+            token
+          in
+          let input_tokens = List.filter_map read_token inputs in
+          let combined_input = List.fold_left merge_tokens empty_token input_tokens in
+          let token = visit combined_input event time coloring in
+          let write_token output_place =
+            output_place := write_to_place token !output_place
+          in
+          List.iter write_token outputs;
+          let extract_token (color_match, probe_list) =
+            if check_color_match token.coloring color_match
+            then Dynarray.add_last probe_list token
+          in
+          List.iter extract_token extracts)
+      in
       let process_event time net event =
         let transitions = Events.find event net.event_index in
-        List.iter
-          (fun { inputs; outputs; coloring; extracts } ->
-             let can_read input_place =
-               let token, _ = read_from_place !input_place in
-               Option.is_some token
-             in
-             let can_read_all = List.for_all can_read inputs in
-             if can_read_all
-             then (
-               let read_token input_place =
-                 let token, new_place = read_from_place !input_place in
-                 input_place := new_place;
-                 token
-               in
-               let input_tokens = List.filter_map read_token inputs in
-               let combined_input =
-                 List.fold_left merge_tokens empty_token input_tokens
-               in
-               let token = visit combined_input event time coloring in
-               let write_token output_place =
-                 output_place := write_to_place token !output_place
-               in
-               List.iter write_token outputs;
-               let extract_token (color_match, probe_list) =
-                 if check_color_match token.coloring color_match
-                 then Dynarray.add_last probe_list token
-               in
-               List.iter extract_token extracts))
-          transitions;
+        List.iter (try_transition time event) transitions;
         net
       in
       let process_step net Trace.{ label; time } =
@@ -329,24 +352,68 @@ struct
   (** Establishes a one-to-one relationship between the write and read events. *)
   let queueing = declare_data_connection add_queue
 
+  module Declaration = struct
+    open Sexplib0.Sexp_conv
+    open Ppx_compare_lib.Builtin
+
+    type record =
+      | Variable of
+          { name : T.Place.t
+          ; writes : Event.t list
+          ; reads : Event.t list
+          }
+      | Queue of
+          { name : T.Place.t
+          ; writes : Event.t list
+          ; reads : Event.t list
+          }
+      | Inject of
+          { at : Event.t
+          ; colors : Color.t list
+          }
+      | Probe of
+          { name : Probe.t
+          ; expect_all : Color.t list
+          ; at : Event.t
+          }
+    [@@deriving sexp, compare]
+
+    type t = record list [@@deriving sexp, compare]
+
+    let to_net records =
+      let execute_record net = function
+        | Variable { name; writes; reads } -> sampling_variable name writes reads net
+        | Queue { name; writes; reads } -> queueing name writes reads net
+        | Inject { at; colors } ->
+          List.fold_leftr (fun net color -> inject_color at color net) net colors
+        | Probe { name; expect_all; at } ->
+          let individual_matches = List.map (fun c -> Single c) expect_all in
+          let all_match = List.fold_merge (fun l r -> And (l, r)) individual_matches in
+          add_probe name all_match at net
+      in
+      List.fold_leftr execute_record empty records
+    ;;
+  end
+
   (** Largest difference between the witnessed event timestampts. *)
   let witness_interval token =
     (* FIXME: it is probably a good idea to indicate the start points *)
-    let (_, ts_min), (_, ts_max) =
-      List.minmax (fun (_, ts1) (_, ts2) -> Time.compare ts1 ts2) token.visits
+    let* ts_min, ts_max =
+      token.visits
+      |> Events.to_seq
+      |> Seq.flat_map (fun (_, times) -> Dynarray.to_seq times)
+      |> Seq.minmax Time.compare
     in
-    Time.sub ts_max ts_min
+    Some (Time.sub ts_max ts_min)
   ;;
 
   (** Computes shortest and longest event chains that pass through the same event. *)
   let shortest_longest_chains event tokens =
-    let is_event (e, _) = Event.compare event e = 0 in
     let one_event_equality { visits = v1; _ } { visits = v2; _ } =
-      (* FIXME: linear search on linked list, will cause problems with long chains. *)
-      let witness1 = List.find_opt is_event v1
-      and witness2 = List.find_opt is_event v2 in
-      match witness1, witness2 with
-      | Some (_, ts1), Some (_, ts2) -> Time.compare ts1 ts2 = 0
+      let ts1 = Events.find_opt event v1
+      and ts2 = Events.find_opt event v2 in
+      match ts1, ts2 with
+      | Some ts1, Some ts2 -> Dynarray.compare Time.compare ts1 ts2 = 0
       | _ -> false
     in
     let continuous_groups = Seq.group one_event_equality (Dynarray.to_seq tokens) in
@@ -354,36 +421,45 @@ struct
       (fun group ->
          let with_spans = Seq.map (fun token -> token, witness_interval token) group in
          Seq.minmax
-           (fun (_, interval1) (_, interval2) -> Time.compare interval1 interval2)
+           (fun (_, interval1) (_, interval2) ->
+              Option.compare Time.compare interval1 interval2)
            with_spans)
       continuous_groups
   ;;
 
+  exception MissingEvent of Event.t [@@deriving sexp]
+
   (** Adds full interval causal link. Corresponds to the time between the event and its previous appearence with a successful chain.*)
   let full_interval event chains =
-    let get_event_timestamp (token, _) =
-      let* _, timestamp =
-        List.find_opt (fun (e, _) -> Event.compare event e = 0) token.visits
+    let get_first_timestamp (token, _) =
+      let times =
+        Option.unwrap_exn ~expect:(MissingEvent event)
+        @@ Events.find_opt event token.visits
       in
-      Some timestamp
+      let first = Dynarray.get times 0 in
+      first
+    in
+    let get_last_timestamp (token, _) =
+      let times = Events.find event token.visits in
+      let first = Dynarray.get_last times in
+      first
     in
     let rec aux prev seq () =
       match seq () with
       | Seq.Nil -> Seq.Nil
       | Seq.Cons (chain, rest) ->
-        (match get_event_timestamp chain with
-         | None -> Seq.Nil
-         | Some next -> Cons ((chain, Time.sub next prev), aux next rest))
+        let first = get_first_timestamp chain
+        and last = get_last_timestamp chain in
+        Cons ((chain, Time.sub first prev), aux last rest)
     in
     let prev, seq = Seq.uncons_opt chains in
-    match Option.bind prev get_event_timestamp with
+    match Option.map get_last_timestamp prev with
     | None -> Seq.empty
     | Some prev -> aux prev seq
   ;;
 
   (** Adds reduced interval causal link. Corresponds to the time between the event and its previous appearence. *)
   let reduced_interval ~to_seq event chains trace =
-    let is_event e = Event.compare event e = 0 in
     let trace =
       Seq.flat_map
         (fun Trace.{ label; time } -> Seq.map (fun e -> e, time) (to_seq label))
@@ -408,11 +484,16 @@ struct
       match chains () with
       | Seq.Nil -> Seq.Nil
       | Seq.Cons (chain, rest) ->
-        let _, time = List.find (fun (e, _) -> is_event e) chain.visits in
-        let previous, trace = advance_until time None trace in
-        (match previous with
+        let times =
+          Option.unwrap_exn ~expect:(MissingEvent event)
+          @@ Events.find_opt event chain.visits
+        in
+        (* CORRECTNESS: presence of [first] should be guaranteed by non-empty option *)
+        let first = Dynarray.get times 0 in
+        let just_before, trace = advance_until first None trace in
+        (match just_before with
          | None -> aux rest trace ()
-         | Some previous -> Seq.Cons ((chain, Time.sub time previous), aux rest trace))
+         | Some previous -> Seq.Cons ((chain, Time.sub first previous), aux rest trace))
     in
     aux chains trace
   ;;
@@ -448,16 +529,16 @@ let%test_module "causal witness flow network" =
      s period = 3
      c event-triggered on s
      a period = 5 *)
-    let net =
-      Result.get_ok
-        Result.Syntax.(
-          let net = empty in
-          let* net = queueing q [ s ] [ c ] net in
-          let* net = sampling_variable v [ c ] [ a ] net in
-          let* net = inject_color s chain_color net in
-          let* net = add_probe chain_probe (Single chain_color) a net in
-          Ok net)
+    let net_description =
+      Declaration.
+        [ Variable { name = v; writes = [ c ]; reads = [ a ] }
+        ; Queue { name = q; writes = [ s ]; reads = [ c ] }
+        ; Inject { at = s; colors = [ chain_color ] }
+        ; Probe { name = chain_probe; expect_all = [ chain_color ]; at = a }
+        ]
     ;;
+
+    let net = Result.get_ok @@ Declaration.to_net net_description
 
     let trace1 =
       Trace.
@@ -487,13 +568,31 @@ let%test_module "causal witness flow network" =
     ;;
 
     let%test_unit "nominal" =
+      let construct_visits list =
+        list |> List.map (fun (e, t) -> e, Dynarray.singleton t) |> Events.of_list
+      in
       [%test_eq: token list]
         (get_chains trace1)
-        [ { visits = [ a, 0; c, 0; s, 0 ]; coloring = Coloring.singleton chain_color }
-        ; { visits = [ a, 5; c, 3; s, 3 ]; coloring = Coloring.singleton chain_color }
+        [ { visits = construct_visits [ a, 0; c, 0; s, 0 ]
+          ; coloring = Coloring.singleton chain_color
+          }
+        ; { visits = construct_visits [ a, 5; c, 3; s, 3 ]
+          ; coloring = Coloring.singleton chain_color
+          }
         ]
     ;;
 
     let%test_unit "unfavorable microstep" = [%test_eq: token list] (get_chains trace2) []
+
+    let%test_unit "same sexp" =
+      [%test_eq: Declaration.t]
+        net_description
+        (Declaration.t_of_sexp
+         @@ Sexplib.Sexp.of_string
+              "((Variable  (name variable)(writes(controller))(reads(actuator)))\n\
+               (Queue(name queue)(writes(sensor))(reads(controller)))\n\
+               (Inject(at sensor)(colors(test)))\n\
+               (Probe(name 0)(expect_all(test))(at actuator)))")
+    ;;
   end)
 ;;

@@ -65,7 +65,7 @@
   (alcotest :with-test)
   (domainslib
    (>= 0.5))
-  (sexplib0
+  (sexplib
    (and
     (>= v0.17)
     (< v0.18.0)))
