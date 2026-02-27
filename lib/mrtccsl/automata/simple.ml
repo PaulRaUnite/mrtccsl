@@ -1162,14 +1162,12 @@ struct
     | Exponential { rate } ->
       let rate = N.to_float rate in
       fun cond ->
-        let bounds =
-          Option.unwrap
-            ~expect:"exponential distribution is undefined on exclusive bounds"
-          @@ NI.constant_bounds cond
-        in
+        (match NI.constant_bounds cond with
+         | None -> N.of_float @@ exponential_rvs ~rate
+         | Some bounds ->
         let a, b = Tuple.map2 N.to_float bounds in
         let sample = truncated_exponential_rvs ~a ~b ~rate in
-        N.of_float sample
+           N.of_float sample)
   ;;
 
   let of_spec ?(debug = false) spec : sim =
