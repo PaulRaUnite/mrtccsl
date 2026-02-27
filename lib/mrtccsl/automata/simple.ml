@@ -32,6 +32,8 @@ let truncated_exponential_rvs ~a ~b ~rate =
   result
 ;;
 
+let exponential_rvs ~rate = Owl.Stats.exponential_rvs ~lambda:rate
+
 (**Specifies the distribution of the time variable. *)
 type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
 
@@ -383,6 +385,14 @@ struct
       | Const c ->
         let c = return c in
         (fun () -> c), fun () -> ()
+    ;;
+
+    let print_all value_to_string { vars } =
+      CMap.iter
+        (fun k v ->
+           print_endline (C.to_string k);
+           Hashtbl.iter (fun _ (v, _) -> print_endline @@ value_to_string v) v.instances)
+        vars
     ;;
   end
 
@@ -1165,8 +1175,8 @@ struct
         (match NI.constant_bounds cond with
          | None -> N.of_float @@ exponential_rvs ~rate
          | Some bounds ->
-        let a, b = Tuple.map2 N.to_float bounds in
-        let sample = truncated_exponential_rvs ~a ~b ~rate in
+           let a, b = Tuple.map2 N.to_float bounds in
+           let sample = truncated_exponential_rvs ~a ~b ~rate in
            N.of_float sample)
   ;;
 
@@ -1229,8 +1239,14 @@ struct
     VarSeq.unsuppress durations;
     Iter.unfoldr
       (fun now ->
-         let* l, now = next_step sol_strat automata now in
-         Some ((l, now), now))
+         match next_step sol_strat automata now with
+         | Some (l, now) -> Some ((l, now), now)
+         | None ->
+           print_endline "all integers";
+           VarSeq.print_all II.to_string integers;
+           print_endline "all durations";
+           VarSeq.print_all NI.to_string durations;
+           None)
       (N.neg N.one)
   ;;
 
