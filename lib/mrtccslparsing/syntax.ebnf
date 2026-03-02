@@ -1,0 +1,172 @@
+addsub ::= PLUS
+         | MINUS
+
+binop ::= PLUS
+        | MINUS
+        | STAR
+        | SLASH
+
+num_rel ::= LESS
+          | LESSEQ
+          | EQUAL
+          | MORE
+          | MOREEQ
+          | NOTEQUAL
+
+var_type ::= INTEGER
+           | DURATION
+           | CLOCK
+
+id ::= ID
+
+path ::= ID (DOT ID)*
+
+var ::= located_0
+
+percentage ::= DECIMAL PERCENT
+
+duration ::= DECIMAL SECOND
+           | INT SECOND
+
+clock_rel ::= COINCIDENCE
+            | SHARP
+            | STRICT? ALTERNATES
+            | SUBCLOCKS (LBRACKET percentage RBRACKET)?
+            | PRECEDES
+            | CAUSES
+
+contdist ::= located_1
+
+contdist0 ::= NORMAL LPAREN duration COMMA duration RPAREN
+            | UNIFORM
+            | EXPONENTIAL LPAREN duration RPAREN
+
+duration_expr ::= duration_expr0
+
+delim_duration_expr0 ::= LPAREN duration_expr0 RPAREN
+                       | var
+                       | duration
+
+delim_duration_expr ::= delim_duration_expr0
+
+duration_expr0 ::= delim_duration_expr0
+                 | duration_expr addsub duration_expr
+                 | DECIMAL STAR delim_duration_expr
+                 | MINUS delim_duration_expr
+                 | QUESTION
+
+int_expr ::= int_expr0
+
+int_expr0 ::= INT
+            | var
+            | int_expr binop int_expr
+            | MINUS int_expr
+            | QUESTION
+
+offset ::= OFFSET duration_expr
+
+skip ::= SKIP inline_relation_0
+
+clock_expr ::= clock_expr0
+
+delim_clock_expr0 ::= LPAREN clock_expr0 RPAREN
+                    | var
+
+delim_clock_expr ::= delim_clock_expr0
+
+clock_expr0 ::= delim_clock_expr0
+              | delim_clock_expr (AND delim_clock_expr)+
+              | delim_clock_expr (OR delim_clock_expr)+
+              | delim_clock_expr (XOR delim_clock_expr)+ (LBRACKET var
+                RBRACKET)?
+              | delim_clock_expr DOLLAR inline_relation_0 (ON
+                delim_clock_expr)?
+              | NEXT delim_clock_expr
+              | skip? EVERY inline_relation_0 OF delim_clock_expr
+              | SAMPLE delim_clock_expr ON delim_clock_expr
+              | FIRST SAMPLE delim_clock_expr ON delim_clock_expr
+              | LAST SAMPLE delim_clock_expr ON delim_clock_expr
+              | delim_clock_expr EXCEPT delim_clock_expr+
+              | FASTEST OF delim_clock_expr+
+              | SLOWEST OF delim_clock_expr+
+              | PERIODIC duration WITH JITTER inline_relation_1 offset?
+              | PERIODIC duration WITH DRIFT inline_relation_1 offset?
+              | DELAY delim_clock_expr BY inline_relation_1
+              | STRICT? SPORADIC duration
+
+additive_union ::= OR_EQ
+                 | XOR_EQ
+
+statement ::= statement0
+
+statement0 ::= VAR (id (COMMA id)* COLON var_type (COMMA id (COMMA id)* COLON
+               var_type)*)
+             | INTEGER COLON int_expr (num_rel int_expr)+
+             | DURATION COLON duration_expr (num_rel duration_expr)+
+             | clock_expr clock_rel clock_expr
+             | CONTINUOUS PROCESS var WITH contdist
+             | DISCRETE PROCESS var WITH located_2 SIM located_3
+             | MUTEX LBRACE dangling_list_0 RBRACE
+             | POOL INT LBRACE dangling_list_0 RBRACE
+             | ALLOW clock_expr+ IN interval_2
+             | FORBID clock_expr+ IN interval_2
+             | id LBRACE statements RBRACE
+             | var additive_union clock_expr
+
+statements ::= dangling_list_1
+
+top_module ::= mod_block_0* mod_block_1 mod_block_2* EOF
+
+located_1 ::= contdist0
+
+located_2 ::= INT+
+
+located_3 ::= INT (COLON INT)*
+
+mod_block_2 ::= ASSERT LBRACE statements RBRACE
+
+mod_block_1 ::= STRUCTURE LBRACE statements RBRACE
+
+non_empty_dangling_list_0 ::= clock_expr ARROWRIGHT clock_expr COMMA?
+                            | clock_expr ARROWRIGHT clock_expr COMMA
+                              non_empty_dangling_list_0
+
+numeric_interval_0 ::= interval_0
+                     | int_expr PLUSMINUS int_expr
+
+inline_relation_0 ::= int_expr
+                    | numeric_interval_0
+
+interval_2 ::= LBRACKET clock_expr COMMA clock_expr RBRACKET
+             | RBRACKET clock_expr COMMA clock_expr RBRACKET
+             | LBRACKET clock_expr COMMA clock_expr LBRACKET
+             | RBRACKET clock_expr COMMA clock_expr LBRACKET
+
+numeric_interval_1 ::= interval_1
+                     | duration_expr PLUSMINUS duration_expr
+
+inline_relation_1 ::= duration_expr
+                    | numeric_interval_1
+
+dangling_list_1 ::= non_empty_dangling_list_1?
+
+mod_block_0 ::= ASSUME LBRACE statements RBRACE
+
+non_empty_dangling_list_1 ::= statement SEMICOLON?
+                            | statement SEMICOLON non_empty_dangling_list_1
+
+interval_1 ::= LBRACKET duration_expr COMMA duration_expr RBRACKET
+             | RBRACKET duration_expr COMMA duration_expr RBRACKET
+             | LBRACKET duration_expr COMMA duration_expr LBRACKET
+             | RBRACKET duration_expr COMMA duration_expr LBRACKET
+
+interval_0 ::= LBRACKET int_expr COMMA int_expr RBRACKET
+             | RBRACKET int_expr COMMA int_expr RBRACKET
+             | LBRACKET int_expr COMMA int_expr LBRACKET
+             | RBRACKET int_expr COMMA int_expr LBRACKET
+
+located_0 ::= path
+
+dangling_list_0 ::= non_empty_dangling_list_0?
+
+

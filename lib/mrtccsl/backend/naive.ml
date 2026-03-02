@@ -33,6 +33,8 @@ let truncated_exponential_rvs ~a ~b ~rate =
   result
 ;;
 
+let exponential_rvs ~rate = Owl.Stats.exponential_rvs ~lambda:rate
+
 (**Specifies the distribution of the time variable. *)
 type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
 
@@ -334,6 +336,15 @@ struct
         let c = return c in
         (fun () -> c), fun () -> ()
     ;;
+
+    let to_string value_to_string { vars } =
+      CMap.to_string
+        C.to_string
+        (fun v ->
+           Hashtbl.to_seq v.instances
+           |> Seq.to_string (fun (_, (v, _)) -> value_to_string v))
+        vars
+    ;;
   end
 
   type t =
@@ -456,6 +467,8 @@ struct
     }
   ;;
 
+  type exn += InnerFailure
+
   let sync_guards ?(debug = true) (automata : t list) now =
     let solutions, _ =
       try
@@ -480,13 +493,13 @@ struct
                  Printf.printf "next clocks: %s\n" (L.to_string clocks);
                  Printf.printf "next: %s\n" (guard_to_string next_solutions);
                  Printf.printf "deadlock detected from constraint %s %i\n" name i;
-                 failwith "need to fail here");
+                 raise InnerFailure);
              (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
              solutions, L.union prev_clocks clocks)
           (noop_guard now, L.empty)
           automata
       with
-      | _ -> Iter.empty, L.empty
+      | InnerFailure -> Iter.empty, L.empty
     in
     solutions
   ;;
@@ -1159,16 +1172,15 @@ struct
     | Exponential { rate } ->
       let rate = N.to_float rate in
       fun cond ->
-        let bounds =
-          Option.unwrap
-            ~expect:"exponential distribution is undefined on exclusive bounds"
-          @@ NI.constant_bounds cond
-        in
-        let a, b = Tuple.map2 N.to_float bounds in
-        let sample = truncated_exponential_rvs ~a ~b ~rate in
-        N.of_float sample
+        (match NI.constant_bounds cond with
+         | None -> N.of_float @@ exponential_rvs ~rate
+         | Some bounds ->
+           let a, b = Tuple.map2 N.to_float bounds in
+           let sample = truncated_exponential_rvs ~a ~b ~rate in
+           N.of_float sample)
   ;;
 
+  (** Creates automata from specification. CORRECTNESS: should be run sequentially with other [of_spec].*)
   let of_spec ?(debug = false) spec : sim =
     let duration_bounds =
       Language.Specification.(spec.duration)
@@ -1228,9 +1240,15 @@ struct
     VarSeq.unsuppress durations;
     Seq.unfold
       (fun now ->
-         let* label, time = next_step sol_strat automata now in
-         Some (Trace.{ label; time }, now))
-      N.minus_one
+         match next_step sol_strat automata now with
+         | Some (l, now) -> Some (Trace.{label=l;time=now}, now)
+         | None ->
+           print_endline "all integers";
+           print_endline @@ VarSeq.to_string II.to_string integers;
+           print_endline "all durations";
+           print_endline @@ VarSeq.to_string NI.to_string durations;
+           None)
+      (N.neg N.one)
   ;;
 
   let bisimulate s { automata = a1; _ } { automata = a2; _ } : trace =

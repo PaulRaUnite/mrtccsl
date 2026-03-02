@@ -5,8 +5,6 @@ module ST = Backend.Naive.Strategy (A)
 module Trace = Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
-let step = of_int 1 / of_int 1000
-
 let priority_strategy priorities general_strategy =
   let priorities = A.L.of_list priorities in
   let f candidates =
@@ -29,39 +27,15 @@ let priority_strategy priorities general_strategy =
   f
 ;;
 
-let random_strat =
+let random_strat ~rounding_error ~upper_bound =
   ST.Solution.refuse_empty
   @@ ST.Solution.random_label
        (ST.Num.random_leap
-          ~upper_bound:(of_int 1000)
-          ~ceil:(round_up step)
-          ~floor:(round_down step)
+          ~upper_bound
+          ~ceil:(round_up rounding_error)
+          ~floor:(round_down rounding_error)
           ~rand:random)
 ;;
-
-(*
-   let prioritize_single candidates =
-  let labels = LSet.of_list (List.map (fun (x, _) -> x) candidates) in
-  let candidates =
-    List.filter
-      (fun (l, _) ->
-         A.L.cardinal l <= 1
-         ||
-         let ps =
-           A.L.to_list l
-           |> List.powerset_nz
-           |> List.filter_map (fun l' ->
-             let l' = A.L.of_list l' in
-             if A.L.equal l l' then None else Some l')
-         in
-         not
-           (List.exists
-              (fun sub -> LSet.mem sub labels && LSet.mem (A.L.diff l sub) labels)
-              ps))
-      candidates
-  in
-  candidates
-;; *)
 
 type 'n config =
   { steps : int
@@ -69,6 +43,8 @@ type 'n config =
   ; output_dir : string
   ; cores : int
   ; traces : int
+  ; rounding_error : 'n
+  ; default_upper_bound : 'n
   }
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
@@ -128,8 +104,36 @@ let horizon_arg =
         ~doc:
           "Maximum value in real-time that the simulation can reach. Has to be positive \
            non-null decimal number (any precision)."
-        ~absent:"The trace is only limited by number of $(STEPS)."
+        ~absent:"The trace is only limited by number of $(i,STEPS)."
         ~docv:"HORIZON")
+;;
+
+let default_upper_bound_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "u"; "upper_bound" ]
+        ~doc:
+          "The upper bound for unbound intervals of real-time used to generate \
+           timestamps in the default strategy."
+        ~absent:
+          "Default value is 1000 converted to the engine's numbering (currently only \
+           rationals)"
+        ~docv:"UPPER_BOUND")
+;;
+
+let rounding_error_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "e"; "round_error" ]
+        ~doc:"The value to which the solving engine may try to convert inequality bounds."
+        ~absent:
+          "Default value is 1/1000 converted to the engine's numbering (currently only \
+           rationals)"
+        ~docv:"ROUND_ERROR")
 ;;
 
 let steps_arg =
@@ -163,9 +167,12 @@ let verify_config config =
           config.steps)
 ;;
 
-let generate_trace ~config clocks spec i =
-  let strategy = random_strat in
-  let env = A.of_spec ~debug:false spec in
+let generate_trace ~config clocks env i =
+  let strategy =
+    random_strat
+      ~rounding_error:config.rounding_error
+      ~upper_bound:config.default_upper_bound
+  in
   let trace = A.gen_trace strategy env |> Trace.take ~steps:config.steps in
   let trace, was_cut =
     match config.horizon with
@@ -233,7 +240,8 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
-  ignore @@ processor @@ generate_trace ~config clocks spec
+  let simulations = Array.init config.traces (fun _ -> A.of_spec ~debug:false spec) in
+  ignore @@ processor @@ fun i -> generate_trace ~config clocks simulations.(i) i
 ;;
 
 let cmd =
@@ -244,10 +252,27 @@ let cmd =
      and+ cores = cores_arg
      and+ horizon = horizon_arg
      and+ steps = steps_arg
-     and+ traces = traces_arg in
+     and+ traces = traces_arg
+     and+ default_upper_bound = default_upper_bound_arg
+     and+ rounding_error = rounding_error_arg in
      let _, m = Mrtccslparsing.load_with_string specification Format.err_formatter in
      let horizon = Option.map Number.Rational.of_decimal_string horizon in
-     try `Ok (Ok (simulate ~config:{ cores; output_dir; horizon; steps; traces } m)) with
+     let default_upper_bound =
+       Option.map_or
+         ~default:(of_int 1000)
+         Number.Rational.of_decimal_string
+         default_upper_bound
+     in
+     let rounding_error =
+       Option.map_or
+         ~default:(of_frac 1 1000)
+         Number.Rational.of_decimal_string
+         rounding_error
+     in
+     let config =
+       { cores; output_dir; horizon; steps; traces; default_upper_bound; rounding_error }
+     in
+     try `Ok (Ok (simulate ~config m)) with
      | Failure s -> `Error (false, s)
 ;;
 
