@@ -387,11 +387,12 @@ struct
         (fun () -> c), fun () -> ()
     ;;
 
-    let print_all value_to_string { vars } =
-      CMap.iter
-        (fun k v ->
-           print_endline (C.to_string k);
-           Hashtbl.iter (fun _ (v, _) -> print_endline @@ value_to_string v) v.instances)
+    let to_string value_to_string { vars } =
+      CMap.to_string
+        C.to_string
+        (fun v ->
+           Hashtbl.to_seq v.instances
+           |> Seq.to_string (fun (_, (v, _)) -> value_to_string v))
         vars
     ;;
   end
@@ -516,6 +517,8 @@ struct
     }
   ;;
 
+  type exn += InnerFailure
+
   let sync_guards ?(debug = true) (automata : t list) now =
     let solutions, _ =
       try
@@ -540,13 +543,13 @@ struct
                  Printf.printf "next clocks: %s\n" (L.to_string clocks);
                  Printf.printf "next: %s\n" (guard_to_string next_solutions);
                  Printf.printf "deadlock detected from constraint %s %i\n" name i;
-                 failwith "need to fail here");
+                 raise InnerFailure);
              (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
              solutions, L.union prev_clocks clocks)
           (noop_guard now, L.empty)
           automata
       with
-      | _ -> Iter.empty, L.empty
+      | InnerFailure -> Iter.empty, L.empty
     in
     solutions
   ;;
@@ -1180,6 +1183,7 @@ struct
            N.of_float sample)
   ;;
 
+  (** Creates automata from specification. CORRECTNESS: should be run sequentially with other [of_spec].*)
   let of_spec ?(debug = false) spec : sim =
     let duration_bounds =
       Language.Specification.(spec.duration)
@@ -1243,9 +1247,9 @@ struct
          | Some (l, now) -> Some ((l, now), now)
          | None ->
            print_endline "all integers";
-           VarSeq.print_all II.to_string integers;
+           print_endline @@ VarSeq.to_string II.to_string integers;
            print_endline "all durations";
-           VarSeq.print_all NI.to_string durations;
+           print_endline @@ VarSeq.to_string NI.to_string durations;
            None)
       (N.neg N.one)
   ;;

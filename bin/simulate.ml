@@ -167,13 +167,12 @@ let verify_config config =
           config.steps)
 ;;
 
-let generate_trace ~config clocks spec i =
+let generate_trace ~config clocks env i =
   let strategy =
     random_strat
       ~rounding_error:config.rounding_error
       ~upper_bound:config.default_upper_bound
   in
-  let env = A.of_spec ~debug:false spec in
   let trace = A.gen_trace strategy env |> A.Trace.take ~steps:config.steps in
   let trace, was_cut =
     match config.horizon with
@@ -242,7 +241,8 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
-  ignore @@ processor @@ generate_trace ~config clocks spec
+  let simulations = Array.init config.traces (fun _ -> A.of_spec ~debug:false spec) in
+  ignore @@ processor @@ (fun i -> generate_trace ~config clocks simulations.(i) i)
 ;;
 
 let cmd =
