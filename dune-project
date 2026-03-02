@@ -54,7 +54,8 @@
    (and
     (>= v0.17.0)
     (< v0.18.0)))
-  mlgmpidl
+  (zarith
+   (= 1.14))
   vpl-core
   (ocamlgraph
    (= 2.2.0))
@@ -77,7 +78,8 @@
   (cmdliner
    (= 2.0.0))
   dune-build-info
-  (csv (= 2.4)))
+  (csv
+   (= 2.4)))
  (tags
   (simulation
    "model checking"

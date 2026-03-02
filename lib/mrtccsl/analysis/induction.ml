@@ -1521,17 +1521,11 @@ struct
 end
 
 let%test_module _ =
-  (module struct
-    include Test (Domain.Polka (struct
-        type dom = Polka.loose Polka.t
+  (module Test (Domain.Polka (struct
+       type dom = Polka.loose Polka.t
 
-        let alloc = Polka.manager_alloc_loose ()
-      end))
-  end)
+       let alloc = Polka.manager_alloc_loose ()
+     end)))
 ;;
 
-let%test_module _ =
-  (module struct
-    include Test (Domain.VPL)
-  end)
-;;
+let%test_module _ = (module Test (Domain.VPL))

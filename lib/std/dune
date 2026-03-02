@@ -5,7 +5,7 @@
  (name std)
  (inline_tests)
  (wrapped false)
- (libraries containers uuseg sexplib0 gmp iter)
+ (libraries containers uuseg sexplib0 gmp zarith iter)
  (preprocess
   (pps
    ppx_inline_test
