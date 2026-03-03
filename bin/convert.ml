@@ -94,8 +94,8 @@ module Native = struct
           ~default:Export.Serialize.random
           (fun spec ->
              Export.Serialize.respect_microstep
-               (Mrtccsl.Ccsl.MicroStep.derive_order
-                  Mrtccsl.Ccsl.Language.Specification.(spec.clock)))
+               (Mrtccsl.CCSL.MicroStep.derive_order
+                  Mrtccsl.CCSL.Language.Specification.(spec.clock)))
           serialize
       in
       let to_scl =
@@ -135,7 +135,7 @@ module Native = struct
                   let _, m =
                     Mrtccslparsing.load_with_string spec_file Format.err_formatter
                   in
-                  let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
+                  let spec = Mrtccsl.CCSL.Language.Module.flatten m in
                   spec)
                microstep
            in

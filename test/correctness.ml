@@ -1,8 +1,8 @@
 open Mrtccsl
 open Prelude
-open Language
+open CCSL.Language
 open Cstr
-open Language.Specification
+open CCSL.Language.Specification
 open Builder
 
 module type BackendS = sig

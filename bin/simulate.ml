@@ -222,14 +222,14 @@ let simulate ~config m =
         |> Iter.fold (Fun.flip List.cons) []
   in
   let _ = Random.self_init () in
-  let spec = Mrtccsl.Ccsl.Language.Module.flatten m in
+  let spec = Mrtccsl.CCSL.Language.Module.flatten m in
   let spec = Opt.optimize spec in
-  let clocks = Ccsl.Language.Specification.clocks spec in
+  let clocks = CCSL.Language.Specification.clocks spec in
   let _ = print_endline config.output_dir in
   let _ = Sys.create_dir config.output_dir in
   let _ =
     print_endline
-      (Language.Specification.show
+      (CCSL.Language.Specification.show
          Format.pp_print_string
          Format.pp_print_string
          Format.pp_print_string

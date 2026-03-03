@@ -34,7 +34,7 @@ module IO = Trace.MakeIO (Number.Rational) (A.L)
 let debug_trace spec_filename trace clock =
   let _, m = Mrtccslparsing.load_with_string spec_filename Format.err_formatter in
   (*TODO: remove flattening*)
-  let spec = Mrtccsl.Language.Module.flatten m in
+  let spec = Mrtccsl.CCSL.Language.Module.flatten m in
   let spec = Opt.optimize spec in
   let clocks, trace = IO.CSV.read trace in
   if not (List.mem clock clocks)

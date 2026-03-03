@@ -12,7 +12,7 @@ let prefix prefix = function
   | Anonymous _ as a -> a
 ;;
 
-type m = (var, var, var, var, var, Rational.t) Mrtccsl.Language.Module.t
+type m = (var, var, var, var, var, Rational.t) Mrtccsl.CCSL.Language.Module.t
 
 type compile_error =
   | DuplicateDeclaration of
@@ -212,13 +212,13 @@ module Context = struct
         |> VarMap.to_list
         |> List.map (fun ((t, v), args) ->
           match t with
-          | Ast.AUnion -> Mrtccsl.Language.Cstr.Union { out = Explicit v; args }
+          | Ast.AUnion -> Mrtccsl.CCSL.Language.Cstr.Union { out = Explicit v; args }
           | Ast.ADisjunctiveUnion ->
-            Mrtccsl.Language.Cstr.DisjunctiveUnion
+            Mrtccsl.CCSL.Language.Cstr.DisjunctiveUnion
               { out = Explicit v; args; choice = None })
       | None -> []
     in
-    List.iter (Mrtccsl.Language.Specification.Builder.logical builder) constraints
+    List.iter (Mrtccsl.CCSL.Language.Specification.Builder.logical builder) constraints
   ;;
 
   let rec map_inplace f = function
@@ -375,7 +375,7 @@ let[@inline] finilize_errors (context, errors) = context, List.rev errors
 (* TODO: add pruning for anonymous coincidence constraints: if there are anon variables in coincidence, substitute them with proper variable or choose only one and remove the constraint. Should allow to use chain coincidence. *)
 
 let into_module { assumptions; structure; assertions } =
-  let open Mrtccsl.Language in
+  let open Mrtccsl.CCSL.Language in
   let open Cstr in
   let open Specification in
   let open Result.Syntax in
@@ -869,7 +869,7 @@ let into_module { assumptions; structure; assertions } =
   in
   let context = Context.empty in
   let (context, errors), m =
-    Mrtccsl.Language.Module.make_stateful
+    Mrtccsl.CCSL.Language.Module.make_stateful
       (compile_top_blocks "assume" assumptions)
       (compile_top_block "structure" structure)
       (compile_top_blocks "assert" assertions)

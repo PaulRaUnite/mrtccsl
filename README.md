@@ -46,6 +46,9 @@ The project provides the following features:
         - [x] event projection
     - [x] graph representation of the specification
 
+## Documentation
+Produced using [odoc](https://ocaml.github.io/odoc/odoc/index.html) and is available at: https://paulraunite.github.io/mrtccsl/
+
 ## Used in
 - [SDV DSL](https://github.com/jdeantoni/SoftwareDefinedVehicleModelingLanguage) as a flexible mix between event-driven simulator and behaviour explorer; provides traces and extraction of reaction time distributions
 

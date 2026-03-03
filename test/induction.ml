@@ -1,6 +1,6 @@
 open Mrtccsl
 open Prelude
-open Language
+open CCSL.Language
 open Cstr
 open Specification
 open Builder

@@ -19,7 +19,7 @@ let cmd : (unit, string) result Cmd.t =
      Mrtccslparsing.Compile.Context.pp Format.std_formatter context;
      let s = Format.pp_print_string
      and r = Number.Rational.pp in
-     let open Mrtccsl.Language in
+     let open Mrtccsl.CCSL.Language in
      Module.pp s s s s s r Format.std_formatter m;
      Format.printf
        "\nconstraints: %i, clocks: %i\n"
