@@ -1,34 +1,39 @@
 open Prelude
 open Number
 
-module type P = sig
+module type ID = sig
   include Interface.TotalOrder
   include Sexplib0.Sexpable.S with type t := t
 end
 
-module type T = sig
-  module Place : P
-  module Transition : Interface.TotalOrder
-  module Color : P
-  module Event : P
-  module Probe : P
+module type IDs = sig
+  (** Place IDs. *)
+  module Place : ID
 
-  module Time : sig
-    include P
-    include Interface.Number.Ring with type t := t
-  end
+  (** Transition IDs. *)
+  module Transition : ID
 
-  type place = Place.t
-  type event = Event.t
-  type color = Color.t
-  type transition = Transition.t
-  type time = Time.t
-  type probe = Probe.t
+  (** Color IDs. *)
+  module Color : ID
+
+  (** Event IDs. *)
+  module Event : ID
+
+  (** Probe IDs. *)
+  module Probe : ID
 end
 
-module Network (T : T) = struct
+(** Timestamp numbers. *)
+module type Time = sig
+  include Interface.TotalOrder
+  include Sexplib0.Sexpable.S with type t := t
+  include Interface.Number.Ring with type t := t
+end
+
+(** Functor that provides construction and traversal of causal (through data sharing) networks. *)
+module Network (IDs : IDs) (Time : Time) = struct
   open Ppx_sexp_conv_lib.Conv
-  include T
+  include IDs
   module Places = Map.Make (Place)
   module Transitions = Map.Make (Transition)
 
@@ -56,28 +61,26 @@ module Network (T : T) = struct
     include Interface.Concrete.Make.SexpForMonoid (Inner) (Color)
   end
 
+  (** Token type. Represents data passing through a system. Witnesses the relationships between events from the data interactions. *)
   type token =
     { visits : Time.t Dynarray.t Events.t
     ; coloring : Coloring.t
     }
   [@@deriving compare, sexp]
 
+  (** An empty token. Should be interpretted as incorrect data because is unrelated to any external event. *)
   let empty_token = { visits = Events.empty; coloring = Coloring.empty }
 
   let merge_tokens { visits = v1; coloring = c1 } { visits = v2; coloring = c2 } =
-    { visits =
-        Events.union
-          (fun _ a1 a2 ->
-             let arr = Dynarray.append_alloc a1 a2 in
-             Dynarray.stable_sort Time.compare arr;
-             Some arr)
-          v1
-          v2
-    ; coloring = Coloring.union c1 c2
-    }
+    let merge_visits _ a1 a2 =
+      let arr = Dynarray.append_alloc a1 a2 in
+      Dynarray.stable_sort Time.compare arr;
+      Some arr
+    in
+    { visits = Events.union merge_visits v1 v2; coloring = Coloring.union c1 c2 }
   ;;
 
-  let visit { visits; coloring } event time more_color =
+  let add_visit { visits; coloring } event time more_color =
     let update_array arr =
       Dynarray.add_last arr time;
       arr
@@ -87,6 +90,7 @@ module Network (T : T) = struct
     }
   ;;
 
+  (** Variable type. *)
   type inner_place =
     | Variable of token * bool
     | Queue of token list
@@ -105,133 +109,118 @@ module Network (T : T) = struct
   ;;
 
   type inner_transition =
-    { input_arcs : place list
-    ; output_arcs : place list
+    { input_arcs : Place.t list
+    ; output_arcs : Place.t list
     ; coloring : Coloring.t
-    ; event : event
+    ; event : Event.t
     }
 
+  (** Type of color matches. *)
   type color_match =
+    (* TODO: just reuse propositional formula *)
     | Any
     | Single of Color.t
     | And of color_match * color_match
     | Or of color_match * color_match
   [@@deriving compare]
 
-  let rec check_color_match coloring = function
+  let rec eval_color_match coloring = function
     | Any -> true
     | Single color -> Coloring.mem color coloring
-    | And (m1, m2) -> check_color_match coloring m1 && check_color_match coloring m2
-    | Or (m1, m2) -> check_color_match coloring m1 || check_color_match coloring m2
+    | And (m1, m2) -> eval_color_match coloring m1 && eval_color_match coloring m2
+    | Or (m1, m2) -> eval_color_match coloring m1 || eval_color_match coloring m2
   ;;
 
+  (** Network type. *)
   type t =
     { places : inner_place Places.t
     ; transitions : inner_transition Transitions.t
     ; probes : (color_match * Transition.t) Probes.t
     }
 
+  (** Empty network. *)
   let empty =
     { places = Places.empty; transitions = Transitions.empty; probes = Probes.empty }
   ;;
 
-  type error =
-    | IncompatiblePlaceDefinition of place
-    (** When code declares that a place is both variable and queue at the same time. *)
-    | MissingTransition of transition
-    | IncompatibleTransitionDefinition of transition
-    | IncompatibleProbeDefinition of probe
+  (** Raised when code declares that a place is both variable and queue at the same time. *)
+  exception IncompatiblePlaceDefinition of Place.t
+
+  (** Raised when transition is expected, but not found. *)
+  exception MissingTransition of Transition.t
+
+  (** Raised when transition is declared twice with different events. *)
+  exception IncompatibleTransitionDefinition of Transition.t
+
+  (** Raised when probe is declared twice with different matching colors or at different transition. *)
+  exception IncompatibleProbeDefinition of Probe.t
 
   (** Adds variable place to the network. *)
   let add_variable id net =
     match Places.find_opt id net.places with
-    | Some (Variable _) -> Ok net
-    | Some _ -> Error (IncompatiblePlaceDefinition id)
+    | Some (Variable _) -> net
+    | Some _ -> raise (IncompatiblePlaceDefinition id)
     | None ->
-      Ok { net with places = Places.add id (Variable (empty_token, false)) net.places }
+      { net with places = Places.add id (Variable (empty_token, false)) net.places }
   ;;
 
   (** Adds queue variable to the network. *)
   let add_queue id net =
     match Places.find_opt id net.places with
-    | Some (Queue _) -> Ok net
-    | Some _ -> Error (IncompatiblePlaceDefinition id)
-    | None -> Ok { net with places = Places.add id (Queue []) net.places }
+    | Some (Queue _) -> net
+    | Some _ -> raise (IncompatiblePlaceDefinition id)
+    | None -> { net with places = Places.add id (Queue []) net.places }
   ;;
 
   (** Adds an empty transition with an event. *)
   let add_transition id event net =
     match Transitions.find_opt id net.transitions with
     | None ->
-      Ok
-        { net with
-          transitions =
-            Transitions.add
-              id
-              { input_arcs = []; output_arcs = []; event; coloring = Coloring.empty }
-              net.transitions
-        }
+      let empty_transition =
+        { input_arcs = []; output_arcs = []; event; coloring = Coloring.empty }
+      in
+      { net with transitions = Transitions.add id empty_transition net.transitions }
     | Some t ->
       if Event.compare t.event event = 0
-      then Ok net
-      else Error (IncompatibleTransitionDefinition id)
+      then net
+      else raise (IncompatibleTransitionDefinition id)
   ;;
 
-  (** Adds dependency (input arc) to a transition. All inputs need to have data in order to activate the transition. *)
-  let add_dependency id source net =
+  let modify_transition id f net =
     match Transitions.find_opt id net.transitions with
-    | None -> Error (MissingTransition id)
-    | Some t ->
-      Ok
-        { net with
-          transitions =
-            Transitions.add
-              id
-              { t with input_arcs = source :: t.input_arcs }
-              net.transitions
-        }
+    | None -> raise (MissingTransition id)
+    | Some t -> { net with transitions = Transitions.add id (f t) net.transitions }
   ;;
 
-  (** Adds cause (output arc) to a transition. *)
-  let add_cause id target net =
-    match Transitions.find_opt id net.transitions with
-    | None -> Error (MissingTransition id)
-    | Some t ->
-      Ok
-        { net with
-          transitions =
-            Transitions.add
-              id
-              { t with output_arcs = target :: t.output_arcs }
-              net.transitions
-        }
+  (** Adds input arc (dependency) to a transition. All inputs need to have data in order to activate the transition. *)
+  let add_source id source net =
+    modify_transition id (fun t -> { t with input_arcs = source :: t.input_arcs }) net
+  ;;
+
+  (** Adds output arc (cause) to a transition. *)
+  let add_target id target net =
+    modify_transition id (fun t -> { t with output_arcs = target :: t.output_arcs }) net
   ;;
 
   (** Adds coloring to output tokens of a transition. *)
   let inject_color at color net =
-    match Transitions.find_opt at net.transitions with
-    | None -> Error (MissingTransition at)
-    | Some t ->
-      Ok
-        { net with
-          transitions =
-            Transitions.add
-              at
-              { t with coloring = Coloring.add color t.coloring }
-              net.transitions
-        }
+    modify_transition
+      at
+      (fun t -> { t with coloring = Coloring.add color t.coloring })
+      net
   ;;
 
   (** Adds a probe on output tokens of the transition. *)
   let add_probe id m at net =
     match Probes.find_opt id net.probes with
-    | None -> Ok { net with probes = Probes.add id (m, at) net.probes }
+    | None -> { net with probes = Probes.add id (m, at) net.probes }
     | Some (existing_m, existing_at) ->
       if compare_color_match existing_m m = 0 && Transition.compare existing_at at = 0
-      then Ok net
-      else Error (IncompatibleProbeDefinition id)
+      then net
+      else raise (IncompatibleProbeDefinition id)
   ;;
 
+  (** Module for networks ready to travers traces efficiently. The representation is mutable. *)
   module Compiled = struct
     type ctransition =
       { inputs : inner_place ref list
@@ -245,7 +234,7 @@ module Network (T : T) = struct
       ; extracted : token Dynarray.t Probes.t
       }
 
-    let of_dynamic { places; transitions; probes } : t =
+    let of_network { places; transitions; probes } : t =
       let ref_places = Places.map ref places in
       let ref_tokens_probes = Probes.map (fun _ -> Dynarray.create ()) probes in
       let transition_to_probe =
@@ -276,6 +265,7 @@ module Network (T : T) = struct
       { event_index; extracted = ref_tokens_probes }
     ;;
 
+    (** Consumes sequence of steps in a trace and collects cause witnesses at probe transitions. *)
     let consume_seq_trace ~to_iter:to_seq network trace : t =
       let try_transition time event { inputs; outputs; coloring; extracts } =
         let can_read input_place =
@@ -283,6 +273,7 @@ module Network (T : T) = struct
           Option.is_some token
         in
         let can_read_all = List.for_all can_read inputs in
+        (* Transition is only enabled and fired if all inputs have tokens. *)
         if can_read_all
         then (
           let read_token input_place =
@@ -292,13 +283,13 @@ module Network (T : T) = struct
           in
           let input_tokens = List.filter_map read_token inputs in
           let combined_input = List.fold_left merge_tokens empty_token input_tokens in
-          let token = visit combined_input event time coloring in
+          let token = add_visit combined_input event time coloring in
           let write_token output_place =
             output_place := write_to_place token !output_place
           in
           List.iter write_token outputs;
           let extract_token (color_match, probe_list) =
-            if check_color_match token.coloring color_match
+            if eval_color_match token.coloring color_match
             then Dynarray.add_last probe_list token
           in
           List.iter extract_token extracts)
@@ -314,35 +305,35 @@ module Network (T : T) = struct
       Seq.fold_left process_step network trace
     ;;
 
+    (** Returns extracted by probes cause witnesses. *)
     let extracted network = network.extracted
   end
 end
 
-module EventEqTransition (T : sig
-    include T
-    module Transition = Event
-
-    type transition = Transition.t
-  end) =
+module EventEqTransition
+    (T : sig
+       include IDs
+       module Transition = Event
+     end)
+    (Time : Time) =
 struct
-  include Network (T)
+  include Network (T) (Time)
 
   (** Adds a place under a variable and arcs in transitions reading and writing to the place. *)
   let declare_data_connection construct_place variable_name writes reads net =
-    let open Result.Syntax in
-    let* net = construct_place variable_name net in
+    let net = construct_place variable_name net in
     let populate_transition net event = add_transition event event net in
     let populate_read net event =
-      let* net = populate_transition net event in
-      add_dependency event variable_name net
+      let net = populate_transition net event in
+      add_source event variable_name net
     in
     let populate_write net event =
-      let* net = populate_transition net event in
-      add_cause event variable_name net
+      let net = populate_transition net event in
+      add_target event variable_name net
     in
-    let* net = List.fold_leftr populate_write net writes in
-    let* net = List.fold_leftr populate_read net reads in
-    Ok net
+    let net = List.fold_left populate_write net writes in
+    let net = List.fold_left populate_read net reads in
+    net
   ;;
 
   (** Established an order-dependent one-to-many relation between write and read events. *)
@@ -355,42 +346,44 @@ struct
     open Sexplib0.Sexp_conv
     open Ppx_compare_lib.Builtin
 
-    type record =
+    (** Declaration statements. *)
+    type statement =
       | Variable of
           { name : T.Place.t
           ; writes : Event.t list
           ; reads : Event.t list
-          }
+          } (** Shared variable declaration. *)
       | Queue of
           { name : T.Place.t
           ; writes : Event.t list
           ; reads : Event.t list
-          }
+          } (** Queue variable declaration. *)
       | Inject of
           { at : Event.t
           ; colors : Color.t list
-          }
+          } (** Color injection declaration. *)
       | Probe of
           { name : Probe.t
           ; expect_all : Color.t list
           ; at : Event.t
-          }
+          } (** Probe declaration. *)
     [@@deriving sexp, compare]
 
-    type t = record list [@@deriving sexp, compare]
+    type t = statement list [@@deriving sexp, compare]
 
-    let to_net records =
+    (** Converts declaration into a network. *)
+    let to_network records =
       let execute_record net = function
         | Variable { name; writes; reads } -> sampling_variable name writes reads net
         | Queue { name; writes; reads } -> queueing name writes reads net
         | Inject { at; colors } ->
-          List.fold_leftr (fun net color -> inject_color at color net) net colors
+          List.fold_left (fun net color -> inject_color at color net) net colors
         | Probe { name; expect_all; at } ->
           let individual_matches = List.map (fun c -> Single c) expect_all in
           let all_match = List.fold_merge (fun l r -> And (l, r)) individual_matches in
           add_probe name all_match at net
       in
-      List.fold_leftr execute_record empty records
+      List.fold_left execute_record empty records
     ;;
   end
 
@@ -457,6 +450,9 @@ struct
     | Some prev -> aux prev seq
   ;;
 
+  (** Impossible situation, trace finished before chain. *)
+  exception TraceShorterThanChain
+
   (** Adds reduced interval causal link. Corresponds to the time between the event and its previous appearence. *)
   let reduced_interval ~to_seq event chains trace =
     let trace =
@@ -474,10 +470,7 @@ struct
             if Event.compare e event = 0 then Some time else previous_seeing
           in
           advance_until next_event_time previous_seeing xs)
-      | Seq.Nil ->
-        failwith
-          "CauseEffect.reduced_interval: impossible situation, trace finished before \
-           chain"
+      | Seq.Nil -> raise TraceShorterThanChain
     in
     let rec aux chains trace () =
       match chains () with
@@ -487,7 +480,7 @@ struct
           Option.unwrap_exn ~expect:(MissingEvent event)
           @@ Events.find_opt event chain.visits
         in
-        (* CORRECTNESS: presence of [first] should be guaranteed by non-empty option *)
+        (* CORRECTNESS: presence of [first] is guaranteed by non-empty option found just above *)
         let first = Dynarray.get times 0 in
         let just_before, trace = advance_until first None trace in
         (match just_before with
@@ -500,21 +493,16 @@ end
 
 let%test_module "causal witness flow network" =
   (module struct
-    include EventEqTransition (struct
-        module Event = String
-        module Transition = String
-        module Place = String
-        module Probe = Integer
-        module Color = String
-        module Time = Integer
-
-        type place = Place.t
-        type event = Event.t
-        type probe = Probe.t
-        type time = Time.t
-        type color = Color.t
-        type transition = Transition.t
-      end)
+    include
+      EventEqTransition
+        (struct
+          module Event = String
+          module Transition = String
+          module Place = String
+          module Probe = Integer
+          module Color = String
+        end)
+        (Integer)
 
     let s = "sensor"
     let c = "controller"
@@ -537,7 +525,7 @@ let%test_module "causal witness flow network" =
         ]
     ;;
 
-    let net = Result.get_ok @@ Declaration.to_net net_description
+    let net = Declaration.to_network net_description
 
     let trace1 =
       Trace.
@@ -557,7 +545,7 @@ let%test_module "causal witness flow network" =
     open Ppx_compare_lib.Builtin
 
     let get_chains trace =
-      let compiled_net = Compiled.of_dynamic net in
+      let compiled_net = Compiled.of_network net in
       let compiled_net =
         Compiled.consume_seq_trace ~to_iter:List.to_seq compiled_net (List.to_seq trace)
       in
