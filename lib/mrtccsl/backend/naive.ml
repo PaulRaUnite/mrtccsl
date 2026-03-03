@@ -467,7 +467,7 @@ struct
     }
   ;;
 
-  type exn += InnerFailure
+  exception InnerFailure
 
   let sync_guards ?(debug = true) (automata : t list) now =
     let solutions, _ =

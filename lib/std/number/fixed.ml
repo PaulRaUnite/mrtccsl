@@ -36,7 +36,7 @@ module Make (R : R) = struct
       Bytes.to_string b)
   ;;
 
-  type exn += WrongFormat of string
+  exception WrongFormat of string
 
   let of_string s =
     if resolution = 0
@@ -56,7 +56,7 @@ module Make (R : R) = struct
   let of_int x = Z.mul (Z.of_int x) scale
   let of_float x = Z.of_float (Float.mul x (Z.to_float scale))
 
-  type exn += NondivisibleRationalDenominator
+  exception NondivisibleRationalDenominator
 
   let of_rat_exact Q.{ num; den } =
     let divisor, rem = Z.div_rem scale den in
