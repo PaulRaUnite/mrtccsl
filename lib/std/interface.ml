@@ -1,3 +1,5 @@
+module type Sexpable = Sexplib0.Sexpable.S
+
 (** Signature of convertible to a string type. *)
 module type Stringable = sig
   type t
@@ -14,7 +16,7 @@ end
 
 (** Signature of debuggable type (sexp and string convertible). *)
 module type Debug = sig
-  include Sexplib0.Sexpable.S
+  include Sexpable
   include Stringable with type t := t
 end
 
@@ -170,5 +172,104 @@ module type Foldable = sig
   type 'a t
 
   (** Traverses the container elements. *)
-  val fold : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+  val fold_left : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
+end
+
+module type Monoid = sig
+  (** Monoid element type of alphabet ['a]. *)
+  type 'a t
+
+  (** 0-element. *)
+  val empty : 'a t
+
+  (** Convert alphabet symbol to monoid element. *)
+  val singleton : 'a -> 'a t
+
+  (** Add alphabet symbol to the monoid, [add s m = append (singleton a) m]. *)
+  val add : 'a -> 'a t -> 'a t
+end
+
+(** Module that collects functors on interface module types. *)
+module Make = struct
+  (** Functor that adds s-expression convertions. *)
+  module SexpForMonoid
+      (C : sig
+         include Monoid
+         include Foldable with type 'a t := 'a t
+       end)
+      (E : Sexpable) : Sexpable with type t = E.t C.t = struct
+    type t = E.t C.t
+
+    (** Converts value into s-expression. *)
+    let t_of_sexp sexp =
+      sexp
+      |> Sexplib0.Sexp_conv.list_of_sexp E.t_of_sexp
+      |> List.fold_left (Fun.flip C.add) C.empty
+    ;;
+
+    (** Converts s-expression into a value. @raises Of_sexp_error *)
+    let sexp_of_t m =
+      m
+      |> C.fold_left (Fun.flip List.cons) []
+      |> Sexplib0.Sexp_conv.sexp_of_list E.sexp_of_t
+    ;;
+  end
+end
+
+module Concrete = struct
+  (** Signature of a type that can be traversed by folding. *)
+  module type Foldable = sig
+    (** Element type.*)
+    type elt
+
+    (** Container type. *)
+    type t
+
+    (** Traverses the container elements. *)
+    val fold_left : ('acc -> elt -> 'acc) -> 'acc -> t -> 'acc
+  end
+
+  module type Monoid = sig
+    (** Monoid alphabet type. *)
+    type elt
+
+    (** Monoid element type of alphabet [el]. *)
+    type t
+
+    (** 0-element. *)
+    val empty : t
+
+    (** Convert alphabet symbol to monoid element. *)
+    val singleton : elt -> t
+
+    (** Add alphabet symbol to the monoid, [add s m = append (singleton a) m]. *)
+    val add : elt -> t -> t
+  end
+
+  (** Module that collects functors on interface module types. *)
+  module Make = struct
+    (** Functor that adds s-expression convertions. *)
+    module SexpForMonoid
+        (C : sig
+           include Monoid
+           include Foldable with type elt := elt and type t := t
+         end)
+        (E : Sexpable with type t = C.elt) : Sexpable with type t = C.t = struct
+      type t = C.t
+
+      (** Converts value into s-expression. *)
+      let t_of_sexp sexp =
+        sexp
+        |> Sexplib0.Sexp_conv.list_of_sexp E.t_of_sexp
+        |> List.fold_left (Fun.flip C.add) C.empty
+      ;;
+
+      (** Converts s-expression into a value. @raises Of_sexp_error *)
+      let sexp_of_t m =
+        m
+        |> C.fold_left (Fun.flip List.cons) []
+        |> Sexplib0.Sexp_conv.sexp_of_list E.sexp_of_t
+      ;;
+    end
+  end
 end

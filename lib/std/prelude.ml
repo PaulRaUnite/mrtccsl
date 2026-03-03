@@ -872,6 +872,7 @@ module Set = struct
     ;;
 
     let equal_modulo ~modulo a b = equal (inter a modulo) (inter b modulo)
+    let fold_left f acc s = fold (Fun.flip f) s acc
   end
 end
 

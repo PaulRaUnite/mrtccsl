@@ -51,10 +51,9 @@ module Network (T : T) = struct
     | Queue
 
   module Coloring = struct
-    include Set.Make (Color)
-
-    let sexp_of_t = sexp_of_list Color.sexp_of_t << to_list
-    let t_of_sexp = list_of_sexp Color.t_of_sexp >> of_list
+    module Inner = Set.Make (Color)
+    include Inner
+    include Interface.Concrete.Make.SexpForMonoid (Inner) (Color)
   end
 
   type token =
