@@ -1,0 +1,15 @@
+{0 CCSL+}
+
+This package contains libraries implementing MRTCCSL language and its Stochastic extension.
+{ul {- [mrtccsl] library: {!Mrtccsl}}
+    {- [mrtccslparsing] library: {!Mrtccslparsing}}
+    {- [std] library: 
+    {ul {- {!Prelude}: it is intended to be the first opened; redefines some standard libraries with more functions}
+        {- {!Boolean}}
+        {- {!Expr}}
+        {- {!Interfaces}}
+        {- {!Stats}}
+        {- {!Number}}
+        }}
+    {- {!Symbolic}}
+}
