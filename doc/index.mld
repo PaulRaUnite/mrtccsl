@@ -11,5 +11,5 @@ This package contains libraries implementing MRTCCSL language and its Stochastic
         {- {!Stats}}
         {- {!Number}}
         }}
-    {- {!Symbolic}}
+    {- [symbolic] library provides {!Symbolic.Machine}}
 }
