@@ -435,7 +435,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
 
     (** [respect_microstep] serializes the step randomly while respecting partial ordering.*)
     let respect_microstep order_hints l =
-      l |> L.to_iter |> Microstep.arrange_randomly order_hints |> Iter.of_list
+      l |> L.to_iter |> Microstep.HardRelation.arrange_randomly order_hints |> Iter.of_list
     ;;
   end
 

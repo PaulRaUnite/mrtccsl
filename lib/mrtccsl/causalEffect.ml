@@ -30,9 +30,15 @@ module type Time = sig
   include Interface.Number.Ring with type t := t
 end
 
-(** Functor that provides construction and traversal of causal (through data sharing) networks. *)
+(** Functor that provides construction and traversal of causal (mark data sharing) networks. *)
 module Network (IDs : IDs) (Time : Time) = struct
+  module Time = struct
+    include Time
+    include Interface.ExpOrder.Make (Time)
+  end
+
   open Ppx_sexp_conv_lib.Conv
+  open Ppx_compare_lib.Builtin
   include IDs
   module Places = Map.Make (Place)
   module Transitions = Map.Make (Transition)
@@ -51,50 +57,257 @@ module Network (IDs : IDs) (Time : Time) = struct
 
   module Probes = Map.Make (Probe)
 
-  type place_type =
-    | Variable
-    | Queue
-
   module Coloring = struct
     module Inner = Set.Make (Color)
     include Inner
     include Interface.Concrete.Make.SexpForMonoid (Inner) (Color)
+
+    (** Type of color guards. *)
+    type guard =
+      (* TODO: just reuse propositional formula *)
+      | Any
+      | Atom of Color.t
+      | And of guard list
+      | AllAtoms of t
+      | Or of guard list
+      | AnyAtom of t
+    [@@deriving compare]
+
+    let rec eval_guard coloring = function
+      | Any -> true
+      | AllAtoms colors -> subset coloring colors
+      | AnyAtom colors -> not @@ is_empty @@ inter coloring colors
+      | Atom color -> mem color coloring
+      | And matches -> List.for_all (eval_guard coloring) matches
+      | Or matches -> List.exists (eval_guard coloring) matches
+    ;;
   end
 
-  (** Token type. Represents data passing through a system. Witnesses the relationships between events from the data interactions. *)
-  type token =
-    { visits : Time.t Dynarray.t Events.t
-    ; coloring : Coloring.t
-    }
-  [@@deriving compare, sexp]
+  module Instant = struct
+    (** Type of instants. *)
+    type t = Event.t * Time.t [@@deriving compare, sexp]
+  end
 
-  (** An empty token. Should be interpretted as incorrect data because is unrelated to any external event. *)
-  let empty_token = { visits = Events.empty; coloring = Coloring.empty }
+  module Annot = struct
+    (** Type of causality annotations. *)
+    type t =
+      { colors : Coloring.t (** Remembers all colors at this point. *)
+      ; external_span : Time.t * Time.t
+        (** Time interval of all purely external (read: non-transitive) instants. Basically build index in a tree. *)
+      }
+    [@@deriving sexp, compare]
 
-  let merge_tokens { visits = v1; coloring = c1 } { visits = v2; coloring = c2 } =
-    let merge_visits _ a1 a2 =
-      let arr = Dynarray.append_alloc a1 a2 in
-      Dynarray.stable_sort Time.compare arr;
-      Some arr
-    in
-    { visits = Events.union merge_visits v1 v2; coloring = Coloring.union c1 c2 }
-  ;;
+    (** Merges two annotations by union of colors and intervals. *)
+    let merge
+          { colors = c1; external_span = min1, max1 }
+          { colors = c2; external_span = min2, max2 }
+      =
+      let colors = Coloring.union c1 c2
+      and external_span = Time.min min1 min2, Time.max max1 max2 in
+      { colors; external_span }
+    ;;
+  end
 
-  let add_visit { visits; coloring } event time more_color =
-    let update_array arr =
-      Dynarray.add_last arr time;
-      arr
-    in
-    { visits = Events.entry_mut ~default:Dynarray.create update_array event visits
-    ; coloring = Coloring.union coloring more_color
-    }
-  ;;
+  module InstantSet = Set.Make (Instant)
+
+  module Token = struct
+    (** Module of tokens. *)
+
+    (** Definition of influence relation for marks of type ['mark]. *)
+    type 'mark cause =
+      | Internal
+      (** Dependency on variable that was initialized to some value at the start of the system. *)
+      | External of
+          { dependencies : 'mark cause list (** Dependency cannot be empty. *)
+          ; mark : 'mark
+            (** Event that binds the dependencies into a new relation. Cannot be empty. *)
+          } (** Value depends on external activity denoted by the ['mark]. *)
+    [@@deriving compare, sexp, fold]
+
+    type mark =
+      { instant : Instant.t
+      ; annotation : Annot.t
+      }
+    [@@deriving sexp, compare]
+
+    (** Token type. Represents data passing mark a system. Witnesses the relationships between events from the data interactions. Has an arbitrary combined categorization (color). *)
+    type t = mark cause [@@deriving sexp, fold, compare]
+
+    (** Returns [Some] root mark of the token or [None] when token is internal. *)
+    let root_mark_opt = function
+      | Internal -> None
+      | External { mark; _ } -> Some mark
+    ;;
+
+    exception NoRootMark
+
+    (** Returns root mark recorded by the token. @raises NoRootMark *)
+    let root_mark token = Option.unwrap_exn ~expect:NoRootMark @@ root_mark_opt token
+
+    (** Returns all marks that do not depend on other causes. *)
+    let rec non_transitive_causes = function
+      | Internal -> []
+      | External { mark; dependencies } ->
+        if List.is_empty dependencies
+        then [ mark ]
+        else List.flat_map non_transitive_causes dependencies
+    ;;
+
+    (** Token colors. *)
+    let colors = function
+      | Internal -> Coloring.empty
+      | External { mark; _ } -> mark.annotation.colors
+    ;;
+
+    (** A default token with internally initialized data and empty coloring. *)
+    let internal = Internal
+
+    let dependencies_annotation dependencies =
+      let marks =
+        List.filter_map
+          (fun t ->
+             let* mark = root_mark_opt t in
+             Some mark.annotation)
+          dependencies
+      in
+      let annot = List.reduce_left Annot.merge Fun.id marks in
+      annot
+    ;;
+
+    (** Builds an external token, instants without dependencies are considered primary instants. *)
+    let build_external instant new_colors dependencies =
+      let annotation =
+        if List.is_empty dependencies
+        then (
+          let _, time = instant in
+          let external_span = time, time in
+          Annot.{ colors = new_colors; external_span })
+        else (
+          let Annot.{ colors; external_span } = dependencies_annotation dependencies in
+          let colors = Coloring.union new_colors colors in
+          Annot.{ colors; external_span })
+      in
+      let mark = { instant; annotation } in
+      External { mark; dependencies = dependencies }
+    ;;
+
+    (** Check whenever the token depends on interval data. *)
+    let rec contains_internal = function
+      | Internal -> true
+      | External { dependencies; _ } -> List.exists contains_internal dependencies
+    ;;
+
+    (** Returns true when there are no internal tokens. *)
+    let is_internal_free cause = not (contains_internal cause)
+
+    (** Filters out the causality branches that do not contain the specified color scheme. Rebuilds the span index. *)
+    let rec chromatic_filter matching = function
+      | Internal -> None
+      | External { dependencies; mark } ->
+        let Annot.{ colors; _ } = mark.annotation in
+        if Coloring.eval_guard colors matching
+        then (
+          let filtered_dependencies =
+            List.filter_map (chromatic_filter matching) dependencies
+          in
+          let { instant; annotation = Annot.{ colors; _ } } = mark in
+          Some (build_external instant colors filtered_dependencies))
+        else None
+    ;;
+
+    let rec unique_instants instants = function
+      | Internal -> instants
+      | External { mark = { instant; _ }; dependencies } ->
+        let previous_marks =
+          List.fold_left
+            (fun set influence -> unique_instants set influence)
+            instants
+            dependencies
+        in
+        InstantSet.add instant previous_marks
+    ;;
+
+    (** Returns all unique instants in a token as a set. *)
+    let unique_instants inf = unique_instants InstantSet.empty inf
+
+    (** Checks whenever the tokens share some instants. *)
+    let has_common_instants t1 t2 =
+      let instants1 = unique_instants t1
+      and instants2 = unique_instants t2 in
+      not (InstantSet.disjoint instants1 instants2)
+    ;;
+
+    (** Returns the earlist and the latest token in the equivalence set sequence. @param minmax is any [minmax] function for [tokens] container. *)
+    let earliest_latest_conseq ~minmax tokens =
+      minmax
+        (fun t1 t2 ->
+           let { instant = _, time1; _ } = root_mark t1
+           and { instant = _, time2; _ } = root_mark t2 in
+           Time.compare time1 time2)
+        tokens
+    ;;
+
+    (** Narrows causality to the ones that satisfy [~dep_select]. *)
+    let rec subcause ~dep_select = function
+      | Internal -> Internal
+      | External { mark; dependencies } ->
+        let _, dependencies = List.fold_left dep_select (None, []) dependencies in
+        (* dep_select should select something *)
+        let dependencies = List.map (subcause ~dep_select) dependencies in
+        External { mark; dependencies }
+    ;;
+
+    (** Selects dependencies of a cause that contain {b earliest} external instant. *)
+    let early_cause_select (state, result) cause =
+      let node = root_mark_opt cause in
+      match node with
+      | Some node ->
+        let Annot.{ external_span = current_min, _; _ } = node.annotation in
+        (match state with
+         | Some min ->
+           let comparison = Time.compare min current_min in
+           if comparison = 0
+           then state, cause :: result
+           else if comparison < 0
+           then state, result
+           else Some current_min, [ cause ]
+         | None -> Some current_min, [ cause ])
+      | None -> state, result
+    ;;
+
+    (** Selects dependencies of a cause that contain {b latest} external instant. *)
+    let late_cause_select (state, result) cause =
+      let node = root_mark_opt cause in
+      match node with
+      | Some node ->
+        let Annot.{ external_span = _, current_max; _ } = node.annotation in
+        (match state with
+         | Some max ->
+           let comparison = Time.compare max current_max in
+           if comparison = 0
+           then state, cause :: result
+           else if comparison < 0
+           then Some current_max, [ cause ]
+           else state, result
+         | None -> Some current_max, [ cause ])
+      | None -> state, result
+    ;;
+  end
 
   (** Variable type. *)
-  type inner_place =
-    | Variable of token * bool
-    | Queue of token list
+  type place =
+    | Variable of Token.t * bool
+    | Queue of Token.t list
+  (* | Buffer of
+        { max : int
+        ; data : Token.t list
+        }
+    | SlidingWindow of
+        { len : int
+        ; data : Token.t list
+        } *)
 
+  (** Read semantics of places. *)
   let read_from_place p =
     match p with
     | Variable (token, init) -> if init then Some token, p else None, p
@@ -103,39 +316,24 @@ module Network (IDs : IDs) (Time : Time) = struct
       hd, Queue tail
   ;;
 
+  (** Write semantics of places. *)
   let write_to_place token = function
     | Variable (_, _) -> Variable (token, true)
     | Queue q -> Queue (List.append q [ token ])
   ;;
 
-  type inner_transition =
+  type transition =
     { input_arcs : Place.t list
     ; output_arcs : Place.t list
     ; coloring : Coloring.t
     ; event : Event.t
     }
 
-  (** Type of color matches. *)
-  type color_match =
-    (* TODO: just reuse propositional formula *)
-    | Any
-    | Single of Color.t
-    | And of color_match * color_match
-    | Or of color_match * color_match
-  [@@deriving compare]
-
-  let rec eval_color_match coloring = function
-    | Any -> true
-    | Single color -> Coloring.mem color coloring
-    | And (m1, m2) -> eval_color_match coloring m1 && eval_color_match coloring m2
-    | Or (m1, m2) -> eval_color_match coloring m1 || eval_color_match coloring m2
-  ;;
-
   (** Network type. *)
   type t =
-    { places : inner_place Places.t
-    ; transitions : inner_transition Transitions.t
-    ; probes : (color_match * Transition.t) Probes.t
+    { places : place Places.t
+    ; transitions : transition Transitions.t
+    ; probes : (Coloring.guard * Transition.t) Probes.t
     }
 
   (** Empty network. *)
@@ -145,15 +343,19 @@ module Network (IDs : IDs) (Time : Time) = struct
 
   (** Raised when code declares that a place is both variable and queue at the same time. *)
   exception IncompatiblePlaceDefinition of Place.t
+  [@@deriving sexp]
 
   (** Raised when transition is expected, but not found. *)
   exception MissingTransition of Transition.t
+  [@@deriving sexp]
 
   (** Raised when transition is declared twice with different events. *)
   exception IncompatibleTransitionDefinition of Transition.t
+  [@@deriving sexp]
 
   (** Raised when probe is declared twice with different matching colors or at different transition. *)
   exception IncompatibleProbeDefinition of Probe.t
+  [@@deriving sexp]
 
   (** Adds variable place to the network. *)
   let add_variable id net =
@@ -161,7 +363,7 @@ module Network (IDs : IDs) (Time : Time) = struct
     | Some (Variable _) -> net
     | Some _ -> raise (IncompatiblePlaceDefinition id)
     | None ->
-      { net with places = Places.add id (Variable (empty_token, false)) net.places }
+      { net with places = Places.add id (Variable (Token.internal, false)) net.places }
   ;;
 
   (** Adds queue variable to the network. *)
@@ -215,7 +417,7 @@ module Network (IDs : IDs) (Time : Time) = struct
     match Probes.find_opt id net.probes with
     | None -> { net with probes = Probes.add id (m, at) net.probes }
     | Some (existing_m, existing_at) ->
-      if compare_color_match existing_m m = 0 && Transition.compare existing_at at = 0
+      if Coloring.compare_guard existing_m m = 0 && Transition.compare existing_at at = 0
       then net
       else raise (IncompatibleProbeDefinition id)
   ;;
@@ -223,26 +425,27 @@ module Network (IDs : IDs) (Time : Time) = struct
   (** Module for networks ready to travers traces efficiently. The representation is mutable. *)
   module Compiled = struct
     type ctransition =
-      { inputs : inner_place ref list
-      ; outputs : inner_place ref list
+      { inputs : place ref list
+      ; outputs : place ref list
       ; coloring : Coloring.t
-      ; extracts : (color_match * token Dynarray.t) list
+      ; extracts : (Coloring.guard * Token.t Dynarray.t) list
       }
 
     type t =
       { event_index : ctransition list Events.t
-      ; extracted : token Dynarray.t Probes.t
+      ; extracted : (Coloring.guard * Token.t Dynarray.t) Probes.t
       }
 
+    (** Compiles the network. *)
     let of_network { places; transitions; probes } : t =
       let ref_places = Places.map ref places in
-      let ref_tokens_probes = Probes.map (fun _ -> Dynarray.create ()) probes in
+      let ref_tokens_probes = Probes.map (fun (m, _) -> m, Dynarray.create ()) probes in
       let transition_to_probe =
         Probes.fold
-          (fun id (m, t) index ->
+          (fun id (_, t) index ->
              Transitions.entry
                ~default:[]
-               (List.cons (m, Probes.find id ref_tokens_probes))
+               (List.cons (Probes.find id ref_tokens_probes))
                t
                index)
           probes
@@ -267,7 +470,7 @@ module Network (IDs : IDs) (Time : Time) = struct
 
     (** Consumes sequence of steps in a trace and collects cause witnesses at probe transitions. *)
     let consume_seq_trace ~to_iter:to_seq network trace : t =
-      let try_transition time event { inputs; outputs; coloring; extracts } =
+      let try_transition instant { inputs; outputs; coloring; extracts } =
         let can_read input_place =
           let token, _ = read_from_place !input_place in
           Option.is_some token
@@ -282,21 +485,21 @@ module Network (IDs : IDs) (Time : Time) = struct
             token
           in
           let input_tokens = List.filter_map read_token inputs in
-          let combined_input = List.fold_left merge_tokens empty_token input_tokens in
-          let token = add_visit combined_input event time coloring in
+          let token = Token.build_external instant coloring input_tokens in
           let write_token output_place =
             output_place := write_to_place token !output_place
           in
           List.iter write_token outputs;
           let extract_token (color_match, probe_list) =
-            if eval_color_match token.coloring color_match
+            if Coloring.eval_guard (Token.colors token) color_match
             then Dynarray.add_last probe_list token
           in
           List.iter extract_token extracts)
       in
       let process_event time net event =
         let transitions = Events.find event net.event_index in
-        List.iter (try_transition time event) transitions;
+        let instant = event, time in
+        List.iter (try_transition instant) transitions;
         net
       in
       let process_step net Trace.{ label; time } =
@@ -371,85 +574,103 @@ struct
 
     type t = statement list [@@deriving sexp, compare]
 
+    (** Cannot have several declarations of the same place. *)
+    exception DuplicatePlaceStatements
+    [@@deriving sexp]
+
     (** Converts declaration into a network. *)
     let to_network records =
-      let execute_record net = function
-        | Variable { name; writes; reads } -> sampling_variable name writes reads net
-        | Queue { name; writes; reads } -> queueing name writes reads net
+      let execute_record (prev_places, net) decl =
+        let check_duplicate_place name =
+          if Option.is_some @@ Places.find_opt name prev_places
+          then raise DuplicatePlaceStatements
+        in
+        match decl with
+        | Variable { name; writes; reads } ->
+          check_duplicate_place name;
+          let net = sampling_variable name writes reads net
+          and places = Places.add name () prev_places in
+          places, net
+        | Queue { name; writes; reads } ->
+          check_duplicate_place name;
+          let net = queueing name writes reads net
+          and places = Places.add name () prev_places in
+          places, net
         | Inject { at; colors } ->
-          List.fold_left (fun net color -> inject_color at color net) net colors
+          ( prev_places
+          , List.fold_left (fun net color -> inject_color at color net) net colors )
         | Probe { name; expect_all; at } ->
-          let individual_matches = List.map (fun c -> Single c) expect_all in
-          let all_match = List.fold_merge (fun l r -> And (l, r)) individual_matches in
-          add_probe name all_match at net
+          let color_guard = Coloring.(AllAtoms (of_list expect_all)) in
+          prev_places, add_probe name color_guard at net
       in
-      List.fold_left execute_record empty records
+      let _, net = List.fold_left execute_record (Places.empty, empty) records in
+      net
     ;;
   end
 
-  (** Largest difference between the witnessed event timestampts. *)
-  let witness_interval token =
-    (* FIXME: it is probably a good idea to indicate the start points *)
-    let* ts_min, ts_max =
-      token.visits
-      |> Events.to_seq
-      |> Seq.flat_map (fun (_, times) -> Dynarray.to_seq times)
-      |> Seq.minmax Time.compare
+  (** Semantics of ends of causal-effect chains. *)
+  type end_semantics =
+    | Early (** Early denotes early cause or effect among equivalent. *)
+    | Late (** Late denotes late cause or effect among equivalent. *)
+
+  (** Filters and maps tokens by selecting chain between the pair of cause and effect (reaction) in the equivalence class and the token. *)
+  let select_relevant_tokens ~cause ~conseq color_guard tokens =
+    let non_internal_tokens = Seq.filter (not << Token.contains_internal) tokens in
+    let narrowed_tokens =
+      Seq.filter_map (Token.chromatic_filter color_guard) non_internal_tokens
     in
-    Some (Time.sub ts_max ts_min)
-  ;;
-
-  (** Computes shortest and longest event chains that pass through the same event. *)
-  let shortest_longest_chains event tokens =
-    let one_event_equality { visits = v1; _ } { visits = v2; _ } =
-      let ts1 = Events.find_opt event v1
-      and ts2 = Events.find_opt event v2 in
-      match ts1, ts2 with
-      | Some ts1, Some ts2 -> Dynarray.compare Time.compare ts1 ts2 = 0
-      | _ -> false
-    in
-    let continuous_groups = Seq.group one_event_equality (Dynarray.to_seq tokens) in
-    Seq.filter_map
-      (fun group ->
-         let with_spans = Seq.map (fun token -> token, witness_interval token) group in
-         Seq.minmax
-           (fun (_, interval1) (_, interval2) ->
-              Option.compare Time.compare interval1 interval2)
-           with_spans)
-      continuous_groups
-  ;;
-
-  exception MissingEvent of Event.t [@@deriving sexp]
-
-  (** Adds full interval causal link. Corresponds to the time between the event and its previous appearence with a successful chain.*)
-  let full_interval event chains =
-    let get_first_timestamp (token, _) =
-      let times =
-        Option.unwrap_exn ~expect:(MissingEvent event)
-        @@ Events.find_opt event token.visits
+    let equivalence_classes = Seq.group Token.has_common_instants narrowed_tokens in
+    let select_canonical_conseq equiv_tokens =
+      (*TODO: revise, will probably allow transitive equivalence which is undesirable *)
+      let cls = List.of_seq equiv_tokens in
+      let equiv_tokens = List.to_seq cls in
+      let min, max =
+        Option.unwrap ~expect:"group is never empty"
+        @@ Token.earliest_latest_conseq ~minmax:Seq.minmax equiv_tokens
       in
-      let first = Dynarray.get times 0 in
-      first
+      match conseq with
+      | Early -> min
+      | Late -> max
     in
-    let get_last_timestamp (token, _) =
-      let times = Events.find event token.visits in
-      let first = Dynarray.get_last times in
-      first
+    let canonical_conseq = Seq.map select_canonical_conseq equivalence_classes in
+    let dep_select =
+      match cause with
+      | Early -> Token.early_cause_select
+      | Late -> Token.late_cause_select
+    in
+    let select_canonical_cause = Token.subcause ~dep_select in
+    let canonical_cause_conseq = Seq.map select_canonical_cause canonical_conseq in
+    canonical_cause_conseq
+  ;;
+
+  (** When computing intervals between chains, each chain should have selected exactly one cause. *)
+  exception IntervalMultipleCauses
+
+  (** Adds duration of the interval between (succesuful) causal-effect chains (tokens). @raises IntervalMultipleCauses when tokens were not pre-filtered to contain singular cause. *)
+  let full_interval tokens =
+    let cause_mark token =
+      let original_causes = Token.non_transitive_causes token in
+      let next_ref_instant =
+        (* we require the cause to be only one *)
+        match original_causes with
+        | [ single ] -> single
+        | _ -> raise IntervalMultipleCauses
+      in
+      next_ref_instant
     in
     let rec aux prev seq () =
       match seq () with
       | Seq.Nil -> Seq.Nil
-      | Seq.Cons (chain, rest) ->
-        let first = get_first_timestamp chain
-        and last = get_last_timestamp chain in
-        Cons ((chain, Time.sub first prev), aux last rest)
+      | Seq.Cons (token, rest) ->
+        let next_ref = cause_mark token in
+        Cons ((prev, token), aux next_ref rest)
     in
-    let prev, seq = Seq.uncons_opt chains in
-    match Option.map get_last_timestamp prev with
+    let first, rest = Seq.uncons_opt tokens in
+    match Option.map cause_mark first with
     | None -> Seq.empty
-    | Some prev -> aux prev seq
+    | Some first -> aux first rest
   ;;
-
+  (* TODO: think about implementing reduced interval later
   (** Impossible situation, trace finished before chain. *)
   exception TraceShorterThanChain
 
@@ -488,7 +709,7 @@ struct
          | Some previous -> Seq.Cons ((chain, Time.sub first previous), aux rest trace))
     in
     aux chains trace
-  ;;
+  ;; *)
 end
 
 let%test_module "causal witness flow network" =
@@ -544,32 +765,33 @@ let%test_module "causal witness flow network" =
     open Ppx_sexp_conv_lib.Conv
     open Ppx_compare_lib.Builtin
 
-    let get_chains trace =
+    let get_tokens trace =
       let compiled_net = Compiled.of_network net in
       let compiled_net =
         Compiled.consume_seq_trace ~to_iter:List.to_seq compiled_net (List.to_seq trace)
       in
       let probes = Compiled.extracted compiled_net in
-      let chains = Probes.find chain_probe probes in
-      Dynarray.to_list chains
+      let _, tokens = Probes.find chain_probe probes in
+      Dynarray.to_list tokens
     ;;
 
     let%test_unit "nominal" =
-      let construct_visits list =
-        list |> List.map (fun (e, t) -> e, Dynarray.singleton t) |> Events.of_list
+      let construct_visits colors list =
+        let first instant = Token.build_external instant colors [] in
+        let wrap instant cause = Token.build_external instant colors [ cause ] in
+        List.reduce_right wrap first list
       in
-      [%test_eq: token list]
-        (get_chains trace1)
-        [ { visits = construct_visits [ a, 0; c, 0; s, 0 ]
-          ; coloring = Coloring.singleton chain_color
-          }
-        ; { visits = construct_visits [ a, 5; c, 3; s, 3 ]
-          ; coloring = Coloring.singleton chain_color
-          }
+      let colors = Coloring.singleton chain_color in
+      [%test_eq: Token.t list]
+        (get_tokens trace1)
+        [ construct_visits colors [ a, 0; c, 0; s, 0 ]
+        ; construct_visits colors [ a, 5; c, 3; s, 3 ]
         ]
     ;;
 
-    let%test_unit "unfavorable microstep" = [%test_eq: token list] (get_chains trace2) []
+    let%test_unit "unfavorable microstep" =
+      [%test_eq: Token.t list] (get_tokens trace2) []
+    ;;
 
     let%test_unit "same sexp" =
       [%test_eq: Declaration.t]

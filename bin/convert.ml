@@ -93,9 +93,14 @@ module Native = struct
         Option.map_or
           ~default:Export.Serialize.random
           (fun spec ->
-             Export.Serialize.respect_microstep
-               (Mrtccsl.CCSL.MicroStep.derive_order
-                  Mrtccsl.CCSL.Language.Specification.(spec.clock)))
+             let microstep_order_rules =
+               Mrtccsl.CCSL.MicroStep.HardRelation.of_logical_spec
+                 Mrtccsl.CCSL.Language.Specification.(spec.clock)
+             in
+             let compiled_microstep_rules =
+               Mrtccsl.CCSL.MicroStep.HardRelation.compile microstep_order_rules
+             in
+             Export.Serialize.respect_microstep compiled_microstep_rules)
           serialize
       in
       let to_scl =

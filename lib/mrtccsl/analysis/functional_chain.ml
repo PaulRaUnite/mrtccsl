@@ -373,6 +373,12 @@ struct
     let open Chain in
     let span = start_finish_clocks chain in
     let links = links chain in
+    let compute_weights contributions total =
+      List.map
+        (fun (name, link_reaction) ->
+           name, if N.equal total N.zero then N.zero else N.(link_reaction / total))
+        contributions
+    in
     let reaction_times =
       Seq.flat_map
         (fun chain ->
@@ -383,12 +389,6 @@ struct
                let f, s = span in
                let name = Printf.sprintf "%s->%s" (C.to_string f) (C.to_string s) in
                name, reaction_time_of_span chain span)
-           in
-           let compute_wights contributions total =
-             List.map
-               (fun (name, link_reaction) ->
-                  name, if N.equal total N.zero then N.zero else N.(link_reaction / total))
-               contributions
            in
            let reactions =
              match chain.since with
@@ -411,7 +411,7 @@ struct
              | None -> Seq.return (contributions, total)
            in
            Seq.map
-             (fun (contributions, total) -> compute_wights contributions total, total)
+             (fun (contributions, total) -> compute_weights contributions total, total)
              reactions)
         chain_instances
     in

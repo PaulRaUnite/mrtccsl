@@ -1,0 +1,14 @@
+structure {
+    sensor {
+        start = periodic 5s with jitter 0s offset 0s; 
+        end = delay start by 1s;
+    };
+    controller {
+        start = sensor.end;
+        end = delay start by 2s;
+    };
+    actuator {
+        start = periodic 4s with jitter 0s offset 0s; 
+        end = delay start by 3s;
+    };
+}

@@ -22,6 +22,15 @@ let ( and* ) x y =
 (** Raise exception with the given format string and parameters. *)
 let failwithf f = Printf.ksprintf failwith f
 
+(** Reads whole file into a string. *)
+let read_to_string filename =
+  (* open_in_bin works correctly on Unix and Windows *)
+  let ch = open_in_bin filename in
+  let s = really_input_string ch (in_channel_length ch) in
+  close_in ch;
+  s
+;;
+
 module Fun = struct
   include Fun
 

@@ -13,6 +13,9 @@ let weighted_histogram_name dir chain_name span =
   let start, finish = span in
   Printf.sprintf "%s/%s/weighted/%s_%s.histogram.csv" dir chain_name start finish
 ;;
+let plain_weighted_histogram_name dir chain_name =
+  Printf.sprintf "%s/%s/weighted/histogram.csv" dir chain_name
+;;
 
 let categorized_histogram_name dir chain_name span =
   let start, finish = span in
