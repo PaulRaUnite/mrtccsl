@@ -120,13 +120,17 @@ module Cstr = struct
         ; base : 'c
         }
     | Forbid of
-        { left : 'c
+        { left_strict : bool
+        ; left : 'c
         ; right : 'c
+        ; right_strict : bool
         ; args : 'c list
         }
     | Allow of
-        { left : 'c
+        { left_strict : bool
+        ; left : 'c
         ; right : 'c
+        ; right_strict : bool
         ; args : 'c list
         }
     | Sporadic of

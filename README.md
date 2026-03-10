@@ -49,6 +49,8 @@ The project provides the following features:
 ## Documentation
 Produced using [odoc](https://ocaml.github.io/odoc/odoc/index.html) and is available at: https://paulraunite.github.io/mrtccsl/
 
+Syntax is available at: [syntax.ebnf](./lib/mrtccslparsing/syntax.ebnf)
+
 ## Used in
 - [SDV DSL](https://github.com/jdeantoni/SoftwareDefinedVehicleModelingLanguage) as a flexible mix between event-driven simulator and behaviour explorer; provides traces and extraction of reaction time distributions
 - [ABZ2024 use case](https://github.com/PaulRaUnite/abz2024/)

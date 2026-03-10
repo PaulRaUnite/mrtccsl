@@ -565,12 +565,15 @@ let constraint_as_machine now
     drift_periodic_as_machine ~now out period error offset
   | AbsPeriodic { out; period; error; offset } ->
     jitter_periodic_as_machine ~now out period error offset
-  | Forbid { left; right; args } -> forbid_as_machine left right args
-  | Allow { left; right; args } -> allow_as_machine left right args
+  | Forbid { left; right; args; left_strict = false; right_strict = true } ->
+    forbid_as_machine left right args
+  | Allow { left; right; args; left_strict = false; right_strict = true } ->
+    allow_as_machine left right args
   | Sporadic { out; at_least; strict } -> sporadic_as_machine ~now out at_least strict
   | Pool (1, open_close_pairs) -> mutex_as_machine open_close_pairs
   | Pool _ ->
     failwith "pool constraint with n > 1 is not supported in symbolic representation"
+  | _ -> failwith "not implemented"
 ;;
 
 (** Empty (as it does not constrain any clocks) machine with the basic condition of strict monotonicity on the real-time progression. *)

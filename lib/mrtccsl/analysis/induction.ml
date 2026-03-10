@@ -211,7 +211,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
       && arg.@[i - d1] <= base.@[i - d1]
     | FirstSampled { out; arg; base } | LastSampled { out; arg; base } ->
       base.@[i - 1] < out.@[i] && out.@[i] == arg.@[i] && arg.@[i] <= base.@[i]
-    | Forbid { left; right; args } ->
+    | Forbid { left; right; args; left_strict = false; right_strict = true } ->
       And
         (List.map
            (fun a ->
@@ -220,7 +220,7 @@ module Make (C : Var) (N : Num) (S : Solver.S with type v = C.t and type n = N.t
                   && right.@[i - 1] < a.@[i]
                   && a.@[i] < left.@[i]))
            args)
-    | Allow { left; right; args } ->
+    | Allow { left; right; args; left_strict = false; right_strict = false } ->
       And (List.map (fun a -> left.@[i] <= a.@[i] && a.@[i] <= right.@[i]) args)
     | _ -> raise (UnderApproximationUnavailable c)
   ;;

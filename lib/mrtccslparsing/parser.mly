@@ -170,8 +170,8 @@ statement0 :
 | DISCRETE ; PROCESS ; var=var ; WITH ; values=located(nonempty_list(INT)) ; SIM ; ratios=located(separated_nonempty_list(COLON, INT)) { DiscreteValued { var ; values ; ratios }}
 | MUTEX ; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (1, pairs))}
 | POOL ; n=INT; pairs=delimited(LBRACE, dangling_list(COMMA, separated_pair(clock_expr, ARROWRIGHT, clock_expr)), RBRACE) { (Pool (n, pairs))}
-| ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; LBRACKET ; left=clock_expr ; COMMA ; right=clock_expr; LBRACKET {Allow{clocks;left;right} }
-| FORBID ; clocks=nonempty_list(clock_expr) ; IN ; LBRACKET ; left=clock_expr ; COMMA ; right=clock_expr; LBRACKET {Forbid{clocks;left;right} }
+| ALLOW ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Allow{clocks;interval} }
+| FORBID ; clocks=nonempty_list(clock_expr) ; IN ; interval=interval(clock_expr) {Forbid{clocks;interval} }
 | name=id ; LBRACE ; statements=statements ; RBRACE { Block {name ; statements } }
 | v=var ; u=additive_union ; e=clock_expr { AdditiveUnion (v,u,e) }
 

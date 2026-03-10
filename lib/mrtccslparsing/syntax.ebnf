@@ -82,7 +82,8 @@ clock_expr0 ::= delim_clock_expr0
               | delim_clock_expr DOLLAR inline_relation_0 (ON
                 delim_clock_expr)?
               | NEXT delim_clock_expr
-              | skip? EVERY inline_relation_0 OF delim_clock_expr
+              | skip? EVERY located_2 WITH JITTER inline_relation_0 OF
+                delim_clock_expr
               | SAMPLE delim_clock_expr ON delim_clock_expr
               | FIRST SAMPLE delim_clock_expr ON delim_clock_expr
               | LAST SAMPLE delim_clock_expr ON delim_clock_expr
@@ -105,7 +106,7 @@ statement0 ::= VAR (id (COMMA id)* COLON var_type (COMMA id (COMMA id)* COLON
              | DURATION COLON duration_expr (num_rel duration_expr)+
              | clock_expr clock_rel clock_expr
              | CONTINUOUS PROCESS var WITH contdist
-             | DISCRETE PROCESS var WITH located_2 SIM located_3
+             | DISCRETE PROCESS var WITH located_3 SIM located_4
              | MUTEX LBRACE dangling_list_0 RBRACE
              | POOL INT LBRACE dangling_list_0 RBRACE
              | ALLOW clock_expr+ IN interval_2
@@ -119,13 +120,15 @@ top_module ::= mod_block_0* mod_block_1 mod_block_2* EOF
 
 located_1 ::= contdist0
 
-located_2 ::= INT+
+located_3 ::= INT+
 
-located_3 ::= INT (COLON INT)*
+located_4 ::= INT (COLON INT)*
 
 mod_block_2 ::= ASSERT LBRACE statements RBRACE
 
 mod_block_1 ::= STRUCTURE LBRACE statements RBRACE
+
+located_2 ::= INT
 
 non_empty_dangling_list_0 ::= clock_expr ARROWRIGHT clock_expr COMMA?
                             | clock_expr ARROWRIGHT clock_expr COMMA

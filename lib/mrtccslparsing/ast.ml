@@ -124,7 +124,10 @@ and clock_expr' =
       { arg : clock_expr
       ; delay : duration_expr inline_relation
       }
-  | CSporadic of { at_least : duration ;strict: bool}
+  | CSporadic of
+      { at_least : duration
+      ; strict : bool
+      }
 
 and clock_expr = clock_expr' Loc.t
 
@@ -156,13 +159,11 @@ type statement' =
       }
   | Allow of
       { clocks : clock_expr list
-      ; left : clock_expr
-      ; right : clock_expr
+      ; interval : clock_expr interval
       }
   | Forbid of
       { clocks : clock_expr list
-      ; left : clock_expr
-      ; right : clock_expr
+      ; interval : clock_expr interval
       }
 
 and statement = statement' Loc.t

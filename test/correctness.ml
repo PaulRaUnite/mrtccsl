@@ -228,7 +228,15 @@ module Make (B : BackendS) = struct
             [ "ooo"; "ab"; "bo" ] )
       ; ( "allow[f,t)"
         , order_test
-            (cco [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] } ])
+            (cco
+               [ Allow
+                   { left = "f"
+                   ; right = "t"
+                   ; args = [ "a"; "b" ]
+                   ; left_strict = false
+                   ; right_strict = true
+                   }
+               ])
             [ "fab(ab)t"; "(fa)t" ]
             [ "aftb"; "b" ] )
         (* ; ( "allow(f,t]"
@@ -247,7 +255,7 @@ module Make (B : BackendS) = struct
       ; ( "allow-prec"
         , order_test
             (cco
-               [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] }
+               [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] ; left_strict = false; right_strict=true}
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
                ])
@@ -255,13 +263,13 @@ module Make (B : BackendS) = struct
             [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
       ; ( "forbid[f,t)"
         , order_test
-            (cco [ Forbid { left = "f"; right = "t"; args = [ "a" ] } ])
+            (cco [ Forbid { left = "f"; right = "t"; args = [ "a" ] ; left_strict = false; right_strict=true} ])
             [ "f"; "afta"; "f(ta)"; "(ft)" ]
             [ "fat"; "ffatt"; "a(fa)"; "t" ] )
       ; ( "forbid-prec"
         , order_test
             (cco
-               [ Forbid { left = "f"; right = "t"; args = [ "a" ] }
+               [ Forbid { left = "f"; right = "t"; args = [ "a" ]; left_strict = false; right_strict=true }
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
                ])

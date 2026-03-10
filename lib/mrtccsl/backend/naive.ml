@@ -951,10 +951,8 @@ struct
           CMap.to_string C.to_string string_of_int count
         in
         g, t, p
-      | Allow { left = from; right = until; args }
-      | Forbid { left = from; right = until; args } ->
-        let left_strict = false
-        and right_strict = true in
+      | Allow { left = from; right = until; args; left_strict; right_strict }
+      | Forbid { left = from; right = until; args; left_strict; right_strict } ->
         let folds = ref 0 in
         let eventwith = [] in
         let eventwith = if left_strict then eventwith else [ from ] :: eventwith in
@@ -1242,7 +1240,7 @@ struct
     Seq.unfold
       (fun now ->
          match next_step sol_strat automata now with
-         | Some (l, now) -> Some (Trace.{label=l;time=now}, now)
+         | Some (l, now) -> Some (Trace.{ label = l; time = now }, now)
          | None ->
            print_endline "all integers";
            print_endline @@ VarSeq.to_string II.to_string integers;

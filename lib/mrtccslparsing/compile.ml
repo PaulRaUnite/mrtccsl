@@ -811,7 +811,7 @@ let into_module { assumptions; structure; assertions } =
         ~context
         ~builder
         statements
-    | Allow { clocks; left; right } ->
+    | Allow { clocks;  interval = { left_strict; left; right; right_strict }} ->
       error_recover
         ~context
         ~errors:[]
@@ -822,9 +822,9 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Allow { args = clocks; left; right };
+         Builder.logical builder @@ Allow { args = clocks; left; right ;left_strict ; right_strict};
          Ok context)
-    | Forbid { clocks; left; right } ->
+    | Forbid { clocks;  interval = { left_strict; left; right; right_strict }} ->
       error_recover
         ~context
         ~errors:[]
@@ -835,7 +835,7 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Forbid { args = clocks; left; right };
+         Builder.logical builder @@ Forbid { args = clocks; left; right ;left_strict ; right_strict};
          Ok context)
     | AdditiveUnion (v, u, e) ->
       error_recover
