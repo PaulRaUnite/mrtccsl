@@ -1,10 +1,12 @@
 (include_subdirs qualified)
 
 (library
- (public_name mrtccsl.symbolic)
- (name symbolic)
+ (public_name mrtccsl.sts)
+ (name sts)
  (inline_tests)
- (libraries sexplib0 std vpl-core)
+ (wrapped false)
+ (modules STS)
+ (libraries sexplib0 common vpl-core)
  (preprocess
   (pps
    ppx_inline_test

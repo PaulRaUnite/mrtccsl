@@ -1,3 +1,4 @@
+open Common
 open Prelude
 open Mrtccsl
 open Number
@@ -8,10 +9,10 @@ module L = struct
   include Set.Make (Clock)
 end
 
-module IO = Trace.MakeIO (Rational) (L)
+module IO = Common.Trace.MakeIO (Rational) (L)
 
 module Net =
-  CausalEffect.EventEqTransition
+  CauseEffect.EventEqTransition
     (struct
       module Place = String
       module Transition = String
@@ -22,7 +23,7 @@ module Net =
     (Rational)
 
 module Stats = Stats.Make (String) (Rational)
-open Common
+open Aux
 
 let open_in_chan = function
   | "-" -> stdin

@@ -1,8 +1,9 @@
+open Common
 open Mrtccsl
 open Prelude
 module A = Backend.Naive.Make (String) (Number.Rational)
 module ST = Backend.Naive.Strategy (A)
-module Trace = Trace.MakeIO (Number.Rational) (A.L)
+module Trace = Common.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
 let priority_strategy priorities general_strategy =
@@ -52,7 +53,7 @@ module Opt = Mrtccsl.Optimization.Order.Make (String)
 
 open Cmdliner
 open Cmdliner.Term.Syntax
-open Common
+open Aux
 
 let recommended_cores = Stdlib.Domain.recommended_domain_count ()
 

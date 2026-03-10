@@ -117,7 +117,7 @@ rule read =
   (* Else *)
   | id { ID (Lexing.lexeme lexbuf) }
   | int { INT (int_of_string (Lexing.lexeme lexbuf)) }
-  | dec { DECIMAL (Number.Rational.of_decimal_string (Lexing.lexeme lexbuf)) }
+  | dec { DECIMAL (Common.Number.Rational.of_decimal_string (Lexing.lexeme lexbuf)) }
   | eof { EOF }
   | _ { print_endline "lexer error"; print_endline (Lexing.lexeme lexbuf);
         exit 2 }

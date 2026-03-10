@@ -1,15 +1,23 @@
-{0 CCSL+}
+{0 MRTCCSL }
 
 This package contains libraries implementing MRTCCSL language and its Stochastic extension.
-{ul {- [mrtccsl] library: {!Mrtccsl}}
-    {- [mrtccslparsing] library: {!Mrtccslparsing}}
-    {- [std] library: 
-    {ul {- {!Prelude}: it is intended to be the first opened; redefines some standard libraries with more functions}
-        {- {!Boolean}}
-        {- {!Expr}}
-        {- {!Interfaces}}
-        {- {!Stats}}
-        {- {!Number}}
-        }}
-    {- [symbolic] library provides {!Symbolic.Machine}}
-}
+
+{1:mrtccsl Library [mrtccsl] }
+
+{!modules: Mrtccsl}
+
+{1:mrtccslparsing Library [mrtccslparsing] }
+
+{!modules: Mrtccslparsing}
+
+{1:causeEffect Library [causeEffect]}
+
+{!modules: CauseEffect}
+
+{1:STS Library [STS] }
+
+{!modules: STS}
+
+{1:common Library [common] }
+
+{!modules: Common}

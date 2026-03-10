@@ -2,7 +2,7 @@ open Language.Cstr
 
 module Macro = struct
   open Language.Specification.Builder
-  open Trace
+  open Common.Trace
 
   let task_names name =
     let start = Printf.sprintf "%s.s" name in

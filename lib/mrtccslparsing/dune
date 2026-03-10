@@ -6,7 +6,7 @@
  (libraries
   menhirLib
   ocolor
-  std
+  common
   mrtccsl
   )
  (preprocess

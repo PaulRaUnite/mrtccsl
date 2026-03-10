@@ -1,3 +1,6 @@
+(** Symbolic Transition System definition and solving. *)
+
+open Common
 open Prelude
 open Number
 open Expr

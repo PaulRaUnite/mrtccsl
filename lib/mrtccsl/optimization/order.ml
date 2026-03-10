@@ -1,4 +1,4 @@
-open Prelude
+open Common.Prelude
 open Language
 
 module Make (C : Set.OrderedType) = struct

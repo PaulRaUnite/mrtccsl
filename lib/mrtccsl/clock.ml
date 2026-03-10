@@ -1,4 +1,4 @@
-open Prelude
+open Common.Prelude
 
 module String = struct
   include String

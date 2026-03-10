@@ -1,5 +1,6 @@
-open Symbolic.Machine
+open STS
 open Syntax
+open Common
 open Prelude
 open Number
 
@@ -537,7 +538,7 @@ let sporadic_as_machine ~now out at_least strict =
 
 (** Converts constraint into an abstract machine. *)
 let constraint_as_machine now
-  : _ Ccsl.Language.Cstr.clock_constr -> (string, string) Symbolic.Machine.t
+  : _ Ccsl.Language.Cstr.clock_constr -> (string, string) STS.t
   =
   let now = rinvar now in
   function
@@ -602,7 +603,7 @@ type sim = var * (var, var) t
 
 (** Converts the specification constraints into a synchronized abstract machine. *)
 let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : sim =
-  let open Symbolic.Machine in
+  let open STS in
   let icomp (e1, rel, e2) = IntComp (e1, rel, e2)
   and rcomp (e1, rel, e2) = RatComp (e1, rel, e2) in
   let now, empty_machine = empty in

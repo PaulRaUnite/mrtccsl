@@ -1,11 +1,10 @@
 (include_subdirs qualified)
 
 (library
- (public_name mrtccsl.std)
- (name std)
+ (public_name mrtccsl.causeEffect)
+ (name causeEffect)
  (inline_tests)
- (wrapped false)
- (libraries containers uuseg sexplib0 gmp zarith iter)
+ (libraries sexplib0 sexplib common)
  (preprocess
   (pps
    ppx_inline_test

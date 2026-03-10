@@ -1,15 +1,17 @@
+open Common
 open Prelude
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Number
-open Common
+open Aux
 
 module Label = struct
   include Set.Make (String)
   module E = String
 end
 
-module Export = Mrtccsl.Trace.MakeIO (Rational) (Label)
+module Export = Common.Trace.MakeIO (Rational) (Label)
+module CcslTrace = Mrtccsl.TraceImpl.Make(Rational)(Label)
 
 let input_arg =
   Arg.(
@@ -91,7 +93,7 @@ module Native = struct
     let convert ~serialize ~discretize ~scale input output =
       let serialize =
         Option.map_or
-          ~default:Export.Serialize.random
+          ~default:CcslTrace.Serialize.random
           (fun spec ->
              let microstep_order_rules =
                Mrtccsl.CCSL.MicroStep.HardRelation.of_logical_spec
@@ -100,17 +102,17 @@ module Native = struct
              let compiled_microstep_rules =
                Mrtccsl.CCSL.MicroStep.HardRelation.compile microstep_order_rules
              in
-             Export.Serialize.respect_microstep compiled_microstep_rules)
+             CcslTrace.Serialize.respect_microstep compiled_microstep_rules)
           serialize
       in
       let to_scl =
         Option.map_or
-          ~default:(Export.CSL.print ~tagger:Export.Tag.none)
+          ~default:(Export.CSL.print ~tagger:CcslTrace.Tag.none)
           (fun rounding ->
              let round = of_rounding rounding in
              let scale = Option.unwrap ~expect:"scale is needed for rounding" scale in
              Export.CSL.print
-               ~tagger:(Export.Tag.tag_round_timestamp (round ~divisor:scale)))
+               ~tagger:(CcslTrace.Tag.tag_round_timestamp (round ~divisor:scale)))
           discretize
       in
       let _, trace = Export.CSV.read input in
@@ -178,7 +180,7 @@ module Native = struct
     let load_tasks file =
       let rows = Csv.Rows.load ~has_header:true file in
       List.map
-        Mrtccsl.Trace.(
+        Common.Trace.(
           fun row ->
             let name = Csv.Row.find row "name"
             and release = Csv.Row.find row "release"

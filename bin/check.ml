@@ -1,6 +1,7 @@
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Common
+open Aux
 
 let spec_file_arg =
   Arg.(

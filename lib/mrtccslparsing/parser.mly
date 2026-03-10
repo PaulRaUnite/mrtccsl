@@ -1,11 +1,12 @@
 %{
+    open Common
     open Prelude
     open Ast
 %}
 
 %token <int> INT
 %token <string> ID
-%token <Number.Rational.t> DECIMAL
+%token <Common.Number.Rational.t> DECIMAL
 %token DOT
 %token LBRACE RBRACE LPAREN RPAREN LBRACKET RBRACKET (* brackets *)
 %token COMMA COLON SEMICOLON (* delimiters *)

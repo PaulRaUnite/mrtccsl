@@ -1,12 +1,13 @@
 open Mrtccsl
+open Common
 open Prelude
 open Analysis.FunctionalChain
 module FnCh = Analysis.FunctionalChain.Make (String) (Number.Rational)
-module IO = Mrtccsl.Trace.MakeIO (Number.Rational) (FnCh.A.L)
+module IO = Common.Trace.MakeIO (Number.Rational) (FnCh.A.L)
 module A = FnCh.A
 module Stats = Stats.Make (String) (Number.Rational)
 open FnCh
-open Common
+open Aux
 
 let open_in_chan = function
   | "-" -> stdin

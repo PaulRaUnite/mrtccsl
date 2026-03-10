@@ -1,3 +1,4 @@
+open Common
 open Ppx_compare_lib.Builtin
 open Prelude
 open Number

@@ -1,5 +1,5 @@
 open Mrtccsl
-open Prelude
+open Common.Prelude
 open CCSL.Language
 open Cstr
 open CCSL.Language.Specification

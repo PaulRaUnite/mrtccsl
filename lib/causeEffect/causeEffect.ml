@@ -1,3 +1,6 @@
+(** Cause-Effect network definitions and traversal. *)
+
+open Common
 open Prelude
 open Number
 
@@ -122,7 +125,7 @@ module Network (IDs : IDs) (Time : Time) = struct
           ; mark : 'mark
             (** Event that binds the dependencies into a new relation. Cannot be empty. *)
           } (** Value depends on external activity denoted by the ['mark]. *)
-    [@@deriving compare, sexp, fold]
+    [@@deriving compare, sexp]
 
     type mark =
       { instant : Instant.t
@@ -131,7 +134,7 @@ module Network (IDs : IDs) (Time : Time) = struct
     [@@deriving sexp, compare]
 
     (** Token type. Represents data passing mark a system. Witnesses the relationships between events from the data interactions. Has an arbitrary combined categorization (color). *)
-    type t = mark cause [@@deriving sexp, fold, compare]
+    type t = mark cause [@@deriving sexp, compare]
 
     (** Returns [Some] root mark of the token or [None] when token is internal. *)
     let root_mark_opt = function

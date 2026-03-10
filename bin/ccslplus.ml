@@ -1,5 +1,5 @@
 open Cmdliner
-open Common
+open Aux
 
 let cmd =
   let default = Term.(ret (const (`Help (`Pager, None)))) in

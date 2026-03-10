@@ -10,8 +10,8 @@
   vpl-core
   ocamlgraph
   cudd
-  std
-  symbolic
+  common
+  sts
   iter
   owl
   bitvectorset

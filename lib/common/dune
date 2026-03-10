@@ -1,0 +1,20 @@
+(include_subdirs qualified)
+
+(library
+ (public_name mrtccsl.common)
+ (name common)
+ (inline_tests)
+ (libraries containers uuseg sexplib0 gmp zarith iter csv)
+ (preprocess
+  (pps
+   ppx_inline_test
+   ppx_assert
+   ppx_sexp_conv
+   ppx_compare
+   ppx_deriving.map
+   ppx_deriving.show)))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -32))))

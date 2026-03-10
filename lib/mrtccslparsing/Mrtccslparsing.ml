@@ -1,3 +1,6 @@
+(** Parser for MRTCCSL language. *)
+
+open Common
 open Prelude
 
 let load filename error_ch =

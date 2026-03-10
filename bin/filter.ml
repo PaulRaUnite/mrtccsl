@@ -1,5 +1,6 @@
-open Prelude
 open Common
+open Prelude
+open Aux
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Number
@@ -9,7 +10,7 @@ module Label = struct
   module E = String
 end
 
-module IO = Mrtccsl.Trace.MakeIO (Rational) (Label)
+module IO = Common.Trace.MakeIO (Rational) (Label)
 
 let input_arg =
   Arg.(
@@ -43,7 +44,7 @@ let filter ~regexps input output =
   let clocks, trace = IO.CSV.read input in
   let filter_clock c = List.exists (fun r -> Str.string_match r c 0) regexps in
   let clocks = List.filter filter_clock clocks in
-  let open Mrtccsl.Trace in
+  let open Common.Trace in
   let filter_step { label; time } =
     let label = Label.filter filter_clock label in
     if Label.is_empty label then None else Some { label; time }

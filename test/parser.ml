@@ -1,3 +1,4 @@
+open Common
 open Prelude
 
 let files_to_check =
