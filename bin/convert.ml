@@ -90,8 +90,8 @@ module Native = struct
             ~docv:"ROUNDING")
     ;;
 
-    let convert ~serialize ~discretize ~scale input output =
-      let serialize =
+    let convert ~sequalize ~discretize ~scale input output =
+      let sequalize =
         Option.map_or
           ~default:CcslTrace.Serialize.random
           (fun spec ->
@@ -103,7 +103,7 @@ module Native = struct
                Mrtccsl.CCSL.MicroStep.HardRelation.compile microstep_order_rules
              in
              CcslTrace.Serialize.respect_microstep compiled_microstep_rules)
-          serialize
+          sequalize
       in
       let to_scl =
         Option.map_or
@@ -116,7 +116,7 @@ module Native = struct
           discretize
       in
       let _, trace = Export.CSV.read input in
-      to_scl ~serialize (Format.formatter_of_out_channel output) trace
+      to_scl ~sequalize (Format.formatter_of_out_channel output) trace
     ;;
 
     let cmd =
@@ -136,7 +136,7 @@ module Native = struct
            and+ discretize = discretization_arg in
            let input = Option.map_or ~default:stdin get_in_channel input
            and output = Option.map_or ~default:stdout get_out_channel output
-           and serialize =
+           and sequalize =
              Option.map
                (fun spec_file ->
                   let _, m =
@@ -146,7 +146,7 @@ module Native = struct
                   spec)
                microstep
            in
-           `Ok (Ok (convert ~discretize ~scale ~serialize input output)))
+           `Ok (Ok (convert ~discretize ~scale ~sequalize input output)))
     ;;
   end
 

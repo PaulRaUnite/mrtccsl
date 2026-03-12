@@ -15,7 +15,7 @@
 
 (license APACHE-2.0)
 
-(documentation https://github.com/PaulRaUnite/mrtccsl)
+(documentation https://paulraunite.github.io/mrtccsl/mrtccsl/index.html)
 
 (version 0.5.0)
 
@@ -84,7 +84,7 @@
   (simulation
    "model checking"
    "abstract interpretation"
-   induction
+   "induction"
    "real-time"
    "logical clock"
    "dsl")))

@@ -12,7 +12,7 @@ end
 module IO = Common.Trace.MakeIO (Rational) (L)
 
 module Net =
-  CauseEffect.EventEqTransition
+  CauseEffect.V1.EventEqTransition
     (struct
       module Place = String
       module Transition = String
@@ -34,11 +34,18 @@ let write_histogram filename hist =
   Sys.write_file ~filename (Format.formatter_of_out_channel >> Stats.to_csv hist)
 ;;
 
-let load_network network_filename =
+let load_declaration network_filename =
   let contents = read_to_string network_filename in
   let sexp = Sexplib.Sexp.of_string contents in
-  let decl = Net.Declaration.t_of_sexp sexp in
-  Net.Declaration.to_network decl
+  let decl =
+    CauseEffect.Declaration.t_of_sexp
+      String.t_of_sexp
+      String.t_of_sexp
+      String.t_of_sexp
+      String.t_of_sexp
+      sexp
+  in
+  decl
 ;;
 
 let load_trace filename =
@@ -62,15 +69,15 @@ let microstep_sequalizer microstep_spec_filename =
 ;;
 
 let extract_probes ~sequalizer ~network_decl trace =
-  let compiled_network = Net.Compiled.of_network network_decl in
-  let compiled_network =
-    Net.Compiled.consume_seq_trace ~to_iter:sequalizer compiled_network trace
-  in
-  let probes = Net.Compiled.extracted compiled_network in
+  let trace = Trace.sequalize_trace ~label_to_seq:sequalizer trace in
+  let compiled_network = Net.of_decl network_decl in
+  let compiled_network = Net.consume_seq_trace compiled_network trace in
+  let probes = Net.extracted compiled_network in
   probes
 ;;
 
 let process_probes ~with_interval ~cause ~conseq probes =
+  let open CauseEffect.Token in
   Net.Probes.map
     (fun (m, raw_tokens) ->
        let color_guard = m in
@@ -90,8 +97,8 @@ let process_probes ~with_interval ~cause ~conseq probes =
                 ( Net.Token.
                     { instant = "", Rational.zero
                     ; annotation =
-                        Net.Annot.
-                          { colors = Net.Coloring.empty
+                        Net.Token.Annot.
+                          { colors = Net.Token.Coloring.empty
                           ; external_span = Rational.zero, Rational.zero
                           }
                     }
@@ -141,7 +148,7 @@ let do_command
       trace_files
   =
   let traces = List.map load_trace trace_files in
-  let network_decl = load_network network_file in
+  let network_decl = load_declaration network_file in
   let sequalizer = microstep_sequalizer microstep_file in
   let do_trace trace =
     let probes = extract_probes ~sequalizer ~network_decl trace in
@@ -205,16 +212,16 @@ let microstep_order_specification_arg =
 
 let end_semantics =
   let parser = function
-    | "early" -> Ok Net.Early
-    | "late" -> Ok Net.Late
+    | "early" -> Ok CauseEffect.Declaration.Early
+    | "late" -> Ok CauseEffect.Declaration.Late
     | s -> Error (`Msg (Printf.sprintf "wrong end semantics: %s" s))
   and pp ppf x =
     Format.fprintf
       ppf
       "%s"
       (match x with
-       | Net.Early -> "early"
-       | Net.Late -> "late")
+       | CauseEffect.Declaration.Early -> "early"
+       | CauseEffect.Declaration.Late -> "late")
   in
   Arg.conv (parser, pp)
 ;;
@@ -222,7 +229,7 @@ let end_semantics =
 let start_semantics_arg =
   Arg.(
     value
-    & opt end_semantics Net.Early
+    & opt end_semantics CauseEffect.Declaration.Early
     & info
         [ "start" ]
         ~doc:"Selection of chain cause instants from equivalent."
@@ -232,7 +239,7 @@ let start_semantics_arg =
 let finish_semantics_arg =
   Arg.(
     value
-    & opt end_semantics Net.Early
+    & opt end_semantics CauseEffect.Declaration.Early
     & info
         [ "finish" ]
         ~doc:"Selection of chain consequnce instants from equivalent."

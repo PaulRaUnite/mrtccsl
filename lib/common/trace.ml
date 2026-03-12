@@ -88,6 +88,13 @@ end
 
 include Generic
 
+let sequalize_trace ~label_to_seq trace =
+  Seq.flat_map
+    (fun { label; time } ->
+       Seq.map (fun sublabel -> { label = sublabel; time }) @@ label_to_seq label)
+    trace
+;;
+
 module MakeIO (N : Timestamp) (L : Label) = struct
   include Generic
 
@@ -426,16 +433,15 @@ module MakeIO (N : Timestamp) (L : Label) = struct
     ;;
   end
 
-
   (** Import/Export into comma-separated lists. *)
   module CSL = struct
-    let print ?step_sep ~tagger ~serialize formatter (trace : trace) =
+    let print ?step_sep ~tagger ~sequalize formatter (trace : trace) =
       let init_tagger, tag = tagger in
       let tag_state = init_tagger () in
       let pp_step f { label; time } =
-        let serialization = serialize label in
-        let serialization = tag tag_state time @@ Iter.map L.E.to_string serialization in
-        Iter.pp_seq ~sep:"," Format.pp_print_string f serialization
+        let sequalization = sequalize label in
+        let sequalization = tag tag_state time @@ Iter.map L.E.to_string sequalization in
+        Iter.pp_seq ~sep:"," Format.pp_print_string f sequalization
       in
       Seq.pp ~sep:(Option.value ~default:"," step_sep) pp_step formatter trace;
       Format.pp_print_flush formatter ()
