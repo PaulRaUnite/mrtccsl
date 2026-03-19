@@ -653,6 +653,12 @@ module List = struct
        | index when index > 0 -> h :: insert tail x (index - 1)
        | _ -> invalid_arg "index cannot be less than 0")
   ;;
+
+  let rec remove_assoc_comp ~compare x = function
+    | [] -> []
+    | ((a, _) as pair) :: l ->
+      if compare a x = 0 then l else pair :: remove_assoc_comp ~compare x l
+  ;;
 end
 
 module String = struct

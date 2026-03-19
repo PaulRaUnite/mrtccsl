@@ -94,14 +94,12 @@ let process_probes ~with_interval ~cause ~conseq probes =
          else
            Seq.map
              (fun x ->
-                ( Net.Token.
-                    { instant = "", Rational.zero
-                    ; annotation =
-                        Net.Token.Annot.
-                          { colors = Net.Token.Coloring.empty
-                          ; external_span = Rational.zero, Rational.zero
-                          }
-                    }
+                ( { instant = "", Rational.zero
+                  ; annotation =
+                      { colors = Net.Token.Coloring.empty
+                      ; external_span = Rational.zero, Rational.zero
+                      }
+                  }
                 , x ))
              relevant_tokens
        in
@@ -110,7 +108,6 @@ let process_probes ~with_interval ~cause ~conseq probes =
             let start = List.hd @@ Net.Token.non_transitive_causes token
             and finish = Net.Token.root_mark token in
             (* should be fully initialized by this point *)
-            let open Net.Token in
             let _, time0 = prev_ref.instant
             and _, time1 = start.instant
             and _, time2 = finish.instant in
