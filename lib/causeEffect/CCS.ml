@@ -43,9 +43,10 @@ and ('tname, 'e, 'v, 'c) process =
   | Choice of 'p list (** Choice between the processes. *)
   | Restrict of 'e vector * 'p
   (** Introduction of action/hiding an action. Essentially creates an anonymous action. *)
-  | TemplateCall of 'tname * 'e vector * 'v value_expr vector * ('c -> 'c) option
+  | TemplateCall of 'tname * 'e vector * 'v value_expr vector
   (** Replaces variables in value places in a process with value parameters. *)
   | Closure of (('tname, 'c) closure * 'e vector)
+  | ComputeValue of local_value * ('c vector -> 'c) * 'v value_expr vector * 'p
   constraint 'p = ('tname, 'e, 'v, 'c) process
 
 type arg_event = ArgEvent of int
@@ -93,13 +94,16 @@ let rec instantiate action_args value_args (p : ('n, 'v) template)
     let local_events = Iarray.map event_f local_events in
     let p = instantiate action_args value_args p in
     Restrict (local_events, p)
-  | TemplateCall (name, action_refs, value_exprs, f) ->
+  | TemplateCall (name, action_refs, value_exprs) ->
     let action_refs = Iarray.map event_f action_refs in
     let value_exprs = Iarray.map value_f value_exprs in
-    TemplateCall (name, action_refs, value_exprs, f)
+    TemplateCall (name, action_refs, value_exprs)
   | Closure (c, args) ->
     let args = Iarray.map event_f args in
     Closure (c, args)
+  | ComputeValue (var, f, args, p) ->
+    let args = Iarray.map value_f args in
+    ComputeValue (var, f, args, instantiate action_args value_args p)
 ;;
 
 module Syntax = struct
@@ -108,13 +112,13 @@ module Syntax = struct
   let[@inline always] ( @? ) (e, v) p = Prefix (Receive (e, v), p)
   let[@inline always] ( + ) p1 p2 = Choice [ p1; p2 ]
   let[@inline always] ( || ) p1 p2 = Parallel [ p1; p2 ]
-  let[@inline always] call ?f name actions values = TemplateCall (name, actions, values, f)
+  let[@inline always] call name actions values = TemplateCall (name, actions, values)
   let[@inline always] nu e p = Restrict (e, p)
 end
 
 module PP = struct end
 
-module ProcessDefinitions = struct
+module Standard = struct
   open Syntax
 
   (** 
@@ -169,6 +173,8 @@ module ProcessDefinitions = struct
     [ "Q", q; "R", r ]
   ;;
 
+  let queue write read anon : _ system = queue_template (), call "Q" [| write; read; anon |] [||]
+
   (**
   Variable defined as:
   {math V(w,r)\langle v \rangle = w(x). V(w,r)\langle x \rangle + \overline{r}\langle v \rangle . V(w,r)\langle v \rangle }
@@ -183,8 +189,8 @@ module ProcessDefinitions = struct
     [ "V", w + r ]
   ;;
 
-  let variable write read initial =
-    var_template (), call "V" [| write; read |] [| initial |]
+  let variable write read initial : _ system =
+    var_template (), call "V" [| write; read |] [| Defined initial |]
   ;;
 end
 
@@ -193,7 +199,7 @@ open Common
 module type Event = sig
   include Interface.TotalOrder
 
-  val anon : int -> t
+  val anon : t -> int -> t
 end
 
 module type Variable = sig
@@ -219,6 +225,27 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
     | Ref (LocalValue v) -> failwithf "bound variable %i was not instantiated" v
   ;;
 
+  let rec define_var variable value =
+    let map_value = function
+      | Defined c -> Defined c
+      | Ref lv -> if lv = variable then Defined value else Ref lv
+    in
+    function
+    | Nil -> Nil
+    | Prefix (Send (e, v), p) -> Prefix (Send (e, map_value v), p)
+    | Prefix (a, p) -> Prefix (a, define_var variable value p)
+    | Parallel ps -> Parallel (List.map (define_var variable value) ps)
+    | Choice ps -> Choice (List.map (define_var variable value) ps)
+    | Restrict (local_events, p) -> Restrict (local_events, define_var variable value p)
+    | TemplateCall (name, events, values) ->
+      let values = Iarray.map map_value values in
+      TemplateCall (name, events, values)
+    | Closure (c, args) -> Closure (c, args)
+    | ComputeValue (var, f, args, p) ->
+      let args = Iarray.map map_value args in
+      ComputeValue (var, f, args, p)
+  ;;
+
   let rec unroll ~lib = function
     | Nil -> Nil
     | Prefix _ as p -> p
@@ -236,16 +263,15 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
        | processes -> Parallel processes)
     | Restrict (_, Nil) -> Nil
     | Restrict _ as p -> p
-    | TemplateCall (name, actions, values, f) ->
+    | TemplateCall (name, actions, values) ->
       let const_args = Iarray.map unwrap_value_expr values in
-      let const_args =
-        match f with
-        | Some f -> Iarray.map f const_args
-        | None -> const_args
-      in
       let p = Templates.find name lib in
       unroll ~lib (instantiate actions const_args p)
     | Closure (c, args) -> unroll ~lib (c.call args)
+    | ComputeValue (var, f, args, p) ->
+      let value = f (Iarray.map unwrap_value_expr args) in
+      let p = define_var var value p in
+      unroll ~lib p
 
   and unroll_parallel ~lib = function
     | Nil -> []
@@ -282,9 +308,9 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
     | Choice ps ->
       let count, map, set, ps = refactor_restrict_list count map set ps in
       count, map, set, Choice ps
-    | TemplateCall (name, events, values, f) ->
+    | TemplateCall (name, events, values) ->
       let events = Iarray.map event_f events in
-      count, map, set, TemplateCall (name, events, values, f)
+      count, map, set, TemplateCall (name, events, values)
     | Closure (c, events) ->
       let events = Iarray.map event_f events in
       count, map, set, Closure (c, events)
@@ -292,12 +318,15 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
       let count, map, set =
         Iarray.fold_left
           (fun (count, map, set) e ->
-             let anon_event = E.anon count in
+             let anon_event = E.anon e count in
              count + 1, EventMap.add e anon_event map, Events.add anon_event set)
           (count, map, set)
           local_events
       in
       refactor_restrict count map set p
+    | ComputeValue (lv, f, args, p) ->
+      let count, map, set, p = refactor_restrict count map set p in
+      count, map, set, ComputeValue (lv, f, args, p)
   ;;
 
   let refactor_restrict count set p =
@@ -310,7 +339,7 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
     | Prefix _ as p -> [ p ]
     | Parallel ps -> List.flat_map as_parallel ps
     | Choice _ as p -> [ p ]
-    | Restrict _ | TemplateCall _ | Closure _ ->
+    | Restrict _ | TemplateCall _ | Closure _ | ComputeValue _ ->
       failwith "as_parallel: should be unrolled and refactored out by this point"
   ;;
 
@@ -322,7 +351,7 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
     | Prefix (a, _) -> [ List.rev crumbs, a ]
     | Parallel ps | Choice ps ->
       List.flatten @@ List.mapi (fun i p -> actions_with_crumbs (i :: crumbs) p) ps
-    | Restrict _ | TemplateCall _ | Closure _ ->
+    | Restrict _ | TemplateCall _ | Closure _ | ComputeValue _ ->
       failwith "actions_with_crumbs: should be unrolled and refactored out by this point"
   ;;
 
@@ -445,24 +474,6 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
        | None -> List.first tau, None)
   ;;
 
-  let rec define_var variable value =
-    let map_value = function
-      | Defined c -> Defined c
-      | Ref lv -> if lv = variable then Defined value else Ref lv
-    in
-    function
-    | Nil -> Nil
-    | Prefix (Send (e, v), p) -> Prefix (Send (e, map_value v), p)
-    | Prefix (a, p) -> Prefix (a, define_var variable value p)
-    | Parallel ps -> Parallel (List.map (define_var variable value) ps)
-    | Choice ps -> Choice (List.map (define_var variable value) ps)
-    | Restrict (local_events, p) -> Restrict (local_events, define_var variable value p)
-    | TemplateCall (name, events, values, f) ->
-      let values = Iarray.map map_value values in
-      TemplateCall (name, events, values, f)
-    | Closure (c, args) -> Closure (c, args)
-  ;;
-
   let rec force_sync crumbs action = function
     | Prefix (a, p) ->
       if List.is_empty crumbs
@@ -489,7 +500,8 @@ module Semantics (T : Interface.TotalOrder) (E : Event) = struct
       let i, tail = List.uncons crumbs in
       let p = List.nth ps i in
       force_sync tail action p
-    | Nil | Restrict _ | TemplateCall _ | Closure _ -> failwith "sync: unreachable"
+    | Nil | Restrict _ | TemplateCall _ | Closure _ | ComputeValue _ ->
+      failwith "sync: unreachable"
   ;;
 
   let execute state action_list =

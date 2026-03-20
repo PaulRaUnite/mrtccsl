@@ -3,6 +3,7 @@ open Common
 module type ID = sig
   include Interface.TotalOrder
   include Sexplib0.Sexpable.S with type t := t
+  include Interface.Stringable with type t := t
 end
 
 module type ExtIDs = sig
@@ -41,4 +42,5 @@ module type Time = sig
   include Interface.TotalOrder
   include Sexplib0.Sexpable.S with type t := t
   include Interface.Number.Ring with type t := t
+  include Interface.Stringable with type t := t
 end
