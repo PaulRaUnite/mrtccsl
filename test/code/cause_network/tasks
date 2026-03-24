@@ -1,0 +1,4 @@
+name,release,start,finish,deadline
+s,sensor.start,sensor.start,sensor.end,sensor.end
+c,controller.start,controller.start,controller.end,controller.end
+a,actuator.start,actuator.start,actuator.end,actuator.end

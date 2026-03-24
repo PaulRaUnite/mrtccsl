@@ -11,8 +11,9 @@ end
 
 module IO = Common.Trace.MakeIO (Rational) (L)
 
-module Net =
-  CauseEffect.V1.EventEqTransition
+module React =
+  CauseEffect.Reaction.Make
+    (CauseEffect.Extraction.V1.EventEqTransition)
     (struct
       module Place = String
       module Transition = String
@@ -25,7 +26,8 @@ module Net =
 module Stats = Stats.Make (String) (Rational)
 open Aux
 
-let open_in_chan = function
+let open_in_chan =
+   function
   | "-" -> stdin
   | file -> open_in file
 ;;
@@ -68,98 +70,46 @@ let microstep_sequalizer microstep_spec_filename =
   sequalizer
 ;;
 
-let extract_probes ~sequalizer ~network_decl trace =
-  let trace = Trace.sequalize_trace ~label_to_seq:sequalizer trace in
-  let compiled_network = Net.of_decl network_decl in
-  let compiled_network = Net.consume_seq_trace compiled_network trace in
-  let probes = Net.extracted compiled_network in
-  probes
-;;
-
-let process_probes ~with_interval ~cause ~conseq probes =
-  let open CauseEffect.Token in
-  Net.Probes.map
-    (fun (m, raw_tokens) ->
-       let color_guard = m in
-       let relevant_tokens =
-         Net.select_relevant_tokens
-           ~cause
-           ~conseq
-           color_guard
-           (Dynarray.to_seq raw_tokens)
-       in
-       let tokens =
-         if with_interval
-         then Net.full_interval relevant_tokens
-         else
-           Seq.map
-             (fun x ->
-                ( { instant = "", Rational.zero
-                  ; annotation =
-                      { colors = Net.Token.Coloring.empty
-                      ; external_span = Rational.zero, Rational.zero
-                      }
-                  }
-                , x ))
-             relevant_tokens
-       in
-       Seq.map
-         (fun (prev_ref, token) ->
-            let start = List.hd @@ Net.Token.non_transitive_causes token
-            and finish = Net.Token.root_mark token in
-            (* should be fully initialized by this point *)
-            let _, time0 = prev_ref.instant
-            and _, time1 = start.instant
-            and _, time2 = finish.instant in
-            let open Rational in
-            let interval = time1 - time0
-            and reaction = time2 - time1
-            and total = time2 - time0 in
-            (* print_endline @@ Sexplib.Sexp.to_string_hum @@ Net.Token.sexp_of_t token; *)
-            (* if Rational.equal reaction (Rational.of_int 10) then failwith "tehe"; *)
-            if with_interval
-            then [ "interval", interval / total; "reaction", reaction / total ], total
-            else [ "reaction", Rational.one ], reaction)
-         tokens)
-    probes
-;;
-
 let extract_histogram ~scale reactions =
   let round_to = Rational.round_floor scale in
   let histogram = Stats.weighted_histogram scale round_to reactions in
   histogram
 ;;
 
-let sum_probe_reactions p1 p2 =
-  Net.Probes.union (fun _ r1 r2 -> Some (Seq.append r1 r2)) p1 p2
-;;
-
-let do_command
-      ~scale
-      ~output_dir
-      ~microstep_file
-      ~network_file
-      ~with_interval
-      ~cause
-      ~conseq
-      trace_files
+let do_command ~scale ~output_dir ~microstep_file ~network_file ~cause ~conseq trace_files
   =
   let traces = List.map load_trace trace_files in
   let network_decl = load_declaration network_file in
   let sequalizer = microstep_sequalizer microstep_file in
   let do_trace trace =
-    let probes = extract_probes ~sequalizer ~network_decl trace in
-    let reaction_probes = process_probes ~with_interval ~cause ~conseq probes in
-    reaction_probes
+    let trace = Trace.sequalize_trace ~label_to_seq:sequalizer trace in
+    let result = React.collect ~cause ~conseq network_decl trace in
+    result
   in
-  let all_probes = List.map do_trace traces in
-  let probes = List.fold_left sum_probe_reactions Net.Probes.empty all_probes in
-  Net.Probes.iter
-    (fun chain_id overall_reactions ->
-       let hist = extract_histogram ~scale overall_reactions in
-       let filename = plain_weighted_histogram_name output_dir chain_id in
-       write_histogram filename hist)
-    probes
+  let all_results = List.map do_trace traces in
+  let results =
+    List.fold_left
+      (React.ProbeMap.merge (fun _ acc x ->
+         let acc = Option.value ~default:[] acc in
+         match x with
+         | Some x -> Some (x :: acc)
+         | None -> Some acc))
+      React.ProbeMap.empty
+      all_results
+  in
+  React.ProbeMap.iter
+    (fun probe_id reactions ->
+       let without = React.seq_list_without reactions
+       and full = React.seq_list_full reactions
+       and reduced = React.seq_list_reduced reactions in
+       let histogram_data = [ "without", without; "full", full; "reduced", reduced ] in
+       List.iter
+         (fun (name, data) ->
+            let hist = extract_histogram ~scale data in
+            let filename = plain_weighted_histogram_name output_dir probe_id name in
+            write_histogram filename hist)
+         histogram_data)
+    results
 ;;
 
 open Cmdliner
@@ -209,16 +159,16 @@ let microstep_order_specification_arg =
 
 let end_semantics =
   let parser = function
-    | "early" -> Ok CauseEffect.Declaration.Early
-    | "late" -> Ok CauseEffect.Declaration.Late
+    | "early" -> Ok CauseEffect.Reaction.Early
+    | "late" -> Ok CauseEffect.Reaction.Late
     | s -> Error (`Msg (Printf.sprintf "wrong end semantics: %s" s))
   and pp ppf x =
     Format.fprintf
       ppf
       "%s"
       (match x with
-       | CauseEffect.Declaration.Early -> "early"
-       | CauseEffect.Declaration.Late -> "late")
+       | CauseEffect.Reaction.Early -> "early"
+       | CauseEffect.Reaction.Late -> "late")
   in
   Arg.conv (parser, pp)
 ;;
@@ -226,7 +176,7 @@ let end_semantics =
 let start_semantics_arg =
   Arg.(
     value
-    & opt end_semantics CauseEffect.Declaration.Early
+    & opt end_semantics CauseEffect.Reaction.Early
     & info
         [ "start" ]
         ~doc:"Selection of chain cause instants from equivalent."
@@ -236,18 +186,11 @@ let start_semantics_arg =
 let finish_semantics_arg =
   Arg.(
     value
-    & opt end_semantics CauseEffect.Declaration.Early
+    & opt end_semantics CauseEffect.Reaction.Early
     & info
         [ "finish" ]
         ~doc:"Selection of chain consequnce instants from equivalent."
         ~docv:"FINISH_SEM")
-;;
-
-let interval_flag =
-  Arg.(
-    value
-    & flag
-    & info [ "i"; "interval" ] ~doc:"Records interval duration between successful chains.")
 ;;
 
 let cmd =
@@ -266,8 +209,7 @@ let cmd =
   and+ scale = scale_arg
   and+ cause = start_semantics_arg
   and+ conseq = finish_semantics_arg
-  and+ output_dir = output_dir_arg
-  and+ with_interval = interval_flag in
+  and+ output_dir = output_dir_arg in
   let traces = if List.length traces = 0 then [ "-" ] else traces in
   if
     network_file :: microstep_file :: traces
@@ -283,7 +225,6 @@ let cmd =
             ~output_dir
             ~microstep_file
             ~network_file
-            ~with_interval
             ~cause
             ~conseq
             traces))

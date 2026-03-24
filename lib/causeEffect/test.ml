@@ -1,24 +1,7 @@
 open Common
 open Prelude
 
-module type Impl = functor (IDs : Signature.IDs) (Time : Signature.Time) -> sig
-  type t
-
-  open IDs
-
-  module Token :
-    Token.S with type event = Event.t and type time = Time.t and type color = Color.t
-
-  val of_decl : (Event.t, Place.t, Color.t, Probe.t) Declaration.t -> t
-
-  val consume_trace
-    :  t
-    -> (Probe.t -> (Token.t -> unit) option)
-    -> (Event.t, Time.t) Trace.t
-    -> unit
-end
-
-module Make (Impl : Impl) = struct
+module Make (Impl : Impl.S) = struct
   module IDs = struct
     module Event = String
     module Color = String
@@ -73,12 +56,10 @@ module Make (Impl : Impl) = struct
   let get_tokens trace =
     let net = Impl.of_decl net_description in
     let tokens = Dynarray.create () in
-    let consume_one_iter probe =
-      if IDs.Probe.equal probe chain_probe
-      then Some (fun token -> Dynarray.add_last tokens token)
-      else None
+    let consume_one_iter probe token =
+      if IDs.Probe.equal probe chain_probe then Dynarray.add_last tokens token
     in
-    Impl.consume_trace net consume_one_iter trace;
+    Impl.consume_trace net ~start:(fun _ _ -> ()) ~finish:consume_one_iter trace;
     Dynarray.to_list tokens
   ;;
 

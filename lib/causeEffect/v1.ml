@@ -159,88 +159,107 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
   (** Module for networks ready to travers traces efficiently. The representation is mutable. *)
   module Compiled = struct
     type ctransition =
-      { inputs : place ref list
-      ; outputs : place ref list
+      { inputs : place ref iarray
+      ; outputs : place ref iarray
       ; coloring : Token.Coloring.t
-      ; extracts : (Color.t * Token.t Dynarray.t) list
+      ; extracts : (Color.t * Probe.t) iarray
+      ; eventually_causes : Probe.t iarray
       }
 
-    type t =
-      { event_index : ctransition list Events.t
-      ; extracted : (Color.t * Token.t Dynarray.t) Probes.t
-      }
+    type t = { event_index : ctransition iarray Events.t }
+
+    module ColorMap = Map.Make (Color)
 
     (** Compiles the network. *)
     let of_network { places; transitions; probes } : t =
+      let colors_to_probes =
+        Probes.fold
+          (fun id (color, _) acc -> ColorMap.entry ~default:[] (List.cons id) color acc)
+          probes
+          ColorMap.empty
+      in
       let ref_places = Places.map ref places in
-      let ref_tokens_probes = Probes.map (fun (m, _) -> m, Dynarray.create ()) probes in
       let transition_to_probe =
         Probes.fold
-          (fun id (_, t) index ->
-             Transitions.entry
-               ~default:[]
-               (List.cons (Probes.find id ref_tokens_probes))
-               t
-               index)
+          (fun id (color, t) index ->
+             Transitions.entry ~default:[] (List.cons (color, id)) t index)
           probes
           Transitions.empty
       in
-      let place_list place_ids =
+      let place_iarray place_ids =
         let unique_place_ids = List.sort_uniq Place.compare place_ids in
-        List.map (fun place -> Places.find place ref_places) unique_place_ids
+        let place_list =
+          List.map (fun place -> Places.find place ref_places) unique_place_ids
+        in
+        Iarray.of_list place_list
       in
       let fold_transition id { input_arcs; output_arcs; event; coloring } index =
-        let inputs = place_list input_arcs in
-        let outputs = place_list output_arcs in
+        let inputs = place_iarray input_arcs in
+        let outputs = place_iarray output_arcs in
         let extracts =
           Option.value ~default:[] @@ Transitions.find_opt id transition_to_probe
         in
-        let transition = { inputs; outputs; coloring; extracts } in
+        let extracts = Iarray.of_list extracts in
+        let eventually_causes =
+          Token.Coloring.fold
+            (fun color acc ->
+               let potential_probes = ColorMap.value ~default:[] color colors_to_probes in
+               List.append potential_probes acc)
+            coloring
+            []
+        in
+        let eventually_causes = Iarray.of_list eventually_causes in
+        let transition = { inputs; outputs; coloring; extracts; eventually_causes } in
         Events.entry ~default:[] (List.cons transition) event index
       in
       let event_index = Transitions.fold fold_transition transitions Events.empty in
-      { event_index; extracted = ref_tokens_probes }
+      let event_index = Events.map Iarray.of_list event_index in
+      { event_index }
     ;;
 
     (** Consumes sequence of steps in a trace and collects cause witnesses at probe transitions. *)
-    let consume_seq_trace network trace : t =
-      let try_transition instant { inputs; outputs; coloring; extracts } =
+    let consume_trace network ~start ~finish (trace : _ Trace.t) : unit =
+      let try_transition
+            instant
+            { inputs; outputs; coloring; extracts; eventually_causes }
+        =
         let can_read input_place =
           let token, _ = read_from_place !input_place in
           Option.is_some token
         in
-        let can_read_all = List.for_all can_read inputs in
+        let can_read_all = Iarray.for_all can_read inputs in
         (* Transition is only enabled and fired if all inputs have tokens. *)
         if can_read_all
         then (
           let read_token input_place =
             let token, new_place = read_from_place !input_place in
             input_place := new_place;
-            token
+            Option.unwrap ~expect:"place is not empty" token
           in
-          let input_tokens = List.filter_map read_token inputs in
-          let token = Token.build_external instant coloring input_tokens in
+          let input_tokens = Iarray.map read_token inputs in
+          let token : Token.t =
+            Token.build_external instant coloring (Iarray.to_list input_tokens)
+          in
           let write_token output_place =
             output_place := write_to_place token !output_place
           in
-          List.iter write_token outputs;
-          let extract_token (color_match, probe_list) =
+          Iarray.iter write_token outputs;
+          let extract_token (color_match, probe_id) =
             if Token.Coloring.mem color_match (Token.colors token)
-            then Dynarray.add_last probe_list token
+            then finish probe_id token
           in
-          List.iter extract_token extracts)
+          Iarray.iter extract_token extracts;
+          let extract_potential_cause probe = start probe (snd instant) in
+          Iarray.iter extract_potential_cause eventually_causes)
       in
       let process_step net Trace.{ label; time } =
         let transitions = Events.find label net.event_index in
         let instant = label, time in
-        List.iter (try_transition instant) transitions;
+        Iarray.iter (try_transition instant) transitions;
         net
       in
-      Seq.fold_left process_step network trace
+      ignore @@ Seq.fold_left process_step network trace
     ;;
-
-    (** Returns extracted by probes cause witnesses. *)
-    let extracted network = network.extracted
   end
 end
 
@@ -311,114 +330,6 @@ module EventEqTransition (IDs : Signature.IDs) (Time : Signature.Time) = struct
     of_network net
   ;;
 
-  let consume_trace net consumers trace =
-    let net = consume_seq_trace net trace in
-    let probes = extracted net in
-    Probes.iter
-      (fun probe (_, tokens) ->
-         Option.iter (fun consumer -> Dynarray.iter consumer tokens) (consumers probe))
-      probes
-  ;;
-
-  (** Filters and maps tokens by selecting chain between the pair of cause and effect (reaction) in the equivalence class and the token. *)
-  let select_relevant_tokens ~cause ~conseq color_guard tokens =
-    let non_internal_tokens = Seq.filter (not << Token.contains_internal) tokens in
-    let narrowed_tokens =
-      Seq.filter_map (Token.chromatic_filter color_guard) non_internal_tokens
-    in
-    let equivalence_classes = Seq.group Token.has_common_instants narrowed_tokens in
-    let select_canonical_conseq equiv_tokens =
-      (*TODO: revise, will probably allow transitive equivalence which is undesirable *)
-      let cls = List.of_seq equiv_tokens in
-      let equiv_tokens = List.to_seq cls in
-      let min, max =
-        Option.unwrap ~expect:"group is never empty"
-        @@ Token.earliest_latest_conseq ~minmax:Seq.minmax equiv_tokens
-      in
-      Declaration.(
-        match conseq with
-        | Early -> min
-        | Late -> max)
-    in
-    let canonical_conseq = Seq.map select_canonical_conseq equivalence_classes in
-    let dep_select =
-      Declaration.(
-        match cause with
-        | Early -> Token.early_cause_select
-        | Late -> Token.late_cause_select)
-    in
-    let select_canonical_cause = Token.subcause ~dep_select in
-    let canonical_cause_conseq = Seq.map select_canonical_cause canonical_conseq in
-    canonical_cause_conseq
-  ;;
-
-  (** When computing intervals between chains, each chain should have selected exactly one cause. *)
-  exception IntervalMultipleCauses
-
-  (** Adds duration of the interval between (succesuful) causal-effect chains (tokens). @raises IntervalMultipleCauses when tokens were not pre-filtered to contain singular cause. *)
-  let full_interval tokens =
-    let cause_mark token =
-      let original_causes = Token.non_transitive_causes token in
-      let next_ref_instant =
-        (* we require the cause to be only one *)
-        match original_causes with
-        | [ single ] -> single
-        | _ -> raise IntervalMultipleCauses
-      in
-      next_ref_instant
-    in
-    let rec aux prev seq () =
-      match seq () with
-      | Seq.Nil -> Seq.Nil
-      | Seq.Cons (token, rest) ->
-        let next_ref = cause_mark token in
-        Cons ((prev, token), aux next_ref rest)
-    in
-    let first, rest = Seq.uncons_opt tokens in
-    match Option.map cause_mark first with
-    | None -> Seq.empty
-    | Some first -> aux first rest
-  ;;
-  (* TODO: think about implementing reduced interval later
-  (** Impossible situation, trace finished before chain. *)
-  exception TraceShorterThanChain
-
-  (** Adds reduced interval causal link. Corresponds to the time between the event and its previous appearence. *)
-  let reduced_interval ~to_seq event chains trace =
-    let trace =
-      Seq.flat_map
-        (fun Trace.{ label; time } -> Seq.map (fun e -> e, time) (to_seq label))
-        trace
-    in
-    let rec advance_until next_event_time previous_seeing trace =
-      match trace () with
-      | Seq.Cons ((e, time), xs) ->
-        if Time.compare time next_event_time = 0
-        then previous_seeing, Seq.cons (e, time) xs
-        else (
-          let previous_seeing =
-            if Event.compare e event = 0 then Some time else previous_seeing
-          in
-          advance_until next_event_time previous_seeing xs)
-      | Seq.Nil -> raise TraceShorterThanChain
-    in
-    let rec aux chains trace () =
-      match chains () with
-      | Seq.Nil -> Seq.Nil
-      | Seq.Cons (chain, rest) ->
-        let times =
-          Option.unwrap_exn ~expect:(MissingEvent event)
-          @@ Events.find_opt event chain.visits
-        in
-        (* CORRECTNESS: presence of [first] is guaranteed by non-empty option found just above *)
-        let first = Dynarray.get times 0 in
-        let just_before, trace = advance_until first None trace in
-        (match just_before with
-         | None -> aux rest trace ()
-         | Some previous -> Seq.Cons ((chain, Time.sub first previous), aux rest trace))
-    in
-    aux chains trace
-  ;; *)
 end
 
 let%test_module "causal witness flow network" = (module Test.Make (EventEqTransition))

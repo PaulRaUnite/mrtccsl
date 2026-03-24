@@ -1,5 +1,7 @@
 open Prelude
 
+type ('c, 'n) record = ('c * 'n) list * 'n
+
 module Make
     (Category : sig
        include Map.OrderedType

@@ -53,47 +53,36 @@ module type S = sig
   module InstantSet : Set.S with type elt = (event, time) instant
   module Coloring : Set.S with type elt = color
 
+  type nonrec instant = (event,time) instant
+  type nonrec annot = (time, Coloring.t) annot
+  type nonrec mark = (event, time, Coloring.t) mark
   type nonrec t = (event, time, Coloring.t) t
 
   val t_of_sexp : Sexplib0.Sexp.t -> t
   val sexp_of_t : t -> Sexplib0.Sexp.t
   val compare : t -> t -> int
   val root_mark_opt : 'a cause -> 'a option
+  val mark_instant : mark -> event * time
+  val mark_annot : mark -> annot
+  val annot_colors : annot -> Coloring.t
+  val annot_span : annot -> time * time
 
   exception NoRootMark
 
   val root_mark : 'a cause -> 'a
   val non_transitive_causes : 'a cause -> 'a list
-  val colors : ('a, 'b, Coloring.t) mark cause -> Coloring.t
+  val colors : mark cause -> Coloring.t
   val internal : 'a cause
-
-  val dependencies_annotation
-    :  ('a, time, Coloring.t) mark cause list
-    -> (time, Coloring.t) annot
-
-  val build_external
-    :  ('a, time) instant
-    -> Coloring.t
-    -> ('a, time, Coloring.t) mark cause list
-    -> ('a, time, Coloring.t) mark cause
-
+  val dependencies_annotation : mark cause list -> annot
+  val build_external : instant -> Coloring.t -> mark cause list -> mark cause
   val contains_internal : 'a cause -> bool
   val is_internal_free : 'a cause -> bool
-
-  val chromatic_filter
-    :  color
-    -> ('a, time, Coloring.t) mark cause
-    -> ('a, time, Coloring.t) mark cause option
-
-  val unique_instants : (event, time, 'a) mark cause -> InstantSet.t
-
-  val has_common_instants
-    :  (event, time, 'a) mark cause
-    -> (event, time, 'b) mark cause
-    -> bool
+  val chromatic_filter : color -> mark cause -> mark cause option
+  val unique_instants : mark cause -> InstantSet.t
+  val has_common_instants : mark cause -> mark cause -> bool
 
   val earliest_latest_conseq
-    :  minmax:((('a, time, 'b) mark cause -> ('c, time, 'd) mark cause -> int) -> 'e -> 'f)
+    :  minmax:((mark cause -> mark cause -> int) -> 'e -> 'f)
     -> 'e
     -> 'f
 
@@ -103,14 +92,14 @@ module type S = sig
     -> 'b cause
 
   val early_cause_select
-    :  time option * ('a, time, 'b) mark cause list
-    -> ('a, time, 'b) mark cause
-    -> time option * ('a, time, 'b) mark cause list
+    :  time option * mark cause list
+    -> mark cause
+    -> time option * mark cause list
 
   val late_cause_select
-    :  time option * ('a, time, 'b) mark cause list
-    -> ('a, time, 'b) mark cause
-    -> time option * ('a, time, 'b) mark cause list
+    :  time option * mark cause list
+    -> mark cause
+    -> time option * mark cause list
 end
 
 module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
@@ -146,6 +135,15 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
       { colors; external_span }
     ;;
   end
+
+  type nonrec instant = (Event.t,Time.t) instant
+  type nonrec annot = (Time.t, Coloring.t) annot
+  type nonrec mark = (Event.t, Time.t, Coloring.t) mark
+
+  let mark_instant { instant; _ } = instant
+  let mark_annot { annotation; _ } = annotation
+  let annot_colors { colors; _ } = colors
+  let annot_span { external_span; _ } = external_span
 
   (** Token type. Represents data passing mark a system. Witnesses the relationships between events from the data interactions. Has an arbitrary combined categorization (color). *)
   type nonrec t = (Event.t, Time.t, Coloring.t) t
