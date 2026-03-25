@@ -271,7 +271,6 @@ struct
       Queue.clear a.(last)
     in
     let _ = Dynarray.append_iter full_chains new_full partial_chains in
-    (* let _ = Printf.printf "dropped: %d\n" !dropped in *)
     full_chains, partial_chains, counters
   ;;
 

@@ -18,7 +18,7 @@ end
 (** Type of causality annotations. *)
 type ('time, 'coloring) annot =
   { colors : 'coloring (** Remembers all colors at this point. *)
-  ; external_span : 'time * 'time
+  ; external_span : ('time * 'time) option
     (** Time interval of all purely external (read: non-transitive) instants. Basically build index in a tree. *)
   }
 [@@deriving sexp, compare]
@@ -53,7 +53,7 @@ module type S = sig
   module InstantSet : Set.S with type elt = (event, time) instant
   module Coloring : Set.S with type elt = color
 
-  type nonrec instant = (event,time) instant
+  type nonrec instant = (event, time) instant
   type nonrec annot = (time, Coloring.t) annot
   type nonrec mark = (event, time, Coloring.t) mark
   type nonrec t = (event, time, Coloring.t) t
@@ -65,7 +65,7 @@ module type S = sig
   val mark_instant : mark -> event * time
   val mark_annot : mark -> annot
   val annot_colors : annot -> Coloring.t
-  val annot_span : annot -> time * time
+  val annot_span : annot -> (time * time) option
 
   exception NoRootMark
 
@@ -127,16 +127,24 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
 
     (** Merges two annotations by union of colors and intervals. *)
     let merge
-          { colors = c1; external_span = min1, max1 }
-          { colors = c2; external_span = min2, max2 }
+          { colors = c1; external_span = span1 }
+          { colors = c2; external_span = span2 }
       =
       let colors = Coloring.union c1 c2
-      and external_span = Time.min min1 min2, Time.max max1 max2 in
+      and external_span =
+        match span1, span2 with
+        | Some (min1, max1), Some (min2, max2) ->
+          Some (Time.min min1 min2, Time.max max1 max2)
+        | None, Some (x, y) | Some (x, y), None -> Some (x, y)
+        | None, None -> None
+      in
       { colors; external_span }
     ;;
+
+    let empty = { colors = Coloring.empty; external_span = None }
   end
 
-  type nonrec instant = (Event.t,Time.t) instant
+  type nonrec instant = (Event.t, Time.t) instant
   type nonrec annot = (Time.t, Coloring.t) annot
   type nonrec mark = (Event.t, Time.t, Coloring.t) mark
 
@@ -182,14 +190,14 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
   let internal = Internal
 
   let dependencies_annotation dependencies =
-    let marks =
+    let annotations =
       List.filter_map
         (fun t ->
            let* mark = root_mark_opt t in
-           Some mark.annotation)
+           Some (mark_annot mark))
         dependencies
     in
-    let annot = List.reduce_left Annot.merge Fun.id marks in
+    let annot = List.fold_left Annot.merge Annot.empty annotations in
     annot
   ;;
 
@@ -199,7 +207,7 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
       if List.is_empty dependencies
       then (
         let _, time = instant in
-        let external_span = time, time in
+        let external_span = Some (time, time) in
         { colors = new_colors; external_span })
       else (
         let { colors; external_span } = dependencies_annotation dependencies in
@@ -280,8 +288,7 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
   let early_cause_select (state, result) cause =
     let node = root_mark_opt cause in
     match node with
-    | Some node ->
-      let { external_span = current_min, _; _ } = node.annotation in
+    | Some { annotation = { external_span = Some (current_min, _); _ }; _ } ->
       (match state with
        | Some min ->
          let comparison = Time.compare min current_min in
@@ -291,15 +298,14 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
          then state, result
          else Some current_min, [ cause ]
        | None -> Some current_min, [ cause ])
-    | None -> state, result
+    | _ -> state, result
   ;;
 
   (** Selects dependencies of a cause that contain {b latest} external instant. *)
   let late_cause_select (state, result) cause =
     let node = root_mark_opt cause in
     match node with
-    | Some node ->
-      let { external_span = _, current_max; _ } = node.annotation in
+    | Some { annotation = { external_span = Some (_, current_max); _ }; _ } ->
       (match state with
        | Some max ->
          let comparison = Time.compare max current_max in
@@ -309,6 +315,6 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
          then Some current_max, [ cause ]
          else state, result
        | None -> Some current_max, [ cause ])
-    | None -> state, result
+    | _ -> state, result
   ;;
 end

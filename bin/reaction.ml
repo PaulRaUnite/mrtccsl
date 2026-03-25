@@ -26,7 +26,6 @@ let extract_reaction
   =
   let channel_to_trace filename =
     let ch = open_in_chan filename in
-    (* print_endline filename; *)
     snd (IO.CSV.read ch) |> Dynarray.of_seq
   in
   let traces = List.map channel_to_trace trace_streams in

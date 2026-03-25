@@ -405,15 +405,11 @@ struct
     let { name; guard; transition; clocks; print_state } = a in
     let transition n (l, n') =
       let possible = guard n in
-      (* print_endline "----";
-      print_endline @@ solution_to_string (l,n');
-      print_endline @@ guard_to_string possible; *)
       let present =
         Iter.exists
           (fun (l', cond) ->
              let eq = L.equal_modulo ~modulo:clocks l l'
              and contains = NI.contains cond n' in
-             (* Printf.printf "%b %b\n" eq contains; *)
              eq && contains)
           possible
       in
@@ -451,12 +447,9 @@ struct
     let g now =
       let g1 = g1 now
       and g2 = g2 now in
-      (* let _ = Printf.printf "before: %s\n" (guard_to_string g1) in *)
       let pot_solutions = Iter.product g1 g2 in
       let solutions = Iter.filter_map (guard_solver ~modulo:conf_surface) pot_solutions in
-      (* let _ = Printf.printf "sync sols: %s\n" (guard_to_string solutions) in *)
       let solutions = Iter.persistent solutions in
-      (* let _ = Printf.printf "after: %s\n" (guard_to_string solutions) in *)
       solutions
     in
     let t n l = t1 n l && t2 n l in
@@ -475,8 +468,6 @@ struct
       try
         List.fold_lefti
           (fun (prev_solutions, prev_clocks) i { guard; clocks; name; _ } ->
-             (* let _ = print_endline (L.to_string clocks) in *)
-             (* let _ = Printf.printf "before: %i\n" (Iter.length prev_solutions) in *)
              let conf_surface = L.inter prev_clocks clocks in
              let next_solutions = guard now in
              let pot_solutions = Iter.product prev_solutions next_solutions in
@@ -495,7 +486,6 @@ struct
                  Printf.printf "next: %s\n" (guard_to_string next_solutions);
                  Printf.printf "deadlock detected from constraint %s %i\n" name i;
                  raise InnerFailure);
-             (* let _ = Printf.printf "after: %i\n" (Iter.length solutions) in *)
              solutions, L.union prev_clocks clocks)
           (noop_guard now, L.empty)
           automata

@@ -576,13 +576,13 @@ module List = struct
 
   (**[reduce_left] is similar to [fold_left], except it uses [acc l0] as its accumulator.*)
   let reduce_left f acc = function
-    | [] -> invalid_arg "empty list"
+    | [] -> invalid_arg "List.reduce_left: empty list"
     | x :: xs -> fold_left f (acc x) xs
   ;;
 
   (**[reduce_right] is similar to [fold_right], except is uses [acc ltail] as its accumulator.*)
   let rec reduce_right f acc = function
-    | [] -> invalid_arg "empty list"
+    | [] -> invalid_arg "List.reduce_right: empty list"
     | x :: [] -> acc x
     | x :: xs -> f x (reduce_right f acc xs)
   ;;

@@ -27,7 +27,6 @@ module Make (R : R) = struct
     then Z.to_string x
     else (
       let s = Z.to_string x in
-      print_endline s;
       let len = String.length s in
       let b = Bytes.make (Int.succ len) '.' in
       let before = Int.sub len resolution in

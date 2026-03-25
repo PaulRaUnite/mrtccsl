@@ -44,7 +44,7 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
   (** Read semantics of places. *)
   let read_from_place p =
     match p with
-    | Variable (token, init) -> if init then Some token, p else None, p
+    | Variable (token, init) -> if init then Some token, p else Some Token.internal, p
     | Queue q ->
       let hd, tail = List.first_partition q in
       hd, Queue tail
@@ -217,6 +217,8 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
       { event_index }
     ;;
 
+    exception InstantNotConsumed of (Event.t * Time.t) [@@deriving sexp]
+
     (** Consumes sequence of steps in a trace and collects cause witnesses at probe transitions. *)
     let consume_trace network ~start ~finish (trace : _ Trace.t) : unit =
       let try_transition
@@ -250,13 +252,16 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
           in
           Iarray.iter extract_token extracts;
           let extract_potential_cause probe = start probe (snd instant) in
-          Iarray.iter extract_potential_cause eventually_causes)
+          Iarray.iter extract_potential_cause eventually_causes;
+          true)
+        else false
       in
       let process_step net Trace.{ label; time } =
         let transitions = Events.find label net.event_index in
         let instant = label, time in
-        Iarray.iter (try_transition instant) transitions;
-        net
+        if Iarray.exists (try_transition instant) transitions
+        then net
+        else raise (InstantNotConsumed instant)
       in
       ignore @@ Seq.fold_left process_step network trace
     ;;
@@ -329,7 +334,6 @@ module EventEqTransition (IDs : Signature.IDs) (Time : Signature.Time) = struct
     let _, net = List.fold_left execute_record (Places.empty, Net.empty) records in
     of_network net
   ;;
-
 end
 
 let%test_module "causal witness flow network" = (module Test.Make (EventEqTransition))

@@ -12,15 +12,12 @@ let t_to_string x = Printf.sprintf "%f" x
 let round_up step x y =
   let v = x +. step in
   let r = if v >= y then (x +. y) /. 2. else v in
-  (* let _ = Printf.printf "%f\n" r in *)
   r
 ;;
 
 let round_down step x y =
   let v = y -. step in
-  (* let _ = Printf.printf "v: %f %f %f\n" x y v in *)
   let r = if v <= x then (x +. y) /. 2. else v in
-  (* let _ = Printf.printf "round_down: %f\n" r in *)
   r
 ;;
 

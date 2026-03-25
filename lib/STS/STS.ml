@@ -391,9 +391,6 @@ module Interpretation = struct
       }
     | IntQueueExpr e ->
       let q = Full.eval_int_queue old_state inputs e in
-      print_endline "INT QUEUE";
-      print_endline var;
-      print_endline Sexplib0.Sexp.(to_string @@ Queue.sexp_of_t sexp_of_int q);
       { new_state with int_queues = VarMap.add var q new_state.int_queues }
     | RatQueueExpr e ->
       { new_state with

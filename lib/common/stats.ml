@@ -87,7 +87,6 @@ struct
   ;;
 
   let to_csv { bins; categories; step_width; _ } fmt =
-    (* Printf.printf "number of bins: %i\n" (Bins.cardinal bins) ; *)
     let pp_category = fun fmt c -> Format.fprintf fmt "%s" (Category.to_string c) in
     let pp_num fmt n = Format.fprintf fmt "%s" (Num.to_string n) in
     let pp_sep fmt () = Format.pp_print_string fmt "," in
