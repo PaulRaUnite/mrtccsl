@@ -217,7 +217,9 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
       { event_index }
     ;;
 
-    exception InstantNotConsumed of (Event.t * Time.t) [@@deriving sexp]
+    (** Raised when all transitions related to the event cannot be performed. *)
+    exception InstantNotConsumed of (Event.t * Time.t)
+    [@@deriving sexp]
 
     (** Consumes sequence of steps in a trace and collects cause witnesses at probe transitions. *)
     let consume_trace network ~start ~finish (trace : _ Trace.t) : unit =
@@ -257,11 +259,14 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
         else false
       in
       let process_step net Trace.{ label; time } =
-        let transitions = Events.find label net.event_index in
-        let instant = label, time in
-        if Iarray.exists (try_transition instant) transitions
-        then net
-        else raise (InstantNotConsumed instant)
+        let transitions = Events.find_opt label net.event_index in
+        match transitions with
+        | Some transitions ->
+          let instant = label, time in
+          if Iarray.exists (try_transition instant) transitions
+          then net
+          else raise (InstantNotConsumed instant)
+        | None -> net
       in
       ignore @@ Seq.fold_left process_step network trace
     ;;
