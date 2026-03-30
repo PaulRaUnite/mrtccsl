@@ -982,7 +982,7 @@ struct
             fun n ->
               let labels =
                 match !folds with
-                | 0 -> on [ [] ] [ [ from; until ]; [ from ] ]
+                | 0 -> on without eventwith
                 | 1 -> off without eventwith
                 | _ -> forbid_more
               in
