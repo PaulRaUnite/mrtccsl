@@ -102,7 +102,7 @@ let do_command ~scale ~output_dir ~microstep_file ~network_file ~cause ~conseq t
        List.iter
          (fun (name, data) ->
             let hist = extract_histogram ~scale data in
-            let filename = plain_weighted_histogram_name output_dir probe_id name in
+            let filename = plain_histogram_name output_dir probe_id name in
             write_histogram filename hist)
          histogram_data)
     results

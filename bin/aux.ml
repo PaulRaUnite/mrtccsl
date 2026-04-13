@@ -18,6 +18,9 @@ let weighted_histogram_name dir chain_name span =
 let plain_weighted_histogram_name dir chain_name inverval_type =
   Printf.sprintf "%s/%s/weighted/%s/histogram.csv" dir chain_name inverval_type
 ;;
+let plain_histogram_name dir chain_name inverval_type =
+  Printf.sprintf "%s/%s/%s/histogram.csv" dir chain_name inverval_type
+;;
 
 let categorized_histogram_name dir chain_name span =
   let start, finish = span in

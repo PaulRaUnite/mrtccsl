@@ -12,6 +12,7 @@ let cmd =
     [ Simulate.cmd
     ; Reaction.cmd
     ; Reaction2.cmd
+    ; Reaction_check.cmd
     ; Trace.cmd
     ; Check.cmd
     ; Viewgraph.cmd
