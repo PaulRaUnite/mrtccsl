@@ -273,11 +273,13 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
   end
 end
 
-module EventEqTransition (IDs : Signature.IDs) (Time : Signature.Time) = struct
+module EventEqTransition (IDs : Impl.I) (Time : Signature.Time) = struct
   module Net =
     Network
       (struct
         include IDs
+        module Color = Chain
+        module Probe = Chain
         module Transition = Event
       end)
       (Time)
@@ -333,8 +335,20 @@ module EventEqTransition (IDs : Signature.IDs) (Time : Signature.Time) = struct
         let net = queueing name writes reads net
         and places = Places.add name () prev_places in
         places, net
-      | Inject { at; color } -> prev_places, Net.inject_color at color net
-      | Probe { name; color; at } -> prev_places, Net.add_probe name color at net
+      | Chain { name; alternatives } ->
+        let net =
+          List.fold_left
+            (fun net chain ->
+               assert (List.length chain >= 2);
+               let first = Option.unwrap ~expect:"" @@ List.first chain
+               and last = Option.unwrap ~expect:"" @@ List.last chain in
+               let net = Net.inject_color first name net in
+               let net = Net.add_probe name name last net in
+               net)
+            net
+            alternatives
+        in
+        prev_places, net
     in
     let _, net = List.fold_left execute_record (Places.empty, Net.empty) records in
     of_network net

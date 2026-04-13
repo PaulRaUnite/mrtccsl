@@ -6,11 +6,11 @@ type end_semantics =
   | Early (** Early denotes early cause or effect among equivalent. *)
   | Late (** Late denotes late cause or effect among equivalent. *)
 
-module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = struct
-  include Impl (IDs) (Time)
+module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
+  include F (IDs) (Time)
 
   module C = struct
-    let first ~eq =
+    let first eq =
       let first = ref None in
       fun x ->
         match !first with
@@ -25,7 +25,7 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
           Some x
     ;;
 
-    let last ~eq =
+    let last eq =
       let last = ref None in
       fun x ->
         match !last with
@@ -58,7 +58,7 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
   end
 
   (** Filters and maps tokens by selecting chain between the pair of cause and effect (reaction) in the equivalence class and the token. *)
-  let select_relevant_tokens ~cause ~conseq color =
+  let select_relevant_tokens ~cause ~conseq ~path =
     let dep_select =
       match cause with
       | Early -> Token.early_cause_select
@@ -68,15 +68,16 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
     let select_conseq =
       (* here we rely on the order of token appearence: it should be monotonic to the passage of time *)
       match conseq with
-      | Early -> C.first ~eq
-      | Late -> C.last ~eq
+      | Early -> C.first eq
+      | Late -> C.last eq
     in
     let opt token =
       if Token.contains_internal token
       then None
       else
-        let* narrowed = Token.chromatic_filter color token in
-        let canonical_cause = Token.subcause ~dep_select narrowed in
+        (* let* narrowed = Token.chromatic_filter color token in *)
+        let* token = Token.path_filter path token in
+        let canonical_cause = Token.subcause ~dep_select token in
         let* canonical_cause_conseq = select_conseq canonical_cause in
         Some canonical_cause_conseq
     in
@@ -98,27 +99,41 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
     next_ref_instant
   ;;
 
-  let only_reaction ~cause ~conseq color sink =
-    let select_relevant = select_relevant_tokens ~cause ~conseq color in
-    let reaction token =
-      let* relevant = select_relevant token in
-      let start = cause_mark relevant
-      and finish = Token.root_mark relevant in
-      let _, time1 = Token.mark_instant start
-      and _, time2 = Token.mark_instant finish in
-      let reaction = Time.sub time2 time1 in
-      Some ([ "reaction", Time.one ], reaction)
-    in
-    fun token -> Option.iter sink (reaction token)
+  let process_contributions reaction total contributions =
+    if Time.compare total Time.zero = 0
+    then [ "reaction", Time.zero ]
+    else (
+      match contributions with
+      | Some contributions ->
+        List.map
+          (fun (prev, next, time0, time1) ->
+             let link =
+               Printf.sprintf
+                 "%s->%s"
+                 (IDs.Event.to_string prev)
+                 (IDs.Event.to_string next)
+             in
+             let cont = Time.div (Time.sub time1 time0) total in
+             link, cont)
+          contributions
+      | None -> [ "reaction", Time.div reaction total ])
+  ;;
+
+  let only_reaction sink =
+    fun (token, contributions) ->
+    let start = cause_mark token
+    and finish = Token.root_mark token in
+    let _, time1 = Token.mark_instant start
+    and _, time2 = Token.mark_instant finish in
+    let reaction = Time.sub time2 time1 in
+    sink (process_contributions reaction reaction contributions, reaction)
   ;;
 
   (** Adds duration of the interval between (succesuful) causal-effect chains (tokens).  *)
-  let full_interval ~cause ~conseq color sink =
-    let select_relevant = select_relevant_tokens ~cause ~conseq color in
+  let full_interval sink =
     let buffer = C.buffer_one () in
-    let reaction token =
-      let* relevant = select_relevant token in
-      let* x, y = buffer relevant in
+    let reaction (token, contributions) =
+      let* x, y = buffer token in
       let x = cause_mark x in
       let start = cause_mark y
       and finish = Token.root_mark y in
@@ -128,43 +143,37 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
       let interval = Time.sub time1 time0
       and reaction = Time.sub time2 time1
       and total = Time.sub time2 time0 in
-      Some
-        ( [ "interval", Time.div interval total; "reaction", Time.div reaction total ]
-        , total )
+      let contributions = process_contributions reaction total contributions in
+      Some (("interval", Time.div interval total) :: contributions, total)
     in
     fun token -> Option.iter sink (reaction token)
   ;;
 
   module TimeSet = Set.Make (Time)
 
-  let reduced_interval ~cause ~conseq color sink =
-    let select_relevant = select_relevant_tokens ~cause ~conseq color in
+  let reduced_interval sink =
     let times_so_far = ref TimeSet.empty in
     let causes time = times_so_far := TimeSet.add time !times_so_far
-    and chain token =
-        let token_marks = Token.non_transitive_causes token in
-        let* relevant_token = select_relevant token in
-        let token_times = List.map (Token.mark_instant >> snd) token_marks in
-        let token_times = TimeSet.of_list token_times in
-        let earliest_cause_time = TimeSet.min_elt token_times in
-        let prev_times =
-          TimeSet.filter
-            (fun x -> Time.compare x earliest_cause_time < 0)
-            !times_so_far
-        in
-        let* last_time = TimeSet.max_elt_opt prev_times in
-        let start = cause_mark relevant_token
-        and finish = Token.root_mark relevant_token in
-        let time0 = last_time
-        and _, time1 = Token.mark_instant start
-        and _, time2 = Token.mark_instant finish in
-        let interval = Time.sub time1 time0
-        and reaction = Time.sub time2 time1
-        and total = Time.sub time2 time0 in
-        times_so_far := token_times;
-        Some
-          ( [ "interval", Time.div interval total; "reaction", Time.div reaction total ]
-          , total )
+    and chain (token, contributions) =
+      let token_marks = Token.non_transitive_causes token in
+      let token_times = List.map (Token.mark_instant >> snd) token_marks in
+      let token_times = TimeSet.of_list token_times in
+      let earliest_cause_time = TimeSet.min_elt token_times in
+      let prev_times =
+        TimeSet.filter (fun x -> Time.compare x earliest_cause_time < 0) !times_so_far
+      in
+      let* last_time = TimeSet.max_elt_opt prev_times in
+      let start = cause_mark token
+      and finish = Token.root_mark token in
+      let time0 = last_time
+      and _, time1 = Token.mark_instant start
+      and _, time2 = Token.mark_instant finish in
+      let interval = Time.sub time1 time0
+      and reaction = Time.sub time2 time1
+      and total = Time.sub time2 time0 in
+      times_so_far := token_times;
+      let contributions = process_contributions reaction total contributions in
+      Some (("interval", Time.div interval total) :: contributions, total)
     in
     let consume_chain token = Option.iter sink (chain token) in
     causes, consume_chain
@@ -176,36 +185,46 @@ module Make (Impl : Impl.S) (IDs : Signature.IDs) (Time : Signature.Time) = stru
     ; reduced : (string, Time.t) Stats.record Dynarray.t
     }
 
-  module ProbeMap = Map.Make (IDs.Probe)
+  module ChainMap = Map.Make (IDs.Chain)
 
   let collect ~cause ~conseq decl trace =
     let net = of_decl decl in
     let result, start, finish =
       List.fold_left
         (fun (store, start, finish) -> function
-           | Declaration.Probe { name; at = _; color } ->
+           | Declaration.Chain { name; alternatives } ->
+             let do_contributions = List.is_one alternatives in
              let without, ws = C.sink_to_dynarr ()
              and full, fs = C.sink_to_dynarr ()
              and reduced, rs = C.sink_to_dynarr () in
              let record = { without; full; reduced } in
-             let reaction_driver = only_reaction ~cause ~conseq color ws
-             and full_interval_driver = full_interval ~cause ~conseq color fs
-             and start_driver, reduced_interval_driver =
-               reduced_interval ~cause ~conseq color rs
-             in
-             let finish_driver =
+             let reaction_driver = only_reaction ws
+             and full_interval_driver = full_interval fs
+             and start_driver, reduced_interval_driver = reduced_interval rs in
+             let fanout_driver =
                C.fanout
                  [| reaction_driver; full_interval_driver; reduced_interval_driver |]
              in
-             ( ProbeMap.add name record store
-             , ProbeMap.add name start_driver start
-             , ProbeMap.add name finish_driver finish )
+             let rev_paths = List.map List.rev alternatives in
+             let select = select_relevant_tokens ~cause ~conseq ~path:rev_paths in
+             let preprocess =
+               fun token ->
+               let* token = select token in
+               let contributions =
+                 if do_contributions then Some (Token.contributions token) else None
+               in
+               Some (token, contributions)
+             in
+             let finish_driver token = Option.iter fanout_driver @@ preprocess token in
+             ( ChainMap.add name record store
+             , ChainMap.add name start_driver start
+             , ChainMap.add name finish_driver finish )
            | _ -> store, start, finish)
-        (ProbeMap.empty, ProbeMap.empty, ProbeMap.empty)
+        (ChainMap.empty, ChainMap.empty, ChainMap.empty)
         decl
     in
-    let start probe = ProbeMap.find probe start
-    and finish probe = ProbeMap.find probe finish in
+    let start probe = ChainMap.find probe start
+    and finish probe = ChainMap.find probe finish in
     consume_trace net ~start ~finish trace;
     result
   ;;

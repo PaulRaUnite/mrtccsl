@@ -6,35 +6,25 @@ module type ID = sig
   include Interface.Stringable with type t := t
 end
 
-module type ExtIDs = sig
-  (** Place IDs. *)
-  module Place : ID
-
-  (** Transition IDs. *)
-  module Transition : ID
-
-  (** Color IDs. *)
-  module Color : ID
-
-  (** Event IDs. *)
-  module Event : ID
-
-  (** Probe IDs. *)
-  module Probe : ID
-end
-
 module type IDs = sig
   (** Place IDs. *)
   module Place : ID
 
-  (** Color IDs. *)
+  (** Chain IDs. *)
   module Color : ID
-
-  (** Event IDs. *)
-  module Event : ID
 
   (** Probe IDs. *)
   module Probe : ID
+
+  (** Event IDs. *)
+  module Event : ID
+end
+
+module type ExtIDs = sig
+  include IDs
+
+  (** Transition IDs. *)
+  module Transition : ID
 end
 
 (** Timestamps. *)

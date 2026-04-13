@@ -575,8 +575,7 @@ struct
         let current_delay, consume_delay =
           VarSeq.get_handle_param NI.return durations delay
         in
-        let module Heap =
-          Heap (struct
+        let module Heap = Heap (struct
             include NI
 
             let compare n n' =
@@ -791,8 +790,7 @@ struct
         in
         (* let _ = assert (d1 <= d2) in *)
         let diff_base = C.compare base arg <> 0 in
-        let module Heap =
-          Heap (struct
+        let module Heap = Heap (struct
             type t = int * int
 
             let compare = Tuple.compare_same2 Int.compare
@@ -995,9 +993,9 @@ struct
           let counter = !folds in
           let counter = if until_test then counter - 1 else counter in
           let counter = if from_test then counter + 1 else counter in
-          let counter = if counter < 0 then 0 else counter in
+          (* let counter = if counter < 0 then 0 else counter in *)
           folds := counter;
-          true
+          counter >= 0
         in
         let p () = string_of_int !folds in
         g, t, p

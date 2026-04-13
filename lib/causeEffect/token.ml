@@ -100,6 +100,9 @@ module type S = sig
     :  time option * mark cause list
     -> mark cause
     -> time option * mark cause list
+
+  val path_filter : event list list -> mark cause -> mark cause option
+  val contributions : t -> (event * event * time * time) list
 end
 
 module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
@@ -316,5 +319,41 @@ module Make (Event : Signature.ID) (Time : Time) (Color : Signature.ID) = struct
          else state, result
        | None -> Some current_max, [ cause ])
     | _ -> state, result
+  ;;
+
+  let rec path_filter paths = function
+    | Internal -> None
+    | External { dependencies; mark } ->
+      let { instant = event, _; _ } = mark in
+      let paths =
+        List.filter_map
+          (function
+            | start :: tail -> if Event.compare start event = 0 then Some tail else None
+            | [] -> None)
+          paths
+      in
+      if List.is_empty paths
+      then None
+      else (
+        let dependencies = List.filter_map (path_filter paths) dependencies in
+        Some (External { dependencies; mark }))
+  ;;
+
+  let rec contributions collected (prev, time1) = function
+    | Internal -> collected
+    | External { dependencies; mark = { instant = current, time0; _ } } ->
+      let collected = (current, prev, time0, time1) :: collected in
+      (match dependencies with
+       | [ next ] -> contributions collected (current, time0) next
+       | [] -> collected
+       | _ -> failwith "Token.contributions: should be at most one dependency")
+  ;;
+
+  let contributions = function
+    | Internal ->
+      failwith "Token.contributions: internal tokens cannot contribute to response time"
+    | External { dependencies = [ next ]; mark = { instant = current, time0; _ } } ->
+      contributions [] (current, time0) next
+    | _ -> failwith "Token.contributions: should only be exactly one dependency"
   ;;
 end

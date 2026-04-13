@@ -16,18 +16,15 @@ module React =
     (CauseEffect.Extraction.V1.EventEqTransition)
     (struct
       module Place = String
-      module Transition = String
       module Event = String
-      module Color = String
-      module Probe = String
+      module Chain = String
     end)
     (Rational)
 
 module Stats = Stats.Make (String) (Rational)
 open Aux
 
-let open_in_chan =
-   function
+let open_in_chan = function
   | "-" -> stdin
   | file -> open_in file
 ;;
@@ -41,7 +38,6 @@ let load_declaration network_filename =
   let sexp = Sexplib.Sexp.of_string contents in
   let decl =
     CauseEffect.Declaration.t_of_sexp
-      String.t_of_sexp
       String.t_of_sexp
       String.t_of_sexp
       String.t_of_sexp
@@ -89,15 +85,15 @@ let do_command ~scale ~output_dir ~microstep_file ~network_file ~cause ~conseq t
   let all_results = List.map do_trace traces in
   let results =
     List.fold_left
-      (React.ProbeMap.merge (fun _ acc x ->
+      (React.ChainMap.merge (fun _ acc x ->
          let acc = Option.value ~default:[] acc in
          match x with
          | Some x -> Some (x :: acc)
          | None -> Some acc))
-      React.ProbeMap.empty
+      React.ChainMap.empty
       all_results
   in
-  React.ProbeMap.iter
+  React.ChainMap.iter
     (fun probe_id reactions ->
        let without = React.seq_list_without reactions
        and full = React.seq_list_full reactions

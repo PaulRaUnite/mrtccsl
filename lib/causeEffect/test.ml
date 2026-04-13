@@ -1,18 +1,16 @@
 open Common
 open Prelude
 
-module Make (Impl : Impl.S) = struct
+module Make (F : Impl.S) = struct
   module IDs = struct
     module Event = String
-    module Color = String
     module Place = String
-    module Probe = Number.Integer
+    module Chain = Number.Integer
   end
 
   open IDs
-  module Probes = Map.Make (IDs.Probe)
   module Time = Number.Integer
-  module Impl = Impl (IDs) (Time)
+  module Impl = F (IDs) (Time)
   module Token = Impl.Token
 
   let s = "sensor"
@@ -20,8 +18,7 @@ module Make (Impl : Impl.S) = struct
   let a = "actuator"
   let q = "queue"
   let v = "variable"
-  let chain_color = "test"
-  let chain_probe = 0
+  let chain = 0
 
   (** s -> c ? a
      s period = 3
@@ -31,8 +28,7 @@ module Make (Impl : Impl.S) = struct
     Declaration.
       [ Variable { name = v; writes = [ c ]; reads = [ a ] }
       ; Queue { name = q; writes = [ s ]; reads = [ c ] }
-      ; Inject { at = s; color = chain_color }
-      ; Probe { name = chain_probe; color = chain_color; at = a }
+      ; Chain { name = chain; alternatives = [ [ s; c; a ] ] }
       ]
   ;;
 
@@ -57,7 +53,7 @@ module Make (Impl : Impl.S) = struct
     let net = Impl.of_decl net_description in
     let tokens = Dynarray.create () in
     let consume_one_iter probe token =
-      if IDs.Probe.equal probe chain_probe then Dynarray.add_last tokens token
+      if IDs.Chain.equal probe chain then Dynarray.add_last tokens token
     in
     Impl.consume_trace net ~start:(fun _ _ -> ()) ~finish:consume_one_iter trace;
     Dynarray.to_list tokens
@@ -69,7 +65,7 @@ module Make (Impl : Impl.S) = struct
       let wrap instant cause = Token.build_external instant colors [ cause ] in
       List.reduce_right wrap first list
     in
-    let colors = Token.Coloring.singleton chain_color in
+    let colors = Token.Coloring.singleton chain in
     let trace1 = List.to_seq trace1 in
     [%test_eq: Token.t list]
       (get_tokens @@ Trace.sequalize_trace ~label_to_seq:List.to_seq trace1)
@@ -86,17 +82,12 @@ module Make (Impl : Impl.S) = struct
   ;;
 
   let%test_unit "same sexp" =
-    [%test_eq: (Event.t, Place.t, Color.t, Probe.t) Declaration.t]
+    [%test_eq: (Event.t, Place.t, Chain.t) Declaration.t]
       net_description
-      (Declaration.t_of_sexp
-         Event.t_of_sexp
-         Place.t_of_sexp
-         Color.t_of_sexp
-         Probe.t_of_sexp
+      (Declaration.t_of_sexp Event.t_of_sexp Place.t_of_sexp Chain.t_of_sexp
        @@ Sexplib.Sexp.of_string
             "((Variable (name variable)(writes(controller))(reads(actuator)))\n\
              (Queue(name queue)(writes(sensor))(reads(controller)))\n\
-             (Inject(at sensor)(color test))\n\
-             (Probe(name 0)(color test)(at actuator)))")
+             (Chain (name 0)(alternatives ((sensor controller actuator)))))")
   ;;
 end

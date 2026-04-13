@@ -2,7 +2,7 @@ open Sexplib0.Sexp_conv
 open Ppx_compare_lib.Builtin
 
 (** Declaration statements. *)
-type ('event, 'place, 'color, 'probe) statement =
+type ('event, 'place, 'chain) statement =
   | Variable of
       { name : 'place
       ; writes : 'event list
@@ -13,16 +13,11 @@ type ('event, 'place, 'color, 'probe) statement =
       ; writes : 'event list
       ; reads : 'event list
       } (** Queue variable declaration. *)
-  | Inject of
-      { at : 'event
-      ; color : 'color
-      } (** Color injection declaration. *)
-  | Probe of
-      { name : 'probe
-      ; color : 'color
-      ; at : 'event
-      } (** Probe declaration. *)
+      | Chain of {
+        name: 'chain;
+        alternatives: 'event list list
+      } (** Cause-Effect chain declaration. *)
 [@@deriving sexp, compare]
 
-type ('event, 'place, 'color, 'probe) t = ('event, 'place, 'color, 'probe) statement list
+type ('event, 'place, 'chain) t = ('event, 'place, 'chain) statement list
 [@@deriving sexp, compare]
