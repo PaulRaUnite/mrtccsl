@@ -5,6 +5,5 @@
     (Queue(name cc)(writes(controller.start))(reads(controller.end)))
     (Queue(name aa)(writes(actuator.start))(reads(actuator.end)))
     
-    (Inject(at sensor.start)(color chain1))
-    (Probe(name chain1probe)(color chain1)(at actuator.end))
+    (Chain (name chain1probe) (alternatives ((sensor.start sensor.end controller.start controller.end actuator.start actuator.end))))
 )
