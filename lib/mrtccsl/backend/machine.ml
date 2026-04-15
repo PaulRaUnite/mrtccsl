@@ -1,4 +1,5 @@
 open STS
+open Def
 open Syntax
 open Common
 open Prelude

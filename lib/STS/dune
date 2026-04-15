@@ -5,7 +5,6 @@
  (name sts)
  (inline_tests)
  (wrapped false)
- (modules STS)
  (libraries sexplib0 common vpl-core)
  (preprocess
   (pps
