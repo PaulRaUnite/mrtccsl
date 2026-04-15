@@ -19,21 +19,24 @@ type ('bool, 'expr) ite =
   Used to prune possibilities in polymorphic types.*)
 type empty = |
 
-(** Type of Boolean expressions. *)
-type ('sv, 'iv) bool_expr =
+type ('sv, 'iv) bool_atom =
   | BConst of bool
   | BStateVar of 'sv
   | BInputVar of 'iv
+  | IntComp of ('sv, 'iv) int_expr * num_rel * ('sv, 'iv) int_expr
+  | RatComp of ('sv, 'iv) rat_expr * num_rel * ('sv, 'iv) rat_expr
+  | IntQueuePositive of 'sv
+
+(** Type of Boolean expressions. *)
+and ('sv, 'iv) bool_expr =
+  | BAtom of ('sv, 'iv) bool_atom
   | BNot of ('sv, 'iv) bool_expr
   | BAnd of ('sv, 'iv) bool_expr list
   | BOr of ('sv, 'iv) bool_expr list
   | BEq of ('sv, 'iv) bool_expr * ('sv, 'iv) bool_expr
   | BNeq of ('sv, 'iv) bool_expr * ('sv, 'iv) bool_expr
   | BImply of ('sv, 'iv) bool_expr * ('sv, 'iv) bool_expr
-  | IntComp of ('sv, 'iv) int_expr * num_rel * ('sv, 'iv) int_expr
-  | RatComp of ('sv, 'iv) rat_expr * num_rel * ('sv, 'iv) rat_expr
   | BITE of (('sv, 'iv) bool_expr, ('sv, 'iv) bool_expr) ite
-  | IntQueuePositive of 'sv
 
 (** Type of integer expressions. *)
 and ('sv, 'iv) int_expr =

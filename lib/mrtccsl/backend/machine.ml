@@ -9,7 +9,7 @@ let diff_counter_update name counter when_increase when_decrease =
   name = counter + iitec when_increase 1 0 + iitec when_decrease (-1) 0
 ;;
 
-let clocks_to_bvars clocks = List.map (fun v -> BInputVar v) clocks
+let clocks_to_bvars clocks = List.map (fun v -> binvar v) clocks
 
 (** Builds a decision tree where only one variable can be true at the time, and has to be related to a specific [choice_var] value. *)
 let build_excl_dec_tree choice_var vars =
@@ -64,8 +64,8 @@ let coincidence_as_machine clocks =
 
 let subclocking_as_machine sub super choice_var =
   let choice_var = Option.map iinvar choice_var (* x *)
-  and sub = BInputVar sub
-  and super = BInputVar super in
+  and sub = binvar sub
+  and super = binvar super in
   let guard =
     match choice_var with
     | Some choice_var ->
@@ -84,8 +84,8 @@ let subclocking_as_machine sub super choice_var =
 ;;
 
 let minus_as_machine out arg except =
-  let out = BInputVar out
-  and arg = BInputVar arg
+  let out = binvar out
+  and arg = binvar arg
   and except = clocks_to_bvars except in
   let guard = out <=> (arg && !(BOr except)) in
   stateless_as_machine guard
@@ -93,7 +93,7 @@ let minus_as_machine out arg except =
 
 let union_as_machine out args =
   assert (not (List.is_empty args));
-  let out = BInputVar out
+  let out = binvar out
   and args = clocks_to_bvars args in
   let guard = out <=> BOr args in
   stateless_as_machine guard
@@ -101,7 +101,7 @@ let union_as_machine out args =
 
 let disj_union_as_machine out args choice_var =
   assert (not (List.is_empty args));
-  let out = BInputVar out
+  let out = binvar out
   and args = clocks_to_bvars args in
   let choice_var = Option.map iinvar choice_var in
   let exclusion_chain = build_excl_dec_tree choice_var args in
@@ -111,7 +111,7 @@ let disj_union_as_machine out args choice_var =
 
 let intersection_as_machine out args =
   assert (not (List.is_empty args));
-  let out = BInputVar out
+  let out = binvar out
   and args = clocks_to_bvars args in
   let guard = out <=> BAnd args in
   stateless_as_machine guard
@@ -122,8 +122,8 @@ let intersection_as_machine out args =
 let causality_as_machine ~strict cause conseq =
   let counter_name = Printf.sprintf "diff[%s,%s]" cause conseq in
   let counter = IStateVar counter_name in
-  let cause = BInputVar cause
-  and conseq = BInputVar conseq in
+  let cause = binvar cause
+  and conseq = binvar conseq in
   [ (* c>0 : no restriction on clocks *)
     (counter > i0) @@@ t |-> [ diff_counter_update counter_name counter cause conseq ]
   ; (* c=0 : when strict, only cause can happen, when non-strict, consequence cannot happen on its own *)
@@ -136,10 +136,10 @@ let causality_as_machine ~strict cause conseq =
 let delay_vars out arg delay base =
   let queue_name = Printf.sprintf "iqueue[%s,%s,%s]" arg (iparam_to_string delay) base in
   let q = IQVar queue_name in
-  let out = BInputVar out
-  and arg = BInputVar arg
+  let out = binvar out
+  and arg = binvar arg
   and delay = iparam_to_expr delay
-  and base = BInputVar base in
+  and base = binvar base in
   queue_name, q, out, arg, delay, base
 ;;
 
@@ -204,9 +204,9 @@ let delay_as_late_acceptor out arg delay base =
 
 let alternate_as_machine first second strict =
   let switch_name = Printf.sprintf "alter[%s~%s]" first second in
-  let first = BInputVar first
-  and second = BInputVar second
-  and switch = BStateVar switch_name in
+  let first = binvar first
+  and second = binvar second
+  and switch = bsvar switch_name in
   let guard =
     if strict
     then
@@ -227,10 +227,10 @@ let alternate_as_machine first second strict =
 
 let sample_as_machine out arg base =
   let latch_name = Printf.sprintf "latch[%s->%s]" arg base in
-  let out = BInputVar out
-  and arg = BInputVar arg
-  and base = BInputVar base
-  and latch = BStateVar latch_name in
+  let out = binvar out
+  and arg = binvar arg
+  and base = binvar base
+  and latch = bsvar latch_name in
   (* [out] clock ticks when there is a [base] tick and either arg already ticked before (saved in [latch]) or it ticks now. *)
   let guard = out <=> (base && (latch || arg)) in
   [ t @@@ guard
@@ -244,7 +244,7 @@ let sample_as_machine out arg base =
 let slowest_fastest_as_machine ~slowest out args =
   let counter_names = List.map (fun c -> Printf.sprintf "diff[%s, %s]" c out) args in
   let counters = List.map (fun name -> IStateVar name) counter_names in
-  let out = BInputVar out
+  let out = binvar out
   and args = clocks_to_bvars args in
   let updates =
     List.zip3 args counter_names counters
@@ -289,12 +289,12 @@ let periodic_as_machine out base period error offset =
       (iparam_to_string offset)
   and nominal_name = Printf.sprintf "skip[%s]" (iparam_to_string offset) in
   let period_counter = IStateVar period_counter_name
-  and out = BInputVar out
-  and base = BInputVar base
+  and out = binvar out
+  and base = binvar base
   and offset = iparam_to_expr offset
   and period = IConst period
   and error = iparam_to_expr error
-  and nominal = BStateVar nominal_name in
+  and nominal = bsvar nominal_name in
   [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
     |-> [ period_counter_name
           = iite out (period + error) (iite base (period_counter + i1) period_counter)
@@ -318,12 +318,12 @@ let periodic_as_late_acceptor out base period error offset =
       (iparam_to_string offset)
   and nominal_name = Printf.sprintf "skip[%s]" (iparam_to_string offset) in
   let period_counter = IStateVar period_counter_name
-  and out = BInputVar out
-  and base = BInputVar base
+  and out = binvar out
+  and base = binvar base
   and offset = iparam_to_expr offset
   and period = IConst period
   and error = iparam_to_expr error
-  and nominal = BStateVar nominal_name in
+  and nominal = bsvar nominal_name in
   [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
     |-> [ period_counter_name
           = iite out (period - i1) (iite base (period_counter + i1) period_counter)
@@ -340,10 +340,10 @@ let periodic_as_late_acceptor out base period error offset =
 
 let first_sampled_as_machine out arg base =
   let first_name = Printf.sprintf "first[%s->%s]" arg base in
-  let out = BInputVar out
-  and arg = BInputVar arg
-  and base = BInputVar base
-  and first = BStateVar first_name in
+  let out = binvar out
+  and arg = binvar arg
+  and base = binvar base
+  and first = bsvar first_name in
   [ t @@@ bite first !out (out <=> arg)
     |-> [ first_name =& bite base f (bite out t first) ]
   ]
@@ -352,10 +352,10 @@ let first_sampled_as_machine out arg base =
 
 let last_sampled_as_machine out arg base =
   let last_name = Printf.sprintf "last[%s->%s]" arg base in
-  let out = BInputVar out
-  and arg = BInputVar arg
-  and base = BInputVar base
-  and last = BStateVar last_name in
+  let out = binvar out
+  and arg = binvar arg
+  and base = binvar base
+  and last = bsvar last_name in
   [ t @@@ bite last (!arg && !out) (out ==> arg)
     |-> [ last_name =& bite base f (bite out t last) ]
   ]
@@ -364,7 +364,7 @@ let last_sampled_as_machine out arg base =
 
 let forbid_as_machine left right args =
   let stack_counter_name = Printf.sprintf "diff[%s,%s]" left right in
-  let left, right = BInputVar left, BInputVar right in
+  let left, right = binvar left, binvar right in
   let args = clocks_to_bvars args in
   let forbid_args = !(BOr args) in
   let stack = IStateVar stack_counter_name in
@@ -378,7 +378,7 @@ let forbid_as_machine left right args =
 
 let allow_as_machine left right args =
   let stack_counter_name = Printf.sprintf "diff[%s,%s]" left right in
-  let left, right = BInputVar left, BInputVar right in
+  let left, right = binvar left, binvar right in
   let args = clocks_to_bvars args in
   let forbid_args = !(BOr args) in
   let stack = IStateVar stack_counter_name in
@@ -399,7 +399,7 @@ let mutex_as_machine open_close_pairs =
     Printf.sprintf "res[%s]"
     @@ List.to_string ~sep:"," (Tuple.to_string2 Fun.id) open_close_pairs
   in
-  let free = BStateVar free_name
+  let free = bsvar free_name
   and resource = IStateVar resource_name in
   let pairs = List.map (Tuple.map2 binvar) open_close_pairs in
   let opens, closes = List.split pairs in
@@ -608,8 +608,8 @@ type sim = var * (var, var) t
 (** Converts the specification constraints into a synchronized abstract machine. *)
 let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : sim =
   let open STS in
-  let icomp (e1, rel, e2) = IntComp (e1, rel, e2)
-  and rcomp (e1, rel, e2) = RatComp (e1, rel, e2) in
+  let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
+  and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
   let now, empty_machine = empty in
   let logical = Seq.map (constraint_as_machine now) (List.to_seq clock)
   and int_relations =

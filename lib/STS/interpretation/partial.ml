@@ -270,18 +270,32 @@ end
 let get_iqueue state var = state.int_queue var
 let get_rqueue state var = state.rat_queue var
 
-(** Paritally evaluate Boolean formula given state and input values. Returns conditions of when the function returns true and false. *)
-let rec eval_bool
+let rec eval_bool_atom
           (state : 'sv state_interface)
           (inputs : ('iv, DZ.t, DQ.t) input_interface)
-          (expr : ('sv, 'iv) bool_expr)
+  = function
+  | BConst c -> Dual.wrap_const_bool c
+  | BStateVar v -> Dual.wrap_const_bool (state.bool v)
+  | BInputVar v -> Dual.wrap_const_bool (inputs.bool v)
+  | IntQueuePositive q ->
+    Dual.wrap_const_bool @@ Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
+  | IntComp (e1, rel, e2) ->
+    let l = eval_integer state inputs e1
+    and r = eval_integer state inputs e2 in
+    Dual.int_do_rel l r rel
+  | RatComp (e1, rel, e2) ->
+    Dual.rat_do_rel (eval_rational state inputs e1) (eval_rational state inputs e2) rel
+
+(** Paritally evaluate Boolean formula given state and input values. Returns conditions of when the function returns true and false. *)
+and eval_bool
+      (state : 'sv state_interface)
+      (inputs : ('iv, DZ.t, DQ.t) input_interface)
+      (expr : ('sv, 'iv) bool_expr)
   : Dual.bool_result
   =
   let result =
     match expr with
-    | BConst c -> Dual.wrap_const_bool c
-    | BStateVar v -> Dual.wrap_const_bool (state.bool v)
-    | BInputVar v -> Dual.wrap_const_bool (inputs.bool v)
+    | BAtom a -> eval_bool_atom state inputs a
     | BNot e -> Dual.not (eval_bool state inputs e)
     | BAnd conjunctions -> List.map (eval_bool state inputs) conjunctions |> Dual.all
     | BOr disjunctions -> List.map (eval_bool state inputs) disjunctions |> Dual.any
@@ -290,12 +304,6 @@ let rec eval_bool
       Dual.not (Dual.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
     | BImply (e1, e2) ->
       Dual.((not (eval_bool state inputs e1)) || eval_bool state inputs e2)
-    | IntComp (e1, rel, e2) ->
-      let l = eval_integer state inputs e1
-      and r = eval_integer state inputs e2 in
-      Dual.int_do_rel l r rel
-    | RatComp (e1, rel, e2) ->
-      Dual.rat_do_rel (eval_rational state inputs e1) (eval_rational state inputs e2) rel
     | BITE { cond; if_true; if_false } ->
       let t, f = eval_bool state inputs cond in
       let tt, tf =
@@ -306,8 +314,6 @@ let rec eval_bool
         else eval_bool state inputs if_false
       in
       DQZF.((t && tt) || (f && ft), (t && tf) || (f && ff))
-    | IntQueuePositive q ->
-      Dual.wrap_const_bool @@ Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
   in
   (* trace expr result; *)
   result

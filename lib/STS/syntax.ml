@@ -5,12 +5,12 @@ open Common.Number
 
 (** Integers *)
 
-let ( > ) x y = IntComp (x, `More, y)
-let ( < ) x y = IntComp (x, `Less, y)
-let ( >= ) x y = IntComp (x, `MoreEq, y)
-let ( <= ) x y = IntComp (x, `LessEq, y)
-let ( == ) x y = IntComp (x, `Eq, y)
-let ( != ) x y = IntComp (x, `Neq, y)
+let ( > ) x y = BAtom (IntComp (x, `More, y))
+let ( < ) x y = BAtom (IntComp (x, `Less, y))
+let ( >= ) x y = BAtom (IntComp (x, `MoreEq, y))
+let ( <= ) x y = BAtom (IntComp (x, `LessEq, y))
+let ( == ) x y = BAtom (IntComp (x, `Eq, y))
+let ( != ) x y = BAtom (IntComp (x, `Neq, y))
 let iconst x = IConst x
 let ( + ) x y = IBinOp (x, `Add, y)
 let ( - ) x y = IBinOp (x, `Sub, y)
@@ -32,12 +32,12 @@ let i1 = iconst 1
 
 let rinvar v = RInputVar v
 let rsvar v = RStateVar v
-let ( >. ) x y = RatComp (x, `More, y)
-let ( <. ) x y = RatComp (x, `Less, y)
-let ( >=. ) x y = RatComp (x, `MoreEq, y)
-let ( <=. ) x y = RatComp (x, `LessEq, y)
-let ( ==. ) x y = RatComp (x, `Eq, y)
-let ( !=. ) x y = RatComp (x, `Neq, y)
+let ( >. ) x y = BAtom (RatComp (x, `More, y))
+let ( <. ) x y = BAtom (RatComp (x, `Less, y))
+let ( >=. ) x y = BAtom (RatComp (x, `MoreEq, y))
+let ( <=. ) x y = BAtom (RatComp (x, `LessEq, y))
+let ( ==. ) x y = BAtom (RatComp (x, `Eq, y))
+let ( !=. ) x y = BAtom (RatComp (x, `Neq, y))
 let rconst x = RConst x
 let ( +. ) x y = RBinOp (x, `Add, y)
 let ( -. ) x y = RBinOp (x, `Sub, y)
@@ -49,16 +49,16 @@ let r0 = RConst Rational.zero
 (** Booleans *)
 
 (** True constant. *)
-let t = BConst true
+let t = BAtom( BConst true)
 
 (** False constant. *)
-let f = BConst false
+let f = BAtom(BConst false)
 
 (** Boolean input variable. *)
-let binvar v = BInputVar v
+let binvar v =BAtom( BInputVar v)
 
 (** Boolean state variable. *)
-let bsvar v = BStateVar v
+let bsvar v = BAtom(BStateVar v)
 
 (** Boolean conjunction. *)
 let ( && ) x y = BAnd [ x; y ]

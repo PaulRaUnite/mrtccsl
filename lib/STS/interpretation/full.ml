@@ -13,22 +13,13 @@ let input_to_interface ({ rationals; integers; bools } : inputs) =
   }
 ;;
 
-(** Evaluate Boolean formula given state and input values. *)
-let rec eval_bool
+let rec eval_bool_atom
           (state : 'sv state_interface)
           (inputs : ('iv, int, Rational.t) input_interface)
-  : ('sv, 'iv) bool_expr -> bool
   = function
   | BConst c -> c
   | BStateVar v -> state.bool v
   | BInputVar v -> inputs.bool v
-  | BNot e -> not (eval_bool state inputs e)
-  | BAnd conjunctions -> List.for_all (eval_bool state inputs) conjunctions
-  | BOr disjunctions -> List.exists (eval_bool state inputs) disjunctions
-  | BEq (e1, e2) -> Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2)
-  | BNeq (e1, e2) ->
-    not (Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
-  | BImply (e1, e2) -> (not (eval_bool state inputs e1)) || eval_bool state inputs e2
   | IntComp (e1, rel, e2) ->
     Expr.do_rel
       ~compare:Int.compare
@@ -41,11 +32,26 @@ let rec eval_bool
       rel
       (eval_rational state inputs e1)
       (eval_rational state inputs e2)
+  | IntQueuePositive q -> Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
+
+(** Evaluate Boolean formula given state and input values. *)
+and eval_bool
+      (state : 'sv state_interface)
+      (inputs : ('iv, int, Rational.t) input_interface)
+  : ('sv, 'iv) bool_expr -> bool
+  = function
+  | BAtom a -> eval_bool_atom state inputs a
+  | BNot e -> not (eval_bool state inputs e)
+  | BAnd conjunctions -> List.for_all (eval_bool state inputs) conjunctions
+  | BOr disjunctions -> List.exists (eval_bool state inputs) disjunctions
+  | BEq (e1, e2) -> Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2)
+  | BNeq (e1, e2) ->
+    not (Bool.equal (eval_bool state inputs e1) (eval_bool state inputs e2))
+  | BImply (e1, e2) -> (not (eval_bool state inputs e1)) || eval_bool state inputs e2
   | BITE { cond; if_true; if_false } ->
     if eval_bool state inputs cond
     then eval_bool state inputs if_true
     else eval_bool state inputs if_false
-  | IntQueuePositive q -> Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
 
 (** Evaluate integer expression given state and input values. *)
 and eval_integer state inputs = function
