@@ -38,7 +38,7 @@ let rparam_to_expr = Language.Cstr.unwrap_arg ~var:rinvar ~const:rconst
 (** Stateless constraints *)
 
 (** *)
-let stateless_as_machine guard = [ t @@@ guard |-> [] ] &&& t
+let stateless_as_machine guard = guard |-> [] &&& t
 
 (** Helper function that adds a range condition on integer varaible (if present) and returns stateless machine. *)
 let stateless_with_range_cond len guard choice_var =
@@ -124,12 +124,8 @@ let causality_as_machine ~strict cause conseq =
   let counter = IStateVar counter_name in
   let cause = binvar cause
   and conseq = binvar conseq in
-  [ (* c>0 : no restriction on clocks *)
-    (counter > i0) @@@ t |-> [ diff_counter_update counter_name counter cause conseq ]
-  ; (* c=0 : when strict, only cause can happen, when non-strict, consequence cannot happen on its own *)
-    ((counter == i0) @@@ if strict then !conseq else conseq ==> cause)
-    |-> [ diff_counter_update counter_name counter cause conseq ]
-  ]
+  bite (counter == i0) (if strict then !conseq else conseq ==> cause) t
+  |-> [ diff_counter_update counter_name counter cause conseq ]
   &&& (i0 <= counter)
 ;;
 
@@ -169,7 +165,7 @@ let delay_as_machine out arg delay base =
   let pop_queue = iqite (non_empty_q && out) (ipop push_queue) push_queue in
   (* decrease all counters in the queue when [base] happens *)
   let decrease_queue = iqite base (decrease pop_queue) pop_queue in
-  [ t @@@ guard |-> [ queue_name =| decrease_queue ] ] &&& t
+  guard |-> [ queue_name =| decrease_queue ] &&& t
 ;;
 
 (** Implements logical delay as abstract machine. Important difference with [delay_as_machine]: checks correctness of [delay] between [out] and [arg] (in terms of [base]) {e at the moment when [out] ticks}. *)
@@ -199,7 +195,7 @@ let delay_as_late_acceptor out arg delay base =
   let pop_queue = iqite out (ipop push_queue) push_queue in
   (* increase all counters in the queue [base] happens*)
   let increase_queue = iqite base (increase pop_queue) pop_queue in
-  [ t @@@ guard |-> [ queue_name =| increase_queue ] ] &&& positive_q
+  guard |-> [ queue_name =| increase_queue ] &&& positive_q
 ;;
 
 let alternate_as_machine first second strict =
@@ -216,12 +212,11 @@ let alternate_as_machine first second strict =
       (* when mode is nons-trict, first and second can be in the same tick only when switch=true *)
       bite switch (first ==> second) !second
   in
-  [ t @@@ guard
-    |-> [ (* switch is to be set 1 when [first] happens, 
+  guard
+  |-> [ (* switch is to be set 1 when [first] happens, 
                0 when [second] (unless at the same time as [first]), or stays as it is *)
-          switch_name =& bite first t (bite second f switch)
-        ]
-  ]
+        switch_name =& bite first t (bite second f switch)
+      ]
   &&& t
 ;;
 
@@ -233,11 +228,10 @@ let sample_as_machine out arg base =
   and latch = bsvar latch_name in
   (* [out] clock ticks when there is a [base] tick and either arg already ticked before (saved in [latch]) or it ticks now. *)
   let guard = out <=> (base && (latch || arg)) in
-  [ t @@@ guard
-    |-> [ (* in [latch], [out] clears the memory, [arg] is saved, otherwise [latch] is unchanged *)
-          latch_name =& bite out f (latch || arg)
-        ]
-  ]
+  guard
+  |-> [ (* in [latch], [out] clears the memory, [arg] is saved, otherwise [latch] is unchanged *)
+        latch_name =& bite out f (latch || arg)
+      ]
   &&& t
 ;;
 
@@ -276,7 +270,7 @@ let slowest_fastest_as_machine ~slowest out args =
       (* every clock is at most as fast as [out], so difference counters are at most 0 *)
       List.map (fun c -> c <= i0) counters
   in
-  [ t @@@ guard |-> updates ] &&& BAnd counter_invariants
+  guard |-> updates &&& BAnd counter_invariants
 ;;
 
 (* same as with the delays, error value has to be present immediately, not when [out] happens *)
@@ -295,17 +289,20 @@ let periodic_as_machine out base period error offset =
   and period = IConst period
   and error = iparam_to_expr error
   and nominal = bsvar nominal_name in
-  [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
-    |-> [ period_counter_name
-          = iite out (period + error) (iite base (period_counter + i1) period_counter)
-        ; nominal_name =& out
-        ]
-  ; nominal @@@ (period_counter > i0 ==> !out || period_counter == i0 ==> (out <=> base))
-    |-> [ period_counter_name
-          = iite out (period + error) (iite base (period_counter - i1) period_counter)
-        ; nominal_name =& t
-        ]
-  ]
+  bite
+    nominal
+    (period_counter > i0 ==> !out || period_counter == i0 ==> (out <=> base))
+    (bite (period_counter == offset) (out <=> base) !out)
+  |-> [ period_counter_name
+        = iite
+            out
+            (period + error)
+            (iite
+               base
+               (iite nominal (period_counter - i1) (period_counter + i1))
+               period_counter)
+      ; nominal_name =& bite nominal t out
+      ]
   &&& (i0 <= period_counter)
 ;;
 
@@ -324,17 +321,20 @@ let periodic_as_late_acceptor out base period error offset =
   and period = IConst period
   and error = iparam_to_expr error
   and nominal = bsvar nominal_name in
-  [ !nominal @@@ bite (period_counter == offset) (out <=> base) !out
-    |-> [ period_counter_name
-          = iite out (period - i1) (iite base (period_counter + i1) period_counter)
-        ; nominal_name =& out
-        ]
-  ; nominal @@@ ((period_counter == error && base) <=> out)
-    |-> [ period_counter_name
-          = iite out (period - i1) (iite base (period_counter - i1) period_counter)
-        ; nominal_name =& t
-        ]
-  ]
+  bite
+    nominal
+    ((period_counter == error && base) <=> out)
+    (bite (period_counter == offset) (out <=> base) !out)
+  |-> [ period_counter_name
+        = iite
+            out
+            (period - i1)
+            (iite
+               base
+               (iite nominal (period_counter - i1) (period_counter + i1))
+               period_counter)
+      ; nominal_name =& bite nominal t out
+      ]
   &&& (!nominal ==> (i0 <= period_counter))
 ;;
 
@@ -344,10 +344,7 @@ let first_sampled_as_machine out arg base =
   and arg = binvar arg
   and base = binvar base
   and first = bsvar first_name in
-  [ t @@@ bite first !out (out <=> arg)
-    |-> [ first_name =& bite base f (bite out t first) ]
-  ]
-  &&& t
+  bite first !out (out <=> arg) |-> [ first_name =& bite base f (bite out t first) ] &&& t
 ;;
 
 let last_sampled_as_machine out arg base =
@@ -356,9 +353,8 @@ let last_sampled_as_machine out arg base =
   and arg = binvar arg
   and base = binvar base
   and last = bsvar last_name in
-  [ t @@@ bite last (!arg && !out) (out ==> arg)
-    |-> [ last_name =& bite base f (bite out t last) ]
-  ]
+  bite last (!arg && !out) (out ==> arg)
+  |-> [ last_name =& bite base f (bite out t last) ]
   &&& t
 ;;
 
@@ -369,10 +365,11 @@ let forbid_as_machine left right args =
   let forbid_args = !(BOr args) in
   let stack = IStateVar stack_counter_name in
   let stack_update = [ diff_counter_update stack_counter_name stack left right ] in
-  [ (stack == i0) @@@ bite left forbid_args !right |-> stack_update
-  ; (stack == i1) @@@ bite (right && !left) t forbid_args |-> stack_update
-  ; (stack > i1) @@@ forbid_args |-> stack_update
-  ]
+  bite
+    (stack >= i1)
+    (bite (stack > i1) forbid_args (bite (right && !left) t forbid_args))
+    (bite left forbid_args !right)
+  |-> stack_update
   &&& (i0 <= stack)
 ;;
 
@@ -383,10 +380,11 @@ let allow_as_machine left right args =
   let forbid_args = !(BOr args) in
   let stack = IStateVar stack_counter_name in
   let stack_update = [ diff_counter_update stack_counter_name stack left right ] in
-  [ (stack == i0) @@@ (!left ==> forbid_args) |-> stack_update
-  ; (stack == i1) @@@ bite (right && !left) forbid_args t |-> stack_update
-  ; (stack > i1) @@@ t |-> stack_update
-  ]
+  bite
+    (stack >= i1)
+    (bite (stack > i1) t (bite (right && !left) forbid_args t))
+    (!left ==> forbid_args)
+  |-> stack_update
   &&& (i0 <= stack)
 ;;
 
@@ -418,9 +416,11 @@ let mutex_as_machine open_close_pairs =
     ]
   in
   let match_on_resource = build_excl_dec_tree (Some resource) closes in
-  [ free @@@ (any_open && !any_close) |-> update
-  ; !free @@@ ((match_on_resource || !any_close) && any_open ==> any_close) |-> update
-  ]
+  bite
+    free
+    (any_open && !any_close)
+    ((match_on_resource || !any_close) && any_open ==> any_close)
+  |-> update
   &&& (i0 <= resource && resource < iconst (List.length open_close_pairs))
 ;;
 
@@ -438,18 +438,20 @@ let rtdelay_as_machine ~now out arg delay =
   let push = rqite arg (rpush queue (now +. delay)) queue in
   let pop = rqite out (rpop push) push in
   let update = [ queue_name =|. pop ] in
-  [ (i0 == rlength queue_name) @@@ (out <=> (arg && delay ==. r0)) |-> update
-  ; (i0 < rlength queue_name)
-    @@@ ((* delay is positive in non-empty queue *)
-         r0 <. delay
-         (* [now] cannot progress past first in the queue *)
-         && now <=. rfirst queue_name
-         (* force tick if [now] and first in the queue coincide *)
-         && now ==. rfirst queue_name <=> out
-         (* next [out] should be strictly later than already queued (as it is a logical clock) *)
-         && arg ==> (rlast queue_name <. now +. delay))
-    |-> update
-  ]
+  bite
+    (* is queue empty? *)
+    (i0 < rlength queue_name)
+    ((* delay is positive in non-empty queue *)
+     r0 <. delay
+     (* [now] cannot progress past first in the queue *)
+     && now <=. rfirst queue_name
+     (* force tick if [now] and first in the queue coincide *)
+     && now ==. rfirst queue_name <=> out
+     (* next [out] should be strictly later than already queued (as it is a logical clock) *)
+     && arg ==> (rlast queue_name <. now +. delay))
+    (* when queue IS empty *)
+    (out <=> (arg && delay ==. r0))
+  |-> update
   &&& t
 ;;
 
@@ -460,16 +462,16 @@ let rtdelay_as_late_acceptor ~now out arg delay =
   let push = rqite arg (rpush queue now) queue in
   let pop = rqite out (rpop push) push in
   let update = [ queue_name =|. pop ] in
-  [ (i0 == rlength queue_name) @@@ (out <=> (arg && delay ==. r0)) |-> update
-  ; (i0 < rlength queue_name)
-    @@@ ((* delay is positive in non-empty queue *)
-         r0 <. delay
-         (* [now] cannot progress past first in the queue *)
-         && now <=. rfirst queue_name +. delay
-         (* force tick if [now] and first in the queue coincide *)
-         && now -. rfirst queue_name ==. delay <=> out)
-    |-> update
-  ]
+  bite
+    (i0 < rlength queue_name)
+    ((* delay is positive in non-empty queue *)
+     r0 <. delay
+     (* [now] cannot progress past first in the queue *)
+     && now <=. rfirst queue_name +. delay
+     (* force tick if [now] and first in the queue coincide *)
+     && now -. rfirst queue_name ==. delay <=> out)
+    (out <=> (arg && delay ==. r0))
+  |-> update
   &&& t
 ;;
 
@@ -489,15 +491,14 @@ let drift_periodic_as_machine ~now out period error offset =
   in
   let next_out = last +. period +. error in
   let update = [ last_name =. rite out now last ] in
-  [ (last <. r0) @@@ (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
-    |-> update
-  ; (last >=. r0)
-    @@@ ((* forbid progress ahead of when [out] should occur *)
-         now <=. next_out
-         (* [out] occurs precisely when [last + period + error] is *)
-         && out <=> (next_out ==. now))
-    |-> update
-  ]
+  bite
+    (last >=. r0)
+    ((* forbid progress ahead of when [out] should occur *)
+     now <=. next_out
+     (* [out] occurs precisely when [last + period + error] is *)
+     && out <=> (next_out ==. now))
+    (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
+  |-> update
   &&& t
 ;;
 
@@ -509,15 +510,14 @@ let jitter_periodic_as_machine ~now out period error offset =
   and offset = rparam_to_expr offset
   and last = rsvar last_name in
   let next_out = last +. period +. error in
-  [ (last <. r0) @@@ (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
-    |-> [ last_name =. rite out offset last ]
-  ; (last >=. r0)
-    @@@ ((* forbid progress ahead of when [out] should occur *)
-         now <=. next_out
-         (* [out] occurs precisely when [last + period + error] is *)
-         && out <=> (next_out ==. now))
-    |-> [ last_name =. rite out (last +. period) last ]
-  ]
+  bite
+    (last >=. r0)
+    ((* forbid progress ahead of when [out] should occur *)
+     now <=. next_out
+     (* [out] occurs precisely when [last + period + error] is *)
+     && out <=> (next_out ==. now))
+    (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
+  |-> [ last_name =. rite out (rite (last >=. r0) (last +. period) offset) last ]
   &&& t
 ;;
 
@@ -527,13 +527,13 @@ let sporadic_as_machine ~now out at_least strict =
   and at_least = rparam_to_expr at_least
   and last = rsvar last_name in
   let update = [ last_name =. rite out now last ] in
-  [ (last <. r0) @@@ t |-> update
-  ; (last >=. r0)
-    @@@ ((* is [out] occurs then current time should depass previous + delay. *)
-         out
-         ==> if strict then last +. at_least <. now else last +. at_least <=. now)
-    |-> update
-  ]
+  bite
+    (last >=. r0)
+    ((* is [out] occurs then current time should depass previous + delay. *)
+     out
+     ==> if strict then last +. at_least <. now else last +. at_least <=. now)
+    t
+  |-> update
   &&& t
 ;;
 
@@ -582,9 +582,8 @@ let empty =
   let now = "@now"
   and prev = "@prev" in
   ( now
-  , { transitions =
-        [ t @@@ (rsvar prev <. rinvar now && r0 <=. rinvar now) |-> [ prev =. rinvar now ]
-        ]
+  , { guard = rsvar prev <. rinvar now && r0 <=. rinvar now
+    ; assignments = [ prev =. rinvar now ]
     ; invariant = t
     } )
 ;;
@@ -598,7 +597,7 @@ let numerical_relation_as_machine
   =
   let e1 = invar var
   and e2 = of_param param in
-  [ t @@@ comp (e1, rel, e2) |-> [] ] &&& t
+  comp (e1, rel, e2) |-> [] &&& t
 ;;
 
 open Interpretation
@@ -611,6 +610,7 @@ let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : si
   let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
   and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
   let now, empty_machine = empty in
+  let empty_machine = Seq.singleton empty_machine in
   let logical = Seq.map (constraint_as_machine now) (List.to_seq clock)
   and int_relations =
     Seq.map
@@ -622,10 +622,11 @@ let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : si
       (List.to_seq duration)
   in
   let combined_machine =
-    Seq.fold_left
-      sync_machines
-      empty_machine
-      (Seq.append_list [ logical; int_relations; rat_relations ])
+    sync_machines
+      String.compare
+      String.compare
+      (List.of_seq
+       @@ Seq.append_list [ empty_machine; logical; int_relations; rat_relations ])
   in
   now, combined_machine
 ;;

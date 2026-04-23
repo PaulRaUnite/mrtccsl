@@ -290,7 +290,7 @@ let rec eval_bool_atom
 and eval_bool
       (state : 'sv state_interface)
       (inputs : ('iv, DZ.t, DQ.t) input_interface)
-      (expr : ('sv, 'iv) bool_expr)
+      (expr : ('sv, 'iv) bool_atom bool_expr)
   : Dual.bool_result
   =
   let result =

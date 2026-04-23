@@ -1039,6 +1039,12 @@ module Dynarray = struct
       sortto 0 a l2 l1;
       merge l2 l1 t 0 l2 a 0)
   ;;
+
+  let fold_lefti f acc arr =
+    let acc = ref acc in
+    iteri (fun i v -> acc := f !acc i v) arr;
+    !acc
+  ;;
 end
 
 module Iter = struct

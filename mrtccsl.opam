@@ -46,6 +46,7 @@ depends: [
   "cmdliner" {= "2.1.0"}
   "dune-build-info"
   "csv" {= "2.4"}
+  "mlbdd" {>= "0.7.3"}
   "odoc" {with-doc}
 ]
 build: [

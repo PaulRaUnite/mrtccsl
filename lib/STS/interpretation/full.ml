@@ -38,7 +38,7 @@ let rec eval_bool_atom
 and eval_bool
       (state : 'sv state_interface)
       (inputs : ('iv, int, Rational.t) input_interface)
-  : ('sv, 'iv) bool_expr -> bool
+  : ('sv, 'iv) bool_atom bool_expr -> bool
   = function
   | BAtom a -> eval_bool_atom state inputs a
   | BNot e -> not (eval_bool state inputs e)

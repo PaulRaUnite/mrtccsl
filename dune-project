@@ -79,7 +79,9 @@
    (= 2.1.0))
   dune-build-info
   (csv
-   (= 2.4)))
+   (= 2.4))
+  (mlbdd
+   (>= 0.7.3)))
  (tags
   (simulation
    "model checking"

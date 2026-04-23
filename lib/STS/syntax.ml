@@ -49,16 +49,16 @@ let r0 = RConst Rational.zero
 (** Booleans *)
 
 (** True constant. *)
-let t = BAtom( BConst true)
+let t = BAtom (BConst true)
 
 (** False constant. *)
-let f = BAtom(BConst false)
+let f = BAtom (BConst false)
 
 (** Boolean input variable. *)
-let binvar v =BAtom( BInputVar v)
+let binvar v = BAtom (BInputVar v)
 
 (** Boolean state variable. *)
-let bsvar v = BAtom(BStateVar v)
+let bsvar v = BAtom (BStateVar v)
 
 (** Boolean conjunction. *)
 let ( && ) x y = BAnd [ x; y ]
@@ -105,13 +105,10 @@ let rqite cond if_true if_false = RQITE { cond; if_true; if_false }
 (** Machine description. *)
 
 (** State and input guard maps into variable assignments. *)
-let ( |-> ) (state_cond, input_cond) assignments = { state_cond; input_cond; assignments }
-
-(** State guard and input guard. *)
-let ( @@@ ) state_cond input_cond = state_cond, input_cond
+let ( |-> ) guard assignments = guard, assignments
 
 (** Transition description with invariant. *)
-let ( &&& ) transitions invariant = { transitions; invariant }
+let ( &&& ) (guard, assignments) invariant = { guard; assignments; invariant }
 
 (** Assigns integer expression to an integer variable. *)
 let ( = ) v' e = v', IntExpr e

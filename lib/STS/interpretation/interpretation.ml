@@ -60,28 +60,26 @@ let transition_error_to_string = function
   | FailedInvariant -> "failed invariant"
 ;;
 
-let do_transition ~input_to_interface ~eval_guard { transitions; invariant } state inputs =
+let do_transition
+      ~input_to_interface
+      ~eval_guard
+      { guard; assignments; invariant }
+      state
+      inputs
+  =
   let statei = state_to_interface state in
   let abstract_inputs = input_to_interface inputs in
   let real_inputs = Full.input_to_interface inputs in
   let empty_inputs = empty_input_interface in
-  let transition =
-    List.find_opt
-      (fun { state_cond; _ } -> Full.eval_bool statei empty_inputs state_cond)
-      transitions
-  in
-  match transition with
-  | Some { input_cond; assignments; _ } ->
-    let t = eval_guard statei abstract_inputs input_cond in
-    if t
-    then (
-      let new_state = apply_assignments statei real_inputs default_state assignments in
-      let new_state_int = state_to_interface new_state in
-      if Full.eval_bool new_state_int empty_inputs invariant
-      then Ok new_state
-      else Error FailedInvariant)
-    else Error FailedGuard
-  | None -> Error NoValidTransition
+  let t = eval_guard statei abstract_inputs guard in
+  if t
+  then (
+    let new_state = apply_assignments statei real_inputs default_state assignments in
+    let new_state_int = state_to_interface new_state in
+    if Full.eval_bool new_state_int empty_inputs invariant
+    then Ok new_state
+    else Error FailedInvariant)
+  else Error FailedGuard
 ;;
 
 (** Full evaluate the step in a transition, expects all variables to have defined values. *)
