@@ -57,6 +57,15 @@ let do_command ~file1 ~file2 ~scale ~alpha =
   let scale = Float.of_int scale in
   let hist1_samples = read_histogram_csv ~scale file1 in
   let hist2_samples = read_histogram_csv ~scale file2 in
+  let print_mean_dev samples =
+    let mean = Owl_stats.mean samples in
+    let deviation = Owl_stats.sem ~mean samples in
+    Printf.printf "mean: %f, dev: %f\n" mean deviation
+  in
+  print_endline "hist1";
+  print_mean_dev hist1_samples;
+  print_endline "hist2";
+  print_mean_dev hist2_samples;
   let hypothesis = Owl_stats.ks2_test ~alpha hist1_samples hist2_samples in
   Owl_stats.pp_hypothesis Format.std_formatter hypothesis;
   Format.pp_print_newline Format.std_formatter ()
@@ -68,7 +77,9 @@ let cmd =
     (Cmd.info
        "compare"
        ~version
-       ~doc:"Performs Kolmogorov-Smirnov test on two histograms."
+       ~doc:
+         "Performs Kolmogorov-Smirnov test on two histograms, computes their mean and \
+          deviation."
        ~man)
   @@ Term.ret
   @@

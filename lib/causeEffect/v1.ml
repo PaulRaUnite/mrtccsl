@@ -159,8 +159,8 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
   (** Module for networks ready to travers traces efficiently. The representation is mutable. *)
   module Compiled = struct
     type ctransition =
-      { inputs : place ref iarray
-      ; outputs : place ref iarray
+      { inputs : (Place.t * place ref) iarray
+      ; outputs : (Place.t * place ref) iarray
       ; coloring : Token.Coloring.t
       ; extracts : (Color.t * Probe.t) iarray
       ; eventually_causes : Probe.t iarray
@@ -189,7 +189,7 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
       let place_iarray place_ids =
         let unique_place_ids = List.sort_uniq Place.compare place_ids in
         let place_list =
-          List.map (fun place -> Places.find place ref_places) unique_place_ids
+          List.map (fun place -> place, Places.find place ref_places) unique_place_ids
         in
         Iarray.of_list place_list
       in
@@ -227,7 +227,7 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
             instant
             { inputs; outputs; coloring; extracts; eventually_causes }
         =
-        let can_read input_place =
+        let can_read (_, input_place) =
           let token, _ = read_from_place !input_place in
           Option.is_some token
         in
@@ -235,7 +235,7 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
         (* Transition is only enabled and fired if all inputs have tokens. *)
         if can_read_all
         then (
-          let read_token input_place =
+          let read_token (_, input_place) =
             let token, new_place = read_from_place !input_place in
             input_place := new_place;
             Option.unwrap ~expect:"place is not empty" token
@@ -244,7 +244,7 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
           let token : Token.t =
             Token.build_external instant coloring (Iarray.to_list input_tokens)
           in
-          let write_token output_place =
+          let write_token (_, output_place) =
             output_place := write_to_place token !output_place
           in
           Iarray.iter write_token outputs;
@@ -268,7 +268,20 @@ module Network (IDs : Signature.ExtIDs) (Time : Signature.Time) = struct
           else raise (InstantNotConsumed instant)
         | None -> net
       in
-      ignore @@ Seq.fold_left process_step network trace
+      ignore @@ Seq.fold_left process_step network trace;
+      Events.iter
+        (fun _ transitions ->
+           Iarray.iter
+             (fun t ->
+                Iarray.iter
+                  (fun (name, p) ->
+                     match !p with
+                     | Variable (_, init) ->
+                       Printf.printf "name: %s, init: %b\n" (Place.to_string name) init
+                     | _ -> ())
+                  t.inputs)
+             transitions)
+        network.event_index
     ;;
   end
 end

@@ -119,13 +119,20 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
       | None -> [ "reaction", Time.div reaction total ])
   ;;
 
-  let only_reaction sink =
+  let only_reaction ?threshold sink =
     fun (token, contributions) ->
     let start = cause_mark token
     and finish = Token.root_mark token in
     let _, time1 = Token.mark_instant start
     and _, time2 = Token.mark_instant finish in
     let reaction = Time.sub time2 time1 in
+    (match threshold with
+     | Some threshold ->
+       if Time.compare threshold reaction <= 1
+       then (
+         Printf.printf "reaction is %s" (Time.to_string reaction);
+         print_endline @@ Sexplib.Sexp.to_string_hum @@ Token.sexp_of_t token)
+     | None -> ());
     sink (process_contributions reaction reaction contributions, reaction)
   ;;
 
@@ -187,7 +194,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
 
   module ChainMap = Map.Make (IDs.Chain)
 
-  let collect ~cause ~conseq decl trace =
+  let collect ?threshold ~cause ~conseq decl trace =
     let net = of_decl decl in
     let result, start, finish =
       List.fold_left
@@ -198,7 +205,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
              and full, fs = C.sink_to_dynarr ()
              and reduced, rs = C.sink_to_dynarr () in
              let record = { without; full; reduced } in
-             let reaction_driver = only_reaction ws
+             let reaction_driver = only_reaction ?threshold ws
              and full_interval_driver = full_interval fs
              and start_driver, reduced_interval_driver = reduced_interval rs in
              let fanout_driver =
@@ -211,7 +218,12 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
                fun token ->
                let* token = select token in
                let contributions =
-                 if do_contributions then Some (Token.contributions token) else None
+                 try
+                   if do_contributions then Some (Token.contributions token) else None
+                 with
+                 | Failure s ->
+                   print_endline @@ Sexplib0.Sexp.to_string_hum @@ Token.sexp_of_t token;
+                   failwith s
                in
                Some (token, contributions)
              in
