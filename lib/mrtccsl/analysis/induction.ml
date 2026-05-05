@@ -1521,12 +1521,12 @@ struct
   ;;
 end
 
-let%test_module _ =
+(* let%test_module _ =
   (module Test (Domain.Polka (struct
        type dom = Polka.loose Polka.t
 
        let alloc = Polka.manager_alloc_loose ()
      end)))
-;;
+;; *)
 
 let%test_module _ = (module Test (Domain.VPL))

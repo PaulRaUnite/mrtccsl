@@ -5,11 +5,8 @@
  (public_name mrtccsl)
  (inline_tests)
  (libraries
-  apron
-  apron.polkaMPQ
   vpl-core
   ocamlgraph
-  cudd
   common
   sts
   iter

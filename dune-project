@@ -30,10 +30,6 @@
   (dune :with-build)
   (menhir
    (= 20260209))
-  camllib
-  (apron
-   (>= 0.9.15))
-  bddapron
   (ppx_sexp_conv
    (and
     (>= v0.17.0)
