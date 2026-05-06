@@ -49,8 +49,6 @@ type 'n config =
   }
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
-
-
 open Cmdliner
 open Cmdliner.Term.Syntax
 open Aux
@@ -266,8 +264,7 @@ let cmd =
      let config =
        { cores; output_dir; horizon; steps; traces; default_upper_bound; rounding_error }
      in
-     try `Ok (Ok (simulate ~config m)) with
-     | Failure s -> `Error (false, s)
+     `Ok (Ok (simulate ~config m))
 ;;
 
 let main () = Cmd.eval_result cmd
