@@ -482,6 +482,7 @@ let rtperiodic_vars out period error offset =
   last_name, last, out, period, error, offset
 ;;
 
+(* TODO: add invariants to parameters, jitter periodic should have jitter no bigger than the period. *)
 let drift_periodic_as_machine ~now out period error offset =
   let last_name, last, out, period, error, offset =
     rtperiodic_vars out period error offset

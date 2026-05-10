@@ -58,7 +58,7 @@ let random l r =
 ;;
 
 let to_rational = Fun.id
-let from_pair (nom, denom) = of_frac nom denom
+let of_pair (nom, denom) = of_frac nom denom
 
 let of_positive_string s =
   match String.split_on_char '.' s with
