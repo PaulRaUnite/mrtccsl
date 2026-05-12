@@ -538,7 +538,7 @@ let sporadic_as_machine ~now out at_least strict =
 ;;
 
 (** Converts constraint into an abstract machine. *)
-let constraint_as_machine now
+let of_constr now
   : _ Ccsl.Language.Cstr.clock_constr -> (string, string) STS.t
   =
   let now = rinvar now in
@@ -611,7 +611,7 @@ let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : si
   and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
   let now, empty_machine = empty in
   let empty_machine = Seq.singleton empty_machine in
-  let logical = Seq.map (constraint_as_machine now) (List.to_seq clock)
+  let logical = Seq.map (of_constr now) (List.to_seq clock)
   and int_relations =
     Seq.map
       (numerical_relation_as_machine iinvar iparam_to_expr icomp)

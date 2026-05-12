@@ -1,4 +1,4 @@
-open Common 
+open Common
 open Prelude
 open Number
 

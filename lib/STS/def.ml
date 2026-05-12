@@ -21,6 +21,7 @@ type empty = |
 
 (** Type of Boolean expressions. *)
 type 'atom bool_expr =
+  | BConst of bool
   | BAtom of 'atom
   | BNot of 'atom bool_expr
   | BAnd of 'atom bool_expr list
@@ -32,7 +33,6 @@ type 'atom bool_expr =
 [@@deriving compare, sexp, map, fold]
 
 type ('sv, 'iv) bool_atom =
-  | BConst of bool
   | BStateVar of 'sv
   | BInputVar of 'iv
   | IntComp of ('sv, 'iv) int_expr * num_rel * ('sv, 'iv) int_expr
@@ -134,3 +134,114 @@ let sync_machines sv_comp iv_comp machines =
          assignments);
   { guard; assignments; invariant }
 ;;
+
+module PP = struct
+  let pp_list ~sep formatter fmt list =
+    Format.pp_print_list
+      ~pp_sep:(fun fmt () -> Format.pp_print_string fmt sep)
+      formatter
+      fmt
+      list
+  ;;
+
+  let rec bool_expr pp_atom fmt = function
+    | BConst b -> Format.fprintf fmt "%b" b
+    | BAtom a -> Format.fprintf fmt "%a" pp_atom a
+    | BNot e -> Format.fprintf fmt "%a" (bool_expr pp_atom) e
+    | BAnd es -> pp_list ~sep:"&&" (bool_expr pp_atom) fmt es
+    | BOr es -> pp_list ~sep:"||" (bool_expr pp_atom) fmt es
+    | BEq (x, y) ->
+      Format.fprintf fmt "%a = %a" (bool_expr pp_atom) x (bool_expr pp_atom) y
+    | BNeq (x, y) ->
+      Format.fprintf fmt "%a ≠ %a" (bool_expr pp_atom) x (bool_expr pp_atom) y
+    | BImply (x, y) ->
+      Format.fprintf fmt "%a ⇒ %a" (bool_expr pp_atom) x (bool_expr pp_atom) y
+    | BITE { cond; if_true; if_false } ->
+      Format.fprintf
+        fmt
+        "if %a then %a else %a"
+        (bool_expr pp_atom)
+        cond
+        (bool_expr pp_atom)
+        if_true
+        (bool_expr pp_atom)
+        if_false
+  ;;
+
+  let rec bool_atom pp_sv pp_iv fmt = function
+    | BStateVar v -> pp_sv fmt v
+    | BInputVar v -> pp_iv fmt v
+    | IntComp (x, op, y) ->
+      Format.fprintf
+        fmt
+        "%a %s %a"
+        (int_expr pp_sv pp_iv)
+        x
+        (Expr.string_of_num_rel op)
+        (int_expr pp_sv pp_iv)
+        y
+    | RatComp (x, op, y) ->
+      Format.fprintf
+        fmt
+        "%a %s %a"
+        (rat_expr pp_sv pp_iv)
+        x
+        (Expr.string_of_num_rel op)
+        (rat_expr pp_sv pp_iv)
+        y
+    | IntQueuePositive v -> Format.fprintf fmt "len(%a) >= 0" pp_sv v
+
+  and int_expr pp_sv pp_iv fmt = function
+    | IConst c -> Format.fprintf fmt "%i" c
+    | IStateVar v -> pp_sv fmt v
+    | IInputVar v -> pp_iv fmt v
+    | IBinOp (x, op, y) ->
+      Format.fprintf
+        fmt
+        "%a %s %a"
+        (int_expr pp_sv pp_iv)
+        x
+        (Expr.string_of_num_op op)
+        (int_expr pp_sv pp_iv)
+        y
+    | IITE { cond; if_true; if_false } ->
+      Format.fprintf
+        fmt
+        "if %a then %a else %a"
+        (bool_expr @@ bool_atom pp_sv pp_iv)
+        cond
+        (int_expr pp_sv pp_iv)
+        if_true
+        (int_expr pp_sv pp_iv)
+        if_false
+    | IPeekFirstQueue v -> Format.fprintf fmt "first(%a)" pp_sv v
+    | IPeekLastQueue v -> Format.fprintf fmt "last(%a)" pp_sv v
+    | IntQueueLength v | RatQueueLength v -> Format.fprintf fmt "len(%a)" pp_sv v
+
+  and rat_expr pp_sv pp_iv fmt = function
+    | RConst c -> Format.fprintf fmt "%s" (Rational.to_string c)
+    | RStateVar v -> pp_sv fmt v
+    | RInputVar v -> pp_iv fmt v
+    | RBinOp (x, op, y) ->
+      Format.fprintf
+        fmt
+        "%a %s %a"
+        (rat_expr pp_sv pp_iv)
+        x
+        (Expr.string_of_num_op op)
+        (rat_expr pp_sv pp_iv)
+        y
+    | RITE { cond; if_true; if_false } ->
+      Format.fprintf
+        fmt
+        "if %a then %a else %a"
+        (bool_expr @@ bool_atom pp_sv pp_iv)
+        cond
+        (rat_expr pp_sv pp_iv)
+        if_true
+        (rat_expr pp_sv pp_iv)
+        if_false
+    | RPeekFirstQueue v -> Format.fprintf fmt "first(%a)" pp_sv v
+    | RPeekLastQueue v -> Format.fprintf fmt "last(%a)" pp_sv v
+  ;;
+end

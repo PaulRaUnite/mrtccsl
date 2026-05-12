@@ -9,7 +9,6 @@
   apron.polkaMPQ
   vpl-core
   ocamlgraph
-  cudd
   common
   sts
   iter

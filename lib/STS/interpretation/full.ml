@@ -17,7 +17,6 @@ let rec eval_bool_atom
           (state : 'sv state_interface)
           (inputs : ('iv, int, Rational.t) input_interface)
   = function
-  | BConst c -> c
   | BStateVar v -> state.bool v
   | BInputVar v -> inputs.bool v
   | IntComp (e1, rel, e2) ->
@@ -40,6 +39,7 @@ and eval_bool
       (inputs : ('iv, int, Rational.t) input_interface)
   : ('sv, 'iv) bool_atom bool_expr -> bool
   = function
+  | BConst c -> c
   | BAtom a -> eval_bool_atom state inputs a
   | BNot e -> not (eval_bool state inputs e)
   | BAnd conjunctions -> List.for_all (eval_bool state inputs) conjunctions

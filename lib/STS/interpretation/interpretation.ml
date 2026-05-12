@@ -93,3 +93,5 @@ let accept_transition =
     let t, _ = Partial.eval_bool s i c in
     not @@ Partial.DQZF.is_bottom t)
 ;;
+
+module Diagram = Diagram

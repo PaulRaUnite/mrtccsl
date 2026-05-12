@@ -28,10 +28,10 @@ module Order = struct
   ;;
 
   let numeric_last ~now atom =
-    fold_bool_atom (with_ lv2) (with_ lv1 ~except:(now, lv0)) any atom
+    fold_bool_atom (with_ lv0) (with_ lv2 ~except:(now, lv1)) any atom
   ;;
 
-  let default atom = fold_bool_atom (with_ lv1) (with_ lv0) any atom
+  let inputs_last ~now:_ atom = fold_bool_atom (with_ lv1) (with_ lv0) any atom
 
   module LvIndMap = Map.Make (struct
       type t = Level.t * int [@@deriving compare]
@@ -41,7 +41,8 @@ module Order = struct
 end
 
 let rec bool_expr_to_bdd = function
-  | BAtom a -> Bdd.ithvar a
+  | BConst c -> if c then Bdd.dtrue () else Bdd.dfalse ()
+  | BAtom a -> Bdd.idy a
   | BNot e ->
     let e = bool_expr_to_bdd e in
     Bdd.dnot e
@@ -50,7 +51,7 @@ let rec bool_expr_to_bdd = function
     List.fold_left Bdd.dand (Bdd.dtrue ()) es
   | BOr es ->
     let es = List.map bool_expr_to_bdd es in
-    List.fold_left Bdd.dand (Bdd.dtrue ()) es
+    List.fold_left Bdd.dand (Bdd.dfalse ()) es
   | BEq (x, y) ->
     let x = bool_expr_to_bdd x
     and y = bool_expr_to_bdd y in
@@ -67,7 +68,7 @@ let rec bool_expr_to_bdd = function
     let cond = bool_expr_to_bdd cond
     and if_true = bool_expr_to_bdd if_true
     and if_false = bool_expr_to_bdd if_false in
-    Bdd.ite if_true cond if_false
+    Bdd.ite cond if_true if_false
 ;;
 
 type ('sv, 'iv) t =
@@ -77,41 +78,122 @@ type ('sv, 'iv) t =
   ; assignments : ('sv, 'iv) assignment list
   }
 
+module AtomIndex = Map.Make (struct
+    type t = (string, string) bool_atom
+
+    let compare = compare_bool_atom String.compare String.compare
+  end)
+
 let of_machine now { guard; assignments; invariant = _ } : _ t =
+  (* print_endline
+  @@ Sexplib0.Sexp.to_string_hum
+  @@ sexp_of_bool_expr (sexp_of_bool_atom String.sexp_of_t String.sexp_of_t) guard; *)
   let open Order in
   let index = ref LvMap.empty in
   let assign_temp_id expr =
     let lv = Order.numeric_last ~now expr in
-    let map, arr = LvMap.value_mut ~default:Dynarray.create lv !index in
-    index := map;
-    let i = Dynarray.length arr in
-    Dynarray.add_last arr expr;
+    let map = LvMap.value ~default:AtomIndex.empty lv !index in
+    let i = AtomIndex.value ~default:(AtomIndex.cardinal map) expr map in
+    let map = AtomIndex.add expr i map in
+    index := LvMap.add lv map !index;
     lv, i
   in
   let guard = map_bool_expr assign_temp_id guard in
   let bool_atoms, remap =
     LvMap.fold
-      (fun lv arr (bool_atoms, remap) ->
-         let len = Dynarray.length bool_atoms in
+      (fun lv map (bool_atoms, remap) ->
          let remap =
-           Dynarray.fold_lefti
-             (fun remap i _ -> Order.LvIndMap.add (lv, i) (i + len) remap)
+           AtomIndex.fold
+             (fun atom i remap ->
+                Dynarray.add_last bool_atoms atom;
+                Order.LvIndMap.add (lv, i) (Dynarray.length bool_atoms - 1) remap)
+             map
              remap
-             arr
          in
-         Dynarray.append bool_atoms arr;
          bool_atoms, remap)
       !index
       (Dynarray.create (), Order.LvIndMap.empty)
   in
   let guard = map_bool_expr (fun k -> LvIndMap.find k remap) guard in
   let guard = bool_expr_to_bdd guard in
+  (* Bdd.print_mons guard; *)
   { now; atoms = bool_atoms; guard; assignments }
 ;;
 
-let interpret_bdd node = ()
+module V = String
 
-let do_transition
+module E = struct
+  type t = bool * bool
+
+  let compare = Pair.compare Bool.compare Bool.compare
+  let default = false, false
+end
+
+module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
+
+module Dot = Graph.Graphviz.Dot (struct
+    include G
+
+    let vertex_name v = string_of_int (V.hash v)
+    let graph_attributes _ = []
+    let default_vertex_attributes _ = []
+
+    let vertex_attributes v =
+      let label = V.label v in
+      match label with
+      | "0" | "1" -> [ `Label label; `Shape `Box ]
+      | _ -> [ `Label label ]
+    ;;
+
+    let default_edge_attributes _ = []
+
+    let edge_attributes e =
+      let comp, label = G.E.label e in
+      [ `Label (string_of_bool label); `Arrowhead (if comp then `Dot else `Normal) ]
+    ;;
+
+    let get_subgraph _ = None
+  end)
+
+let to_graph { guard; atoms; _ } =
+  let labels =
+    Dynarray.map
+      (fun a ->
+         Format.asprintf
+           "%a"
+           (PP.bool_atom Format.pp_print_string Format.pp_print_string)
+           a)
+      atoms
+  in
+  let atom_label i = Dynarray.get labels i in
+  let graph = G.create () in
+  let v1 = G.V.create "1" in
+  let rec visit bdd =
+    let comp = Bdd.is_complemented bdd in
+    if Bdd.is_leaf bdd
+    then if Bdd.is_true bdd then false, v1 else true, v1
+    else (
+      let var = Bdd.topvar bdd in
+      let var_vertex = G.V.create (Printf.sprintf "%s+%i" (atom_label var) var) in
+      (* if G.mem_vertex graph var_vertex
+      then comp, var_vertex
+      else  *)
+      let when_true = Bdd.high_part bdd
+      and when_false = Bdd.low_part bdd in
+      let comp_true, true_vertex = visit when_true
+      and comp_false, false_vertex = visit when_false in
+      G.add_edge_e graph (G.E.create var_vertex (comp_true, true) true_vertex);
+      G.add_edge_e graph (G.E.create var_vertex (comp_false, false) false_vertex);
+      comp, var_vertex)
+  in
+  let _ = visit guard in
+  graph
+;;
+
+let to_dot graph = Dot.output_graph stdout graph
+let interpret_bdd _node = ()
+
+(* let do_transition
       ~input_to_interface
       ~eval_guard
       { guard; assignments; invariant }
@@ -131,4 +213,4 @@ let do_transition
     then Ok new_state
     else Error FailedInvariant)
   else Error FailedGuard
-;;
+;; *)

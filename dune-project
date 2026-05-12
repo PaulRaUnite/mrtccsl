@@ -30,10 +30,6 @@
   (dune :with-build)
   (menhir
    (= 20260209))
-  camllib
-  (apron
-   (>= 0.9.15))
-  bddapron
   (ppx_sexp_conv
    (and
     (>= v0.17.0)
@@ -80,8 +76,8 @@
   dune-build-info
   (csv
    (= 2.4))
-  (mlbdd
-   (>= 0.7.3)))
+  (gbddml
+   (= 2.71.15)))
  (tags
   (simulation
    "model checking"

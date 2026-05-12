@@ -49,10 +49,10 @@ let r0 = RConst Rational.zero
 (** Booleans *)
 
 (** True constant. *)
-let t = BAtom (BConst true)
+let t = BConst true
 
 (** False constant. *)
-let f = BAtom (BConst false)
+let f = BConst false
 
 (** Boolean input variable. *)
 let binvar v = BAtom (BInputVar v)

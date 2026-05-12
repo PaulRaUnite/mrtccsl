@@ -274,7 +274,6 @@ let rec eval_bool_atom
           (state : 'sv state_interface)
           (inputs : ('iv, DZ.t, DQ.t) input_interface)
   = function
-  | BConst c -> Dual.wrap_const_bool c
   | BStateVar v -> Dual.wrap_const_bool (state.bool v)
   | BInputVar v -> Dual.wrap_const_bool (inputs.bool v)
   | IntQueuePositive q ->
@@ -295,6 +294,7 @@ and eval_bool
   =
   let result =
     match expr with
+    | BConst c -> Dual.wrap_const_bool c
     | BAtom a -> eval_bool_atom state inputs a
     | BNot e -> Dual.not (eval_bool state inputs e)
     | BAnd conjunctions -> List.map (eval_bool state inputs) conjunctions |> Dual.all
