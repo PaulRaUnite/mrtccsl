@@ -120,13 +120,21 @@ let of_machine now { guard; assignments; invariant = _ } : _ t =
   { now; atoms = bool_atoms; guard; assignments }
 ;;
 
-module V = String
+module V = struct
+  type t = string
+end
 
 module E = struct
-  type t = bool * bool
+  let compare_bool = Bool.compare
 
-  let compare = Pair.compare Bool.compare Bool.compare
-  let default = false, false
+  type t =
+    { complement : bool
+    ; label : bool
+    ; selected : bool
+    }
+  [@@deriving compare]
+
+  let default = { complement = false; label = false; selected = false }
 end
 
 module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
@@ -148,8 +156,11 @@ module Dot = Graph.Graphviz.Dot (struct
     let default_edge_attributes _ = []
 
     let edge_attributes e =
-      let comp, label = G.E.label e in
-      [ `Label (string_of_bool label); `Arrowhead (if comp then `Dot else `Normal) ]
+      let label = G.E.label e in
+      [ `Label (string_of_bool label.label)
+      ; `Arrowhead (if label.complement then `Dot else `Normal)
+      ; `Color (if label.selected then 0xff0000 else 0)
+      ]
     ;;
 
     let get_subgraph _ = None
@@ -174,7 +185,7 @@ let to_graph { guard; atoms; _ } =
     then if Bdd.is_true bdd then false, v1 else true, v1
     else (
       let var = Bdd.topvar bdd in
-      let var_vertex = G.V.create (Printf.sprintf "%s+%i" (atom_label var) var) in
+      let var_vertex = G.V.create (atom_label var) in
       (* if G.mem_vertex graph var_vertex
       then comp, var_vertex
       else  *)
@@ -182,8 +193,18 @@ let to_graph { guard; atoms; _ } =
       and when_false = Bdd.low_part bdd in
       let comp_true, true_vertex = visit when_true
       and comp_false, false_vertex = visit when_false in
-      G.add_edge_e graph (G.E.create var_vertex (comp_true, true) true_vertex);
-      G.add_edge_e graph (G.E.create var_vertex (comp_false, false) false_vertex);
+      G.add_edge_e
+        graph
+        (G.E.create
+           var_vertex
+           E.{ label = true; complement = comp_true; selected = false }
+           true_vertex);
+      G.add_edge_e
+        graph
+        (G.E.create
+           var_vertex
+           E.{ label = false; complement = comp_false; selected = false }
+           false_vertex);
       comp, var_vertex)
   in
   let _ = visit guard in
