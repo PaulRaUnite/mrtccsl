@@ -28,7 +28,7 @@ module Order = struct
   ;;
 
   let numeric_last ~now atom =
-    fold_bool_atom (with_ lv0) (with_ lv2 ~except:(now, lv1)) any atom
+    fold_bool_atom (with_ lv0) (with_ lv1 ~except:(now, lv2)) any atom
   ;;
 
   let inputs_last ~now:_ atom = fold_bool_atom (with_ lv1) (with_ lv0) any atom
@@ -166,51 +166,6 @@ module Dot = Graph.Graphviz.Dot (struct
     let get_subgraph _ = None
   end)
 
-let to_graph { guard; atoms; _ } =
-  let labels =
-    Dynarray.map
-      (fun a ->
-         Format.asprintf
-           "%a"
-           (PP.bool_atom Format.pp_print_string Format.pp_print_string)
-           a)
-      atoms
-  in
-  let atom_label i = Dynarray.get labels i in
-  let graph = G.create () in
-  let v1 = G.V.create "1" in
-  let rec visit bdd =
-    let comp = Bdd.is_complemented bdd in
-    if Bdd.is_leaf bdd
-    then if Bdd.is_true bdd then false, v1 else true, v1
-    else (
-      let var = Bdd.topvar bdd in
-      let var_vertex = G.V.create (atom_label var) in
-      (* if G.mem_vertex graph var_vertex
-      then comp, var_vertex
-      else  *)
-      let when_true = Bdd.high_part bdd
-      and when_false = Bdd.low_part bdd in
-      let comp_true, true_vertex = visit when_true
-      and comp_false, false_vertex = visit when_false in
-      G.add_edge_e
-        graph
-        (G.E.create
-           var_vertex
-           E.{ label = true; complement = comp_true; selected = false }
-           true_vertex);
-      G.add_edge_e
-        graph
-        (G.E.create
-           var_vertex
-           E.{ label = false; complement = comp_false; selected = false }
-           false_vertex);
-      comp, var_vertex)
-  in
-  let _ = visit guard in
-  graph
-;;
-
 let to_dot graph = Dot.output_graph stdout graph
 let interpret_bdd _node = ()
 
@@ -235,3 +190,68 @@ let interpret_bdd _node = ()
     else Error FailedInvariant)
   else Error FailedGuard
 ;; *)
+
+(*
+TODO:
+- structure for the step
+  - it should constrain the numerical values
+  - should be able to return concrete values
+- traversal of the diagram:
+  - separate atoms into to be evaluated, decided and constraining
+  - define clock strategies on the diagrams  
+*)
+
+type var = int
+
+type 'a b =
+  | BFalse
+  | BTrue
+  | BIf of var * 'a * 'a
+
+let inspect bdd =
+  if Bdd.is_true bdd
+  then BTrue
+  else if Bdd.is_false bdd
+  then BFalse
+  else BIf (Bdd.root_var bdd, Bdd.high_part bdd, Bdd.low_part bdd)
+;;
+
+let to_graph { guard; atoms; _ } =
+  let labels =
+    Dynarray.map
+      (fun a ->
+         Format.asprintf
+           "%a"
+           (PP.bool_atom Format.pp_print_string Format.pp_print_string)
+           a)
+      atoms
+  in
+  let atom_label i = Dynarray.get labels i in
+  let graph = G.create () in
+  let v1 = G.V.create "1" in
+  let v0 = G.V.create "0" in
+  let rec visit bdd =
+    match inspect bdd with
+    | BTrue -> v1
+    | BFalse -> v0
+    | BIf (v, h, l) ->
+      let var_vertex = G.V.create (atom_label v)
+      and true_vertex = visit h
+      and false_vertex = visit l in
+      G.add_edge_e
+        graph
+        (G.E.create
+           var_vertex
+           E.{ label = true; complement = false; selected = false }
+           true_vertex);
+      G.add_edge_e
+        graph
+        (G.E.create
+           var_vertex
+           E.{ label = false; complement = false; selected = false }
+           false_vertex);
+      var_vertex
+  in
+  let _ = visit guard in
+  graph
+;;
