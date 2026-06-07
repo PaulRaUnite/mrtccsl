@@ -28,6 +28,16 @@ let priority_strategy priorities general_strategy =
   f
 ;;
 
+let rec random_exp l r =
+  let mean = 400.0 in
+  let frac = Owl_stats.exponential_rvs ~lambda:(1.0 /. mean) in
+  if Float.compare frac 1000.0 >= 0
+  then random_exp l r
+  else (
+    let frac = frac /. 1000.0 in
+    l + ((r - l) * of_float frac))
+;;
+
 let random_strat ~rounding_error ~upper_bound =
   ST.Solution.refuse_empty
   @@ ST.Solution.random_label
@@ -35,7 +45,7 @@ let random_strat ~rounding_error ~upper_bound =
           ~upper_bound
           ~ceil:(round_up rounding_error)
           ~floor:(round_down rounding_error)
-          ~rand:random)
+          ~rand:random_exp)
 ;;
 
 type 'n config =

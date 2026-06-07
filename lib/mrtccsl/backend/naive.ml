@@ -477,7 +477,9 @@ struct
              let solutions = Iter.persistent solutions in
              if debug
              then
-               if Iter.length solutions = 0
+               if
+                 Iter.length solutions = 0
+                 || Iter.for_all (fun (label, _) -> L.is_empty label) solutions
                then (
                  Printf.printf "now: %s\n" (N.to_string now);
                  Printf.printf "prev clocks: %s\n" (L.to_string prev_clocks);
@@ -1137,14 +1139,35 @@ struct
     Option.get chosen
   ;;
 
+  let rec repeat_if_equal rand value =
+    let rvs = rand () in
+    if N.equal rvs value then repeat_if_equal rand value else rvs
+  ;;
+
+  let rec repeat_if_equal2 rand v1 v2 =
+    let rvs = rand () in
+    if N.equal rvs v1
+    then repeat_if_equal2 rand v1 v2
+    else if N.equal rvs v2
+    then repeat_if_equal2 rand v1 v2
+    else (
+      print_endline (N.to_string rvs);
+      rvs)
+  ;;
+
   let cont_dist_value = function
     | Uniform ->
       fun cond ->
-        let lower, upper =
-          Option.unwrap ~expect:"uniform distribution is undefined on exclusive intervals"
-          @@ NI.constant_bounds cond
-        in
-        N.random lower upper
+        NI.(
+          (match cond with
+           | Bound (Include lower, Include upper) -> N.random lower upper
+           | Bound (Include lower, Exclude upper) ->
+             repeat_if_equal (fun () -> N.random lower upper) upper
+           | Bound (Exclude lower, Include upper) ->
+             repeat_if_equal (fun () -> N.random lower upper) lower
+           | Bound (Exclude lower, Exclude upper) ->
+             repeat_if_equal2 (fun () -> N.random lower upper) lower upper
+           | _ -> failwith "uniform distribution is undefined on infinite intervals"))
     | Normal { mean; deviation } ->
       let mu = N.to_float mean in
       let sigma = N.to_float deviation in
@@ -1342,6 +1365,12 @@ module Strategy (A : S) = struct
         floor x y
       | _ -> invalid_arg "random on infinite interval is not supported"
     ;;
+
+    let fast_and_slow ~upper_bound ~ceil ~floor cond =
+      if Random.bool ()
+      then slow ~upper_bound ~ceil cond
+      else fast ~upper_bound ~floor cond
+    ;;
   end
 
   module Solution = struct
@@ -1358,6 +1387,38 @@ module Strategy (A : S) = struct
         Some (l, num_decision c)
       in
       Option.bind_or non_empty_first any_first
+    ;;
+
+    let weighted_label num_decision solutions =
+      let solutions = Iter.to_array solutions in
+      if Array.length solutions = 0
+      then None
+      else (
+        let assign_weight ((label, _) as sol) = sol, L.cardinal label in
+        let weighted = Array.map assign_weight solutions in
+        let max_weight =
+          Array.fold_left (fun max (_, w) -> Int.max max (Int.succ w)) 1 weighted
+        in
+        let weighted = Array.map (fun (sol, w) -> sol, max_weight - w) weighted in
+        let weight_sum =
+          Array.fold_left (fun sum (_, weight) -> sum + weight) 0 weighted
+        in
+        let choice = Random.int weight_sum in
+        let sol, _ =
+          (Array.fold_left (fun (chosen, sum) (sol, weight) ->
+             match chosen with
+             | Some choice -> Some choice, sum
+             | None ->
+               let sum = sum - weight in
+               if sum <= 0 then Some sol, sum else None, sum))
+            (None, choice)
+            weighted
+        in
+        let label, bound =
+          Option.unwrap ~expect:"weighted_label: choice should not fail" sol
+        in
+        let time = num_decision bound in
+        Some (label, time))
     ;;
 
     let random_label num_decision solutions =
