@@ -227,6 +227,7 @@ let to_graph { guard; atoms; _ } =
       atoms
   in
   let atom_label i = Dynarray.get labels i in
+  let index = Hashtbl.create 48 in
   let graph = G.create () in
   let v1 = G.V.create "1" in
   let v0 = G.V.create "0" in
@@ -235,22 +236,26 @@ let to_graph { guard; atoms; _ } =
     | BTrue -> v1
     | BFalse -> v0
     | BIf (v, h, l) ->
-      let var_vertex = G.V.create (atom_label v)
-      and true_vertex = visit h
-      and false_vertex = visit l in
-      G.add_edge_e
-        graph
-        (G.E.create
-           var_vertex
-           E.{ label = true; complement = false; selected = false }
-           true_vertex);
-      G.add_edge_e
-        graph
-        (G.E.create
-           var_vertex
-           E.{ label = false; complement = false; selected = false }
-           false_vertex);
-      var_vertex
+      (match Hashtbl.find_opt index (v, h, l) with
+       | Some v -> v
+       | None ->
+         let var_vertex = G.V.create (atom_label v)
+         and true_vertex = visit h
+         and false_vertex = visit l in
+         Hashtbl.add index (v, h, l) var_vertex;
+         G.add_edge_e
+           graph
+           (G.E.create
+              var_vertex
+              E.{ label = true; complement = false; selected = false }
+              true_vertex);
+         G.add_edge_e
+           graph
+           (G.E.create
+              var_vertex
+              E.{ label = false; complement = false; selected = false }
+              false_vertex);
+         var_vertex)
   in
   let _ = visit guard in
   graph
