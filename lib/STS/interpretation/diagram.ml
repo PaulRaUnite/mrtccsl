@@ -24,11 +24,11 @@ module Order = struct
       | Some (ext, lv) when ext = v -> lv
       | _ -> lv
     in
-    min x lv
+    max x lv
   ;;
 
-  let numeric_last ~now atom =
-    fold_bool_atom (with_ lv0) (with_ lv1 ~except:(now, lv2)) any atom
+  let state_input_now ~now atom =
+    fold_bool_atom (with_ lv0) (with_ lv1 ~except:(now, lv2)) lv0 atom
   ;;
 
   let inputs_last ~now:_ atom = fold_bool_atom (with_ lv1) (with_ lv0) any atom
@@ -91,7 +91,7 @@ let of_machine now { guard; assignments; invariant = _ } : _ t =
   let open Order in
   let index = ref LvMap.empty in
   let assign_temp_id expr =
-    let lv = Order.numeric_last ~now expr in
+    let lv = Order.state_input_now ~now expr in
     let map = LvMap.value ~default:AtomIndex.empty lv !index in
     let i = AtomIndex.value ~default:(AtomIndex.cardinal map) expr map in
     let map = AtomIndex.add expr i map in
