@@ -12,13 +12,14 @@ module Order = struct
 
   open Level
 
-  let any = Level 3
+  let lv3 = Level 3
   let lv2 = Level 2
   let lv1 = Level 1
   let lv0 = Level 0
   let min (Level x) (Level y) = Level (Int.min x y)
+  let max (Level x) (Level y) = Level (Int.max x y)
 
-  let with_ ?except lv x v =
+  let with_max ?except lv x v =
     let lv =
       match except with
       | Some (ext, lv) when ext = v -> lv
@@ -27,11 +28,30 @@ module Order = struct
     max x lv
   ;;
 
-  let state_input_now ~now atom =
-    fold_bool_atom (with_ lv0) (with_ lv1 ~except:(now, lv2)) lv0 atom
+  let with_min ?except lv x v =
+    let lv =
+      match except with
+      | Some (ext, lv) when ext = v -> lv
+      | _ -> lv
+    in
+    min x lv
   ;;
 
-  let inputs_last ~now:_ atom = fold_bool_atom (with_ lv1) (with_ lv0) any atom
+  let state_input_now ~now atom =
+    fold_bool_atom (with_max lv0) (with_max lv1 ~except:(now, lv2)) lv0 atom
+  ;;
+
+  let state_numeric_bool_now ~now = function
+    | BStateVar _ | IntQueuePositive _ -> lv0
+    | BInputVar _ -> lv2
+    | atom -> fold_bool_atom (with_max lv0) (with_max lv1 ~except:(now, lv3)) lv0 atom
+  ;;
+
+  let state_bool_now_numeric ~now = function
+    | BStateVar _ | IntQueuePositive _ -> lv0
+    | BInputVar _ -> lv1
+    | atom -> fold_bool_atom (with_min lv0) (with_min lv3 ~except:(now, lv2)) lv3 atom
+  ;;
 
   module LvIndMap = Map.Make (struct
       type t = Level.t * int [@@deriving compare]
@@ -84,14 +104,14 @@ module AtomIndex = Map.Make (struct
     let compare = compare_bool_atom String.compare String.compare
   end)
 
-let of_machine now { guard; assignments; invariant = _ } : _ t =
+let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
   (* print_endline
   @@ Sexplib0.Sexp.to_string_hum
   @@ sexp_of_bool_expr (sexp_of_bool_atom String.sexp_of_t String.sexp_of_t) guard; *)
   let open Order in
   let index = ref LvMap.empty in
   let assign_temp_id expr =
-    let lv = Order.state_input_now ~now expr in
+    let lv = order ~now expr in
     let map = LvMap.value ~default:AtomIndex.empty lv !index in
     let i = AtomIndex.value ~default:(AtomIndex.cardinal map) expr map in
     let map = AtomIndex.add expr i map in

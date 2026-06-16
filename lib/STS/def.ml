@@ -111,9 +111,7 @@ type ('sv, 'iv) t =
 @returns a machine that satifies both all guards
 *)
 
-let visit_atoms visit { guard; _ } =
-  ignore @@ map_bool_expr visit guard
-;;
+let visit_atoms visit { guard; _ } = ignore @@ map_bool_expr visit guard
 
 type atom_index = (string, (string, string) bool_atom list) Hashtbl.t
 

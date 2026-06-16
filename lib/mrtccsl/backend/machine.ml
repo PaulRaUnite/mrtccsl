@@ -313,7 +313,7 @@ let periodic_as_late_acceptor out base period error offset =
       base
       (string_of_int period)
       (iparam_to_string offset)
-  and nominal_name = Printf.sprintf "skip[%s]" (iparam_to_string offset) in
+  and nominal_name = Printf.sprintf "skip[%s,%s]" (base) (iparam_to_string offset) in
   let period_counter = IStateVar period_counter_name
   and out = binvar out
   and base = binvar base
@@ -626,7 +626,7 @@ let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ }
                  Fun.id
                  Fun.id
                  Rational.to_string
-                 c))
+                 c)) (* TODO: add numerical constraints too. *)
            m;
          m)
       (List.to_seq clock)

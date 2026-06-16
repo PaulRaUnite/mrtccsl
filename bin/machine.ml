@@ -16,14 +16,17 @@ let () =
                   } *)
                 CCSL.Language.Cstr.Precedence { cause = "a"; conseq = "b" }
               ; Periodic
-                  { out = "b"; period = 5; error = Const 0; offset = Const 0; base = "r" }
+                  { out = "b"; period = 5; error = Var "e"; offset = Const 0; base = "r" }
               ]
         ; probabilistic = []
         ; duration = []
-        ; integer = []
+        ; integer =
+            [ NumRelation ("e", `LessEq, Const 1)
+            ; NumRelation ("e", `MoreEq, Const (-1))
+            ]
         }
   in
   let open STS.Interpretation.Diagram in
-  let d = of_machine now m in
+  let d = of_machine ~order:Order.state_bool_now_numeric now m in
   to_dot @@ to_graph ~cstr_index d
 ;;
