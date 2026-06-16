@@ -97,7 +97,7 @@ type ('sv, 'iv) assignment = 'sv * ('sv, 'iv) expr [@@deriving compare]
 
 (** Type of abstract machines. *)
 type ('sv, 'iv) t =
-  { guard : ('sv, 'iv) bool_atom bool_expr
+  { guard : ('sv, 'iv) guard
     (** State and input conditions of the form [S -> B^n -> Q^m -> Z^k -> B], where [B^n] encodes the clock ticks, [Q^m] next possible time and rational inputs, [Z^k] integer inputs. *)
   ; assignments : ('sv, 'iv) assignment list
     (** List of actions performed on the state variables using previous state and inputs [S -> B^n -> Q^m -> Z^k -> S]*)
@@ -105,8 +105,19 @@ type ('sv, 'iv) t =
     (** Boolean expression encoding state invariant. *)
   }
 
-(** Synchronizes two machines by cartesian product of their transitions and conjunction of invariants. *)
-let sync_machines sv_comp iv_comp machines =
+(** Synchronizes two machines by cartesian product of their transitions and conjunction of invariants.
+@param sv_compare compares state variables
+@param iv_compare compares input variables
+@returns a machine that satifies both all guards
+*)
+
+let visit_atoms visit { guard; _ } =
+  ignore @@ map_bool_expr visit guard
+;;
+
+type atom_index = (string, (string, string) bool_atom list) Hashtbl.t
+
+let sync_machines sv_compare iv_compare machines =
   let guards, assignments, invariants =
     List.split3
     @@ List.map
@@ -116,7 +127,7 @@ let sync_machines sv_comp iv_comp machines =
   let guard = BAnd guards
   and assignments = List.flatten assignments
   and invariant = BAnd invariants in
-  let comp_assign = compare_assignment sv_comp iv_comp in
+  let comp_assign = compare_assignment sv_compare iv_compare in
   let assignments = List.sort_uniq comp_assign assignments in
   assert (
     (* checking that there are no duplicate, non equivalent assignments *)

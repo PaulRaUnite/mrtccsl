@@ -121,20 +121,24 @@ let of_machine now { guard; assignments; invariant = _ } : _ t =
 ;;
 
 module V = struct
-  type t = string
+  type t =
+    | BDDNode of string
+    | Constraint of string
 end
 
 module E = struct
   let compare_bool = Bool.compare
 
   type t =
-    { complement : bool
-    ; label : bool
-    ; selected : bool
-    }
+    | BDDEdge of
+        { complement : bool
+        ; label : bool
+        ; selected : bool
+        }
+    | PointerEdge
   [@@deriving compare]
 
-  let default = { complement = false; label = false; selected = false }
+  let default = PointerEdge
 end
 
 module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
@@ -149,18 +153,23 @@ module Dot = Graph.Graphviz.Dot (struct
     let vertex_attributes v =
       let label = V.label v in
       match label with
-      | "0" | "1" -> [ `Label label; `Shape `Box ]
-      | _ -> [ `Label label ]
+      | BDDNode node_name ->
+        (match node_name with
+         | "0" | "1" -> [ `Label node_name; `Shape `Box ]
+         | _ -> [ `Label node_name ])
+      | Constraint s -> [ `Label s; `Shape `Box; `Color 0xff00ff ]
     ;;
 
     let default_edge_attributes _ = []
 
     let edge_attributes e =
-      let label = G.E.label e in
-      [ `Label (string_of_bool label.label)
-      ; `Arrowhead (if label.complement then `Dot else `Normal)
-      ; `Color (if label.selected then 0xff0000 else 0)
-      ]
+      match G.E.label e with
+      | BDDEdge label ->
+        [ `Label (string_of_bool label.label)
+        ; `Arrowhead (if label.complement then `Dot else `Normal)
+        ; `Color (if label.selected then 0xff0000 else 0)
+        ]
+      | PointerEdge -> [ `Arrowhead `Normal; `Color 0xff00ff ]
     ;;
 
     let get_subgraph _ = None
@@ -216,21 +225,17 @@ let inspect bdd =
   else BIf (Bdd.root_var bdd, Bdd.high_part bdd, Bdd.low_part bdd)
 ;;
 
-let to_graph { guard; atoms; _ } =
-  let labels =
-    Dynarray.map
-      (fun a ->
-         Format.asprintf
-           "%a"
-           (PP.bool_atom Format.pp_print_string Format.pp_print_string)
-           a)
-      atoms
+let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
+  let atom_to_string a =
+    Format.asprintf "%a" (PP.bool_atom Format.pp_print_string Format.pp_print_string) a
   in
+  let labels = Dynarray.map atom_to_string atoms in
+  let local_atom_index = Hashtbl.create 16 in
   let atom_label i = Dynarray.get labels i in
   let index = Hashtbl.create 48 in
   let graph = G.create () in
-  let v1 = G.V.create "1" in
-  let v0 = G.V.create "0" in
+  let v1 = G.V.create (BDDNode "1") in
+  let v0 = G.V.create (BDDNode "0") in
   let rec visit bdd =
     match inspect bdd with
     | BTrue -> v1
@@ -239,24 +244,42 @@ let to_graph { guard; atoms; _ } =
       (match Hashtbl.find_opt index (v, h, l) with
        | Some v -> v
        | None ->
-         let var_vertex = G.V.create (atom_label v)
+         let label = atom_label v in
+         let var_vertex = G.V.create (BDDNode label)
          and true_vertex = visit h
          and false_vertex = visit l in
          Hashtbl.add index (v, h, l) var_vertex;
+         Hashtbl.entry ~default:[] (List.cons var_vertex) label local_atom_index;
          G.add_edge_e
            graph
            (G.E.create
               var_vertex
-              E.{ label = true; complement = false; selected = false }
+              (E.BDDEdge { label = true; complement = false; selected = false })
               true_vertex);
          G.add_edge_e
            graph
            (G.E.create
               var_vertex
-              E.{ label = false; complement = false; selected = false }
+              (E.BDDEdge { label = false; complement = false; selected = false })
               false_vertex);
          var_vertex)
   in
   let _ = visit guard in
+  Option.iter
+    (fun index ->
+       Hashtbl.iter
+         (fun k v ->
+            let source = G.V.create (Constraint k) in
+            G.add_vertex graph source;
+            v
+            |> List.to_seq
+            |> Seq.map atom_to_string
+            |> Seq.filter_map (Hashtbl.find_opt local_atom_index)
+            |> Seq.map List.to_seq
+            |> Seq.concat
+            |> Seq.iter (fun target ->
+              G.add_edge_e graph (G.E.create source PointerEdge target)))
+         index)
+    cstr_index;
   graph
 ;;

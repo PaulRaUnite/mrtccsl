@@ -252,6 +252,11 @@ module Cstr = struct
 
   (** Maps only the time constants in a logical constraint. *)
   let map_time_const f = map_clock_constr Fun.id Fun.id Fun.id f
+
+  type ('c, 'tp, 'ip, 'tv, 'iv, 't) cstr =
+    | ClockConstraint of ('c, 'tp, 'ip, 'tv, 'iv, 't) clock_constr
+    | RealTimeConstraint of ('tv, 't) numeric_rel_constr
+    | IntegerConstraint of ('iv, int) numeric_rel_constr
 end
 
 (** Module of specifications. *)

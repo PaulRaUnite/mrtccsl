@@ -10,6 +10,12 @@
  (modules exec)
  (libraries mrtccsl common domainslib))
 
+(executable
+ (public_name machine)
+ (name machine)
+ (modules machine)
+ (libraries mrtccsl common sts))
+
 (env
  (dev
   (flags
