@@ -276,8 +276,6 @@ let rec eval_bool_atom
   = function
   | BStateVar v -> Dual.wrap_const_bool (state.bool v)
   | BInputVar v -> Dual.wrap_const_bool (inputs.bool v)
-  | IntQueuePositive q ->
-    Dual.wrap_const_bool @@ Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
   | IntComp (e1, rel, e2) ->
     let l = eval_integer state inputs e1
     and r = eval_integer state inputs e2 in

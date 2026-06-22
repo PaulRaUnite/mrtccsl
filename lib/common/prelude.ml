@@ -286,18 +286,18 @@ module Seq = struct
     Format.pp_print_seq ~pp_sep:(fun fmt () -> Format.pp_print_string fmt sep)
   ;;
 
-  let rec fold_leftir_aux f (accu : ('acc, _) result) i xs =
+  let rec fold_leftir f (accu : ('acc, _) result) i xs =
     match xs () with
     | Nil -> accu
     | Cons (x, xs) ->
       let open Result.Syntax in
       let* accu = accu in
       let accu = f accu i x in
-      fold_leftir_aux f accu (i + 1) xs
+      fold_leftir f accu (i + 1) xs
   ;;
 
   (** Folds an indexed sequence with a [Result] accumulator. *)
-  let[@inline] fold_leftir f accu xs = fold_leftir_aux f accu 0 xs
+  let[@inline] fold_leftir f accu xs = fold_leftir f accu 0 xs
 
   (** Folds a sequence with a [Result] accumulator. *)
   let[@inline] fold_leftr f accu xs = fold_leftir (fun acc _ e -> f acc e) accu xs
@@ -314,6 +314,14 @@ module Seq = struct
         else Some (min, max)
     in
     fold_left select_min_or_max None seq
+  ;;
+
+  let rec fold_left_opt f accu xs =
+    match xs () with
+    | Nil -> Some accu
+    | Cons (x, xs) ->
+      let* accu = f accu x in
+      fold_left_opt f accu xs
   ;;
 end
 

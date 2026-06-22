@@ -32,12 +32,17 @@ type 'atom bool_expr =
   | BITE of ('atom bool_expr, 'atom bool_expr) ite
 [@@deriving compare, sexp, map, fold]
 
+type num_rel =
+  [ `Less
+  | `LessEq
+  ]
+[@@deriving compare, sexp]
+
 type ('sv, 'iv) bool_atom =
   | BStateVar of 'sv
   | BInputVar of 'iv
   | IntComp of ('sv, 'iv) int_expr * num_rel * ('sv, 'iv) int_expr
   | RatComp of ('sv, 'iv) rat_expr * num_rel * ('sv, 'iv) rat_expr
-  | IntQueuePositive of 'sv
 
 (** Type of integer expressions. *)
 and ('sv, 'iv) int_expr =
@@ -198,7 +203,6 @@ module PP = struct
         (Expr.string_of_num_rel op)
         (rat_expr pp_sv pp_iv)
         y
-    | IntQueuePositive v -> Format.fprintf fmt "len(%a) >= 0" pp_sv v
 
   and int_expr pp_sv pp_iv fmt = function
     | IConst c -> Format.fprintf fmt "%i" c

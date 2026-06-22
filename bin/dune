@@ -14,7 +14,7 @@
  (public_name machine)
  (name machine)
  (modules machine)
- (libraries mrtccsl common sts))
+ (libraries mrtccsl common sts vpl-core))
 
 (env
  (dev

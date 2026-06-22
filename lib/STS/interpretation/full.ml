@@ -31,7 +31,6 @@ let rec eval_bool_atom
       rel
       (eval_rational state inputs e1)
       (eval_rational state inputs e2)
-  | IntQueuePositive q -> Queue.for_all (Integer.less_eq 0) (get_iqueue state q)
 
 (** Evaluate Boolean formula given state and input values. *)
 and eval_bool

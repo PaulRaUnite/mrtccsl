@@ -3,13 +3,13 @@ open Common
 open Prelude
 module SSet = Set.Make (String)
 
-module SymbolicBackend = struct
-  let test_name = "symbolic"
+module DiagramBackend = struct
+  let test_name = "diagram"
 
   module N = Number.Rational
 
   module Backend = struct
-    include Backend.Machine.Literal
+    include Backend.Machine.Diagram
 
     let accept_trace m trace =
       accept_trace
@@ -33,6 +33,4 @@ module SymbolicBackend = struct
   end
 end
 
-let () = Bdd.init ();;
-
-include Correctness.Make (SymbolicBackend)
+include Correctness.Make (DiagramBackend)

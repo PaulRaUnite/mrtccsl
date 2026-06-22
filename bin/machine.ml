@@ -1,10 +1,11 @@
-module Q = Common.Number.Rational
+(* module Q = Common.Number.Rational *)
+open Common.Prelude
 
 let () =
   let _ = Bdd.init () in
   let open Mrtccsl in
-  let (now, m), cstr_index =
-    Backend.Machine.of_spec
+  let now, m, cstr_index =
+    Backend.Machine.Literal.of_spec
       CCSL.Language.Specification.
         { clock =
             CCSL.Language.Cstr.
@@ -14,9 +15,12 @@ let () =
                   ; error = Var "jitter"
                   ; offset = Var "offset"
                   } *)
-                CCSL.Language.Cstr.Precedence { cause = "a"; conseq = "b" }
-              ; Periodic
-                  { out = "b"; period = 5; error = Var "e"; offset = Const 0; base = "r" }
+                (* CCSL.Language.Cstr.Causality { cause = "a"; conseq = "b" } *)
+                (* Periodic
+                  { out = "b"; period = 5; error = Var "e"; offset = Const 0; base = "r" } *)
+                (* Exclusion { args = [ "a"; "b" ]; choice = Some "c" } *)
+                Periodic
+                  { out = "o"; base = "b"; period = 3; error = var "e"; offset = const 2 }
               ]
         ; probabilistic = []
         ; duration = []

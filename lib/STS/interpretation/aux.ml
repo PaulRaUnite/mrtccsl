@@ -96,6 +96,13 @@ type ('v, 'i, 'r) input_interface =
   ; bool : ('v, bool) get_value
   }
 
+let input_to_interface { rationals; integers; bools } =
+  { integer = (fun v -> VarMap.find v integers)
+  ; rational = (fun v -> VarMap.find v rationals)
+  ; bool = (fun v -> VarMap.find v bools)
+  }
+;;
+
 let empty_input_interface : (Def.empty, _, _) input_interface =
   let impossible _ = failwith "impossible situation, empty type has inhabitants" in
   { integer = impossible; rational = impossible; bool = impossible }

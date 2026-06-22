@@ -9,6 +9,11 @@
  (libraries mrtccsl alcotest))
 
 (test
+ (name diagram)
+ (modules diagram correctness)
+ (libraries mrtccsl alcotest))
+
+(test
  (name induction)
  (modules induction)
  (libraries mrtccsl alcotest))

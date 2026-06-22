@@ -5,12 +5,12 @@ open Common.Number
 
 (** Integers *)
 
-let ( > ) x y = BAtom (IntComp (x, `More, y))
+let ( > ) x y = BAtom (IntComp (y, `Less, x))
 let ( < ) x y = BAtom (IntComp (x, `Less, y))
-let ( >= ) x y = BAtom (IntComp (x, `MoreEq, y))
+let ( >= ) x y = BAtom (IntComp (y, `LessEq, x))
 let ( <= ) x y = BAtom (IntComp (x, `LessEq, y))
-let ( == ) x y = BAtom (IntComp (x, `Eq, y))
-let ( != ) x y = BAtom (IntComp (x, `Neq, y))
+let ( == ) x y = BAnd [ BAtom (IntComp (x, `LessEq, y)); BAtom (IntComp (y, `LessEq, x)) ]
+let ( != ) x y = BOr [ BAtom (IntComp (x, `Less, y)); BAtom (IntComp (y, `Less, x)) ]
 let iconst x = IConst x
 let ( + ) x y = IBinOp (x, `Add, y)
 let ( - ) x y = IBinOp (x, `Sub, y)
@@ -32,12 +32,16 @@ let i1 = iconst 1
 
 let rinvar v = RInputVar v
 let rsvar v = RStateVar v
-let ( >. ) x y = BAtom (RatComp (x, `More, y))
+let ( >. ) x y = BAtom (RatComp (y, `Less, x))
 let ( <. ) x y = BAtom (RatComp (x, `Less, y))
-let ( >=. ) x y = BAtom (RatComp (x, `MoreEq, y))
+let ( >=. ) x y = BAtom (RatComp (y, `LessEq, x))
 let ( <=. ) x y = BAtom (RatComp (x, `LessEq, y))
-let ( ==. ) x y = BAtom (RatComp (x, `Eq, y))
-let ( !=. ) x y = BAtom (RatComp (x, `Neq, y))
+
+let ( ==. ) x y =
+  BAnd [ BAtom (RatComp (x, `LessEq, y)); BAtom (RatComp (y, `LessEq, x)) ]
+;;
+
+let ( !=. ) x y = BOr [ BAtom (RatComp (x, `Less, y)); BAtom (RatComp (y, `Less, x)) ]
 let rconst x = RConst x
 let ( +. ) x y = RBinOp (x, `Add, y)
 let ( -. ) x y = RBinOp (x, `Sub, y)
@@ -88,7 +92,6 @@ let ipush q e = IPushQueue (q, e)
 let ipop q = IPopQueue q
 let ifirst q = IPeekFirstQueue q
 let ilast q = IPeekLastQueue q
-let all_positive q = IntQueuePositive q
 let decrease q = IDecreaseAllQueue q
 let increase q = IIncreaseAllQueue q
 let iqite cond if_true if_false = IQITE { cond; if_true; if_false }

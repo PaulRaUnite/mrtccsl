@@ -40,7 +40,7 @@ let rparam_to_expr = Language.Cstr.unwrap_arg ~var:rinvar ~const:rconst
 (** *)
 let stateless_as_machine guard = guard |-> [] &&& t
 
-(** Helper function that adds a range condition on integer varaible (if present) and returns stateless machine. *)
+(** Helper function that adds a range condition on integer variable (if present) and returns a stateless machine. *)
 let stateless_with_range_cond len guard choice_var =
   let add_range_cond choice_var = guard && i0 <= choice_var && choice_var < iconst len in
   let guard = Option.map_or ~default:guard add_range_cond choice_var in
@@ -313,7 +313,7 @@ let periodic_as_late_acceptor out base period error offset =
       base
       (string_of_int period)
       (iparam_to_string offset)
-  and nominal_name = Printf.sprintf "skip[%s,%s]" (base) (iparam_to_string offset) in
+  and nominal_name = Printf.sprintf "skip[%s,%s]" base (iparam_to_string offset) in
   let period_counter = IStateVar period_counter_name
   and out = binvar out
   and base = binvar base
@@ -595,89 +595,123 @@ let numerical_relation_as_machine
   =
   let e1 = invar var
   and e2 = of_param param in
-  comp (e1, rel, e2) |-> [] &&& t
+  let guard =
+    match rel with
+    | `Less -> comp (e1, `Less, e2)
+    | `LessEq -> comp (e1, `LessEq, e2)
+    | `More -> comp (e2, `Less, e1)
+    | `MoreEq -> comp (e2, `LessEq, e1)
+    | `Eq -> comp (e1, `LessEq, e2) && comp (e2, `LessEq, e1)
+    | `Neq -> comp (e1, `Less, e2) || comp (e2, `Less, e1)
+  in
+  guard |-> [] &&& t
 ;;
 
 open Interpretation
 
-type sim = var * (var, var) t
+module Literal = struct
+  type sim = var * (var, var) t * atom_index
 
-(** Converts the specification constraints into a synchronized abstract machine. *)
-let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ }
-  : sim * atom_index
-  =
-  let open STS in
-  let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
-  and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
-  let now, empty_machine = empty in
-  let empty_machine = Seq.singleton empty_machine in
-  let cstr_to_atom = Hashtbl.create 16 in
-  let record_atom c a = Hashtbl.entry ~default:[] (List.cons a) c cstr_to_atom in
-  let logical =
-    Seq.map
-      (fun c ->
-         let m = of_constr now c in
-         visit_atoms
-           (record_atom
-              (Language.Cstr.to_string
-                 Fun.id
-                 Fun.id
-                 Fun.id
-                 Fun.id
-                 Fun.id
-                 Rational.to_string
-                 c)) (* TODO: add numerical constraints too. *)
-           m;
-         m)
-      (List.to_seq clock)
-  and int_relations =
-    Seq.map
-      (numerical_relation_as_machine iinvar iparam_to_expr icomp)
-      (List.to_seq integer)
-  and rat_relations =
-    Seq.map
-      (numerical_relation_as_machine rinvar rparam_to_expr rcomp)
-      (List.to_seq duration)
-  in
-  let combined_machine =
-    sync_machines
-      String.compare
-      String.compare
-      (List.of_seq
-       @@ Seq.append_list [ empty_machine; logical; int_relations; rat_relations ])
-  in
-  (now, combined_machine), cstr_to_atom
-;;
+  (** Converts the specification constraints into a synchronized abstract machine. *)
+  let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : sim =
+    let open STS in
+    let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
+    and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
+    let now, empty_machine = empty in
+    let empty_machine = Seq.singleton empty_machine in
+    let cstr_to_atom = Hashtbl.create 16 in
+    let record_atom c a = Hashtbl.entry ~default:[] (List.cons a) c cstr_to_atom in
+    let logical =
+      Seq.map
+        (fun c ->
+           let m = of_constr now c in
+           visit_atoms
+             (record_atom
+                (Language.Cstr.to_string
+                   Fun.id
+                   Fun.id
+                   Fun.id
+                   Fun.id
+                   Fun.id
+                   Rational.to_string
+                   c))
+             (* TODO: add numerical constraints too. *)
+             m;
+           m)
+        (List.to_seq clock)
+    and int_relations =
+      Seq.map
+        (numerical_relation_as_machine iinvar iparam_to_expr icomp)
+        (List.to_seq integer)
+    and rat_relations =
+      Seq.map
+        (numerical_relation_as_machine rinvar rparam_to_expr rcomp)
+        (List.to_seq duration)
+    in
+    let combined_machine =
+      sync_machines
+        String.compare
+        String.compare
+        (List.of_seq
+         @@ Seq.append_list [ empty_machine; logical; int_relations; rat_relations ])
+    in
+    now, combined_machine, cstr_to_atom
+  ;;
 
-let step_as_inputs now Trace.{ label; time } =
-  { bools = VarMap.of_seq (Seq.map (fun c -> c, true) (List.to_seq label))
-  ; integers = VarMap.empty
-  ; rationals = VarMap.singleton now time
-  }
-;;
+  let step_as_inputs now Trace.{ label; time } =
+    { bools = VarMap.of_seq (Seq.map (fun c -> c, true) (List.to_seq label))
+    ; integers = VarMap.empty
+    ; rationals = VarMap.singleton now time
+    }
+  ;;
 
-let sexp_of_step =
-  Trace.sexp_of_step
-    Sexplib0.Sexp_conv.(sexp_of_list sexp_of_string)
-    Number.Rational.sexp_of_t
-;;
+  let sexp_of_step =
+    Trace.sexp_of_step
+      Sexplib0.Sexp_conv.(sexp_of_list sexp_of_string)
+      Number.Rational.sexp_of_t
+  ;;
 
-(** Checks if machine accepts a trace. *)
-let accept_trace (now, machine) trace =
-  let state = default_state in
-  let state =
-    Seq.fold_leftr
-      (fun state step ->
-         let inputs = step_as_inputs now step in
-         accept_transition machine state inputs)
-      (Ok state)
-      trace
-  in
-  Result.iter_error
-    (function
-      | FailedInvariant -> failwith "failed (at out) state invariant"
-      | NoValidTransition -> failwith "failed (at in) state invariant"
-      | _ -> ())
-    state;
-  Result.is_ok state
-;;
+  (** Checks if machine accepts a trace. *)
+  let accept_trace (now, machine, _) trace =
+    let state = default_state in
+    let state =
+      Seq.fold_leftr
+        (fun state step ->
+           let inputs = step_as_inputs now step in
+           Transition.accept_transition machine state inputs)
+        (Ok state)
+        trace
+    in
+    Result.iter_error
+      Transition.(
+        function
+        | FailedInvariant -> failwith "failed (at out) state invariant"
+        | NoValidTransition -> failwith "failed (at in) state invariant"
+        | _ -> ())
+      state;
+    Result.is_ok state
+  ;;
+end
+
+module Diagram = struct
+  type sim = (var, var) Diagram.t * atom_index
+
+  let of_spec ?debug:_ spec : sim =
+    let now, m, index = Literal.of_spec spec in
+    let diag = Diagram.of_machine ~order:Diagram.Order.state_bool_now_numeric now m in
+    diag, index
+  ;;
+
+  let accept_trace (d, _) trace =
+    let state = default_state in
+    let state =
+      Seq.fold_left_opt
+        (fun state Trace.{ label; time } ->
+           let ticked = VarMap.of_seq (Seq.map (fun c -> c, true) (List.to_seq label)) in
+           Diagram.accept_solution d state (ticked, time))
+        state
+        trace
+    in
+    Option.is_some state
+  ;;
+end

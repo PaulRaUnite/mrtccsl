@@ -48,6 +48,7 @@ module type I = sig
   val is_left_unbound : t -> bool
   val is_right_unbound : t -> bool
   val is_any_unbound : t -> bool
+  val of_rel : Expr.num_rel -> num -> t
 
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -242,6 +243,16 @@ module Make (N : Num) : I with type num = N.t = struct
   ;;
 
   let is_any_unbound interval = is_left_unbound interval || is_right_unbound interval
+
+  let of_rel rel n =
+    match rel with
+    | `Neq -> failwith "Interval.of_rel: negation cannot be expressed as an interval"
+    | `Eq -> return n
+    | `More -> pinf_strict n
+    | `Less -> ninf_strict n
+    | `MoreEq -> pinf n
+    | `LessEq -> ninf n
+  ;;
 end
 
 module MakeDebug (N : sig
@@ -288,5 +299,6 @@ let%test_module _ =
     let%test_unit _ = [%test_eq: t] (0 <-= 0) empty
     let%test_unit _ = [%test_eq: t] (0 =-> 0) empty
     let%test_unit _ = [%test_eq: t] (0 <-> 0) empty
+    let%test_unit _ = [%test_eq: t] (of_rel `Eq 0) (0 =-= 0)
   end)
 ;;
