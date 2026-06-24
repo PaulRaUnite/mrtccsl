@@ -47,10 +47,14 @@ module Order = struct
     | atom -> fold_bool_atom (with_max lv0) (with_max lv1 ~except:(now, lv3)) lv0 atom
   ;;
 
-  let state_bool_now_numeric ~now:_ = function
+  let state_bool_now_numeric ~now = function
     | BStateVar _ -> lv0
     | BInputVar _ -> lv1
-    | atom -> fold_bool_atom (with_max lv0) (with_max lv2) lv0 atom
+    | RatComp (RInputVar _, _, RConst _) -> lv2
+    | RatComp (RConst _, _, RInputVar _) -> lv2
+    | IntComp (IInputVar _, _, IConst _) -> lv2
+    | IntComp (IConst _, _, IInputVar _) -> lv2
+    | atom -> fold_bool_atom (with_max lv0) (with_max ~except:(now, lv3) lv3) lv0 atom
   ;;
 
   module LvIndMap = Map.Make (struct
@@ -110,10 +114,20 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
   (* print_endline
   @@ Sexplib0.Sexp.to_string_hum
   @@ sexp_of_bool_expr (sexp_of_bool_atom String.sexp_of_t String.sexp_of_t) guard; *)
+  Format.printf
+    "the guard:\n%a\n"
+    (PP.bool_expr @@ PP.bool_atom Format.pp_print_string Format.pp_print_string)
+    guard;
   let open Order in
   let index = ref LvMap.empty in
   let assign_temp_id expr =
     let lv = order ~now expr in
+    let (Level.Level lvl_i) = lv in
+    Format.printf
+      "lvl: %i, %a\n"
+      lvl_i
+      (PP.bool_atom Format.pp_print_string Format.pp_print_string)
+      expr;
     let map = LvMap.value ~default:AtomIndex.empty lv !index in
     let i = AtomIndex.value ~default:(AtomIndex.cardinal map) expr map in
     let map = AtomIndex.add expr i map in
@@ -123,22 +137,32 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
   let guard = map_bool_expr assign_temp_id guard in
   let bool_atoms, remap, first =
     LvMap.fold
-      (fun lv map (bool_atoms, remap, first) ->
-         let remap, first =
+      (fun lv map (bool_atoms, remap, firsts) ->
+         let first_i = Dynarray.length bool_atoms in
+         let firsts = LvMap.add lv first_i firsts in
+         for _ = 1 to AtomIndex.cardinal map do
+           Dynarray.add_last bool_atoms (BStateVar "dummy")
+         done;
+         let remap =
            AtomIndex.fold
-             (fun atom i (remap, first) ->
-                Dynarray.add_last bool_atoms atom;
-                let index = Dynarray.length bool_atoms - 1 in
-                let remap = Order.LvIndMap.add (lv, i) index remap
-                and first = LvMap.entry ~default:index Fun.id lv first in
-                remap, first)
+             (fun atom i remap ->
+                let index = first_i + i in
+                Dynarray.set bool_atoms index atom;
+                let remap = Order.LvIndMap.add (lv, i) index remap in
+                remap)
              map
-             (remap, first)
+             remap
          in
-         bool_atoms, remap, first)
+         bool_atoms, remap, firsts)
       !index
       (Dynarray.create (), Order.LvIndMap.empty, LvMap.empty)
   in
+  Format.printf "---  ---\n";
+  Dynarray.iter
+    (fun a ->
+       Format.printf "%a\n" (PP.bool_atom Format.pp_print_string Format.pp_print_string) a)
+    bool_atoms;
+  Format.printf "---  ---\n";
   let guard = map_bool_expr (fun k -> LvIndMap.find k remap) guard in
   let guard = bool_expr_to_bdd guard in
   { now
@@ -150,8 +174,8 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
         ~expect:"Level 1 or 2 has to be present in a diagram"
         (Option.bind_or (LvMap.find_opt lv1 first) (fun () -> LvMap.find_opt lv2 first))
   ; threshold2 =
-      Option.unwrap
-        ~expect:"Level 2 or 3 has to be present in a diagram"
+      Option.value
+        ~default:(Dynarray.length bool_atoms)
         (Option.bind_or (LvMap.find_opt lv2 first) (fun () -> LvMap.find_opt lv3 first))
   }
 ;;
@@ -286,7 +310,6 @@ let rec factor_out_state_numerical
           (PP.bool_atom Format.pp_print_string Format.pp_print_string)
           atom;
         Format.printf "what...\n";
-        Format.print_flush ();
         let result = Full.eval_bool_atom state num_inputs atom in
         factor_out_state_numerical
           state
@@ -306,12 +329,46 @@ let random_not_assigned clocks clock_assignments =
     clocks
 ;;
 
-module I = Common.Interval.Make (Common.Number.Rational)
+module A (I : Common.Interval.I) = struct
+  include I
 
-let iterpret_relation ~invert rel expr prev_cond =
-  let rel = if invert then Common.Expr.invert rel else rel in
-  I.inter prev_cond (I.of_rel rel expr)
-;;
+  let iterpret_relation ~flip rel expr prev_cond =
+    let rel = if flip then Common.Expr.flip rel else rel in
+    inter prev_cond (of_rel rel expr)
+  ;;
+
+  let choose_branch ~flip branch var (rel : num_rel) value old_conds =
+    let rel = if flip then Common.Expr.flip rel else (rel :> Common.Expr.num_rel) in
+    let positive = of_rel rel value
+    and negative = of_rel (Common.Expr.invert rel) value in
+    let cond = VarMap.value ~default:inf var old_conds in
+    let p_comb = inter positive cond
+    and n_comb = inter negative cond in
+    let with_value v = VarMap.add var v old_conds in
+    match is_empty p_comb, is_empty n_comb with
+    | false, false ->
+      print_endline "some/some";
+      (match branch with
+       | None -> Some (true, with_value p_comb) (* high and low are possible *)
+       | Some branch ->
+         if branch
+         then (* high branch *)
+           Some (true, with_value p_comb)
+         else Some (false, with_value n_comb))
+    | false, true ->
+      print_endline "some/empty";
+      Some (true, with_value p_comb)
+    | true, false ->
+      print_endline "empty/some";
+      Some (false, with_value n_comb)
+    | true, true ->
+      print_endline "empty/empty";
+      None
+  ;;
+end
+
+module RI = A (Common.Interval.Make (Common.Number.Rational))
+module NI = A (Common.Interval.Make (Common.Number.Integer))
 
 (** @returns a solution to the diagram as a tuple [(map : c -> bool, timestamp)] *)
 let rec random_label_strategy
@@ -335,6 +392,7 @@ let rec random_label_strategy
       if Bdd.is_false h then false else if Bdd.is_false l then true else Random.bool ()
     in
     let branch = if chosen_high then h else l in
+    let inversion = if chosen_high then Fun.id else Common.Expr.invert in
     let clock_assignments, delay_interval =
       match atom with
       | BStateVar _ ->
@@ -349,18 +407,18 @@ let rec random_label_strategy
            strategy resolution"
       | RatComp (RInputVar maybe_now, rel, expr) when String.equal maybe_now now ->
         let delay_interval =
-          iterpret_relation
-            ~invert:(not chosen_high)
-            (rel :> Common.Expr.num_rel)
+          RI.iterpret_relation
+            ~flip:false
+            (inversion (rel :> Common.Expr.num_rel))
             (Full.eval_rational state inputs expr)
             delay_interval
         in
         clock_assignments, delay_interval
       | RatComp (expr, rel, RInputVar maybe_now) when String.equal maybe_now now ->
         let delay_interval =
-          iterpret_relation
-            ~invert:(not chosen_high)
-            (Common.Expr.flip rel)
+          RI.iterpret_relation
+            ~flip:true
+            (inversion (Common.Expr.flip rel))
             (Full.eval_rational state inputs expr)
             delay_interval
         in
@@ -400,161 +458,198 @@ let rec factor_out_boolean_inputs atoms clock_values threshhold guard =
       | _ -> guard)
 ;;
 
-module IdentQ = Vpl.UserInterface.Lift_Ident (String)
-module IdentZ = Vpl.UserInterface.Lift_Ident (String)
+type 'v reduction =
+  | Const of 'v
+  | Variable of var
 
-module TermQ = struct
-  type t = Vpl.WrapperTraductors.Interface(Vpl.Domains.UncertifiedQ.Coeff).Term.t
-
-  let to_term t = t
-  let of_term t = t
-end
-
-module TermZ = struct
-  type t = Vpl.WrapperTraductors.Interface(Vpl.Domains.UncertifiedZ.Coeff).Term.t
-
-  let to_term t = t
-  let of_term t = t
-end
-
-module DZ = struct
-  include Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedZ) (IdentZ) (TermZ)
-end
-
-module DQ = struct
-  include Vpl.UserInterface.MakeCustom (Vpl.Domains.UncertifiedQ) (IdentQ) (TermQ)
-
-  module Coeff = struct
-    include Coeff
-
-    let of_rational x =
-      let num, den = Common.Number.Rational.to_int2 x in
-      Q.make (Z.of_int num) (Z.of_int den)
-    ;;
-
-    let to_rational x =
-      Common.Number.Rational.from_pair Q.(Z.to_int x.num, Z.to_int x.den)
-    ;;
-  end
-end
-
-type num_sol = DQ.t * DZ.t
-
-let convert_rel_to_vpl = function
-  | `Less -> Vpl.Cstr_type.LT
-  | `LessEq -> Vpl.Cstr_type.LE
+let rec reduce_rat_expr (state : _ state_interface) now time = function
+  | RConst c -> Const c
+  | RStateVar v -> Const (state.rational v)
+  | RInputVar v -> if String.equal v now then Const time else Variable v
+  | RITE _ ->
+    failwith "reduce_rat_expr: if-then-else should not occur in an atom"
+    (* TODO: remove this case on type level *)
+  | RBinOp (l, op, r) ->
+    Format.printf
+      ">>> %a %s %a\n"
+      (PP.rat_expr Format.pp_print_string Format.pp_print_string)
+      l
+      (Common.Expr.string_of_num_op op)
+      (PP.rat_expr Format.pp_print_string Format.pp_print_string)
+      r;
+    let l = reduce_rat_expr state now time l
+    and r = reduce_rat_expr state now time r in
+    (match l, r with
+     | Const l, Const r ->
+       Const
+         Common.Number.Rational.(
+           match op with
+           | `Add -> add l r
+           | `Sub -> sub l r
+           | `Mul -> mul l r
+           | `Div -> div l r)
+     | _ ->
+       failwith
+         "reduce_rat_expr: binary operation cannot add variable and constant, both have \
+          to be constant")
+  | RPeekFirstQueue q -> Const (Queue.peek (state.rat_queue q))
+  | RPeekLastQueue q -> Const (Queue.last (state.rat_queue q))
 ;;
 
-let intcomp_to_polyhedra (state : _ state_interface) inputs l rel r : DZ.Cond.t =
-  let rec interpret_int_expr = function
-    | IConst c -> DZ.Term.Cte (DZ.Coeff.of_int c)
-    | IStateVar var -> DZ.Term.Cte (DZ.Coeff.of_int (state.integer var))
-    | IInputVar var ->
-      print_endline var;
-      print_endline (Vpl.Var.to_string @@ IdentZ.toVar var);
-      DZ.Term.Var (IdentZ.toVar var)
-    | IBinOp (e1, op, e2) ->
-      let e1 = interpret_int_expr e1
-      and e2 = interpret_int_expr e2 in
-      (match op with
-       | `Div -> DZ.Term.Div (e1, e2)
-       | `Add -> DZ.Term.Add (e1, e2)
-       | `Sub -> DZ.Term.Add (e1, DZ.Term.Opp e2)
-       | `Mul -> DZ.Term.Mul (e1, e2))
-    | IPeekFirstQueue q -> DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.peek @@ state.int_queue q)
-    | IPeekLastQueue q -> DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.last @@ state.int_queue q)
-    | IntQueueLength q ->
-      DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.length @@ state.int_queue q)
-    | RatQueueLength q ->
-      DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.length @@ state.rat_queue q)
-    | IITE { cond; if_true; if_false } ->
-      if Full.eval_bool state inputs cond
-      then interpret_int_expr if_true
-      else interpret_int_expr if_false
-  in
-  let l = interpret_int_expr l
-  and r = interpret_int_expr r
-  and rel = convert_rel_to_vpl rel in
-  DZ.Cond.Atom (l, rel, r)
+let rec reduce_int_expr (state : _ state_interface) = function
+  | IConst c -> Const c
+  | IStateVar v -> Const (state.integer v)
+  | IInputVar v -> Variable v
+  | IITE _ ->
+    failwith "reduce_int_expr: if-then-else should not occur in an atom"
+    (* TODO: remove this case on type level *)
+  | IBinOp (l, op, r) ->
+    let l = reduce_int_expr state l
+    and r = reduce_int_expr state r in
+    (match l, r with
+     | Const l, Const r ->
+       Const
+         Common.Number.Integer.(
+           match op with
+           | `Add -> add l r
+           | `Sub -> sub l r
+           | `Mul -> mul l r
+           | `Div -> div l r)
+     | _ ->
+       failwith
+         "reduce_int_expr: binary operation cannot add variable and constant, both have \
+          to be constant")
+  | IPeekFirstQueue q -> Const (Queue.peek (state.int_queue q))
+  | IPeekLastQueue q -> Const (Queue.last (state.int_queue q))
+  | IntQueueLength q -> Const (Queue.length @@ state.int_queue q)
+  | RatQueueLength q -> Const (Queue.length @@ state.rat_queue q)
 ;;
 
-let ratcomp_to_polyhedra (state : _ state_interface) inputs now time l rel r : DQ.Cond.t =
-  let rec interpret_rat_expr = function
-    | RConst c -> DQ.Term.Cte (DQ.Coeff.of_rational c)
-    | RStateVar var -> DQ.Term.Cte (DQ.Coeff.of_rational (state.rational var))
-    | RInputVar var ->
-      if String.equal var now
-      then DQ.Term.Cte (DQ.Coeff.of_rational time)
-      else DQ.Term.Var (IdentQ.toVar var)
-    | RBinOp (e1, op, e2) ->
-      let e1 = interpret_rat_expr e1
-      and e2 = interpret_rat_expr e2 in
-      (match op with
-       | `Div -> DQ.Term.Div (e1, e2)
-       | `Add -> DQ.Term.Add (e1, e2)
-       | `Sub -> DQ.Term.Add (e1, DQ.Term.Opp e2)
-       | `Mul -> DQ.Term.Mul (e1, e2))
-    | RPeekFirstQueue q ->
-      DQ.Term.Cte (DQ.Coeff.of_rational @@ Queue.peek @@ state.rat_queue q)
-    | RPeekLastQueue q ->
-      DQ.Term.Cte (DQ.Coeff.of_rational @@ Queue.last @@ state.rat_queue q)
-    | RITE { cond; if_true; if_false } ->
-      if Full.eval_bool state inputs cond
-      then interpret_rat_expr if_true
-      else interpret_rat_expr if_false
-  in
-  let l = interpret_rat_expr l
-  and r = interpret_rat_expr r
-  and rel = convert_rel_to_vpl rel in
-  DQ.Cond.Atom (l, rel, r)
+let bdd_to_string ~var_to_string guard =
+  match inspect guard with
+  | BTrue -> "true"
+  | BFalse -> "false"
+  | BIf (v, _, _) -> var_to_string v
+;;
+
+let bdd_to_string_nested ~var_to_string guard =
+  match inspect guard with
+  | BTrue -> "true"
+  | BFalse -> "false"
+  | BIf (v, high, low) ->
+    Printf.sprintf
+      "if %s then \n%s\nelse\n%s"
+      (var_to_string v)
+      (bdd_to_string ~var_to_string high)
+      (bdd_to_string ~var_to_string low)
+;;
+
+let atom_to_string atoms i =
+  let atom = Dynarray.get atoms i in
+  Format.asprintf "%a" (PP.bool_atom Format.pp_print_string Format.pp_print_string) atom
+;;
+
+let some_add_q q o =
+  let* branch, z = o in
+  Some (branch, q, z)
+;;
+
+let some_add_z z o =
+  let* branch, q = o in
+  Some (branch, q, z)
 ;;
 
 (** Collects numerical relations into Q and Z polyhedras. Assumes that state and clock were already followed. *)
-let rec derive_num_inputs now state inputs time atoms guard (old_q, old_z) =
+let rec derive_num_inputs
+          now
+          state
+          inputs
+          time
+          atoms
+          guard
+          required_ints
+          required_rats
+          (old_q, old_z)
+  =
+  Format.printf
+    "~~~ %s\n"
+    (bdd_to_string_nested ~var_to_string:(atom_to_string atoms) guard);
   match inspect guard with
-  | BTrue -> old_q, old_z
-  | BFalse -> DQ.bottom, DZ.bottom
+  | BTrue -> Some (old_q, old_z)
+  | BFalse -> None
   | BIf (v, high, low) ->
-    (* Because we interpret CCSL, the high and low branches after applying should never be true at the same time. *)
     let atom = Dynarray.get atoms v in
-    (match atom with
-     | BStateVar _ | BInputVar _ ->
-       failwith
-         "derive_num_inputs: state and input Booleans are supposed to be already met"
-     | IntComp (l, rel, r) ->
-       let cond = intcomp_to_polyhedra state inputs l rel r in
-       let z = DZ.assume (DZ.of_cond cond) old_z in
-       let inv_z = DZ.assume (DZ.of_cond (DZ.Cond.Not cond)) old_z in
-       (match DZ.is_bottom z, DZ.is_bottom inv_z with
-        | true, false -> derive_num_inputs now state inputs time atoms low (old_q, inv_z)
-        | false, true -> derive_num_inputs now state inputs time atoms high (old_q, z)
-        | false, false ->
-          if Bdd.is_false high
-          then derive_num_inputs now state inputs time atoms low (old_q, inv_z)
-          else if Bdd.is_false low
-          then derive_num_inputs now state inputs time atoms high (old_q, z)
-          else
-            failwith
-              "derive_num_inputs: there should not be a choice in the diagram for \
-               rational values"
-        | true, true -> DQ.bottom, DZ.bottom)
-     | RatComp (l, rel, r) ->
-       let cond = ratcomp_to_polyhedra state inputs now time l rel r in
-       let q = DQ.assume (DQ.of_cond cond) old_q in
-       let inv_q = DQ.assume (DQ.of_cond (DQ.Cond.Not cond)) old_q in
-       (match DQ.is_bottom q, DQ.is_bottom inv_q with
-        | true, false -> derive_num_inputs now state inputs time atoms low (inv_q, old_z)
-        | false, true -> derive_num_inputs now state inputs time atoms high (q, old_z)
-        | false, false ->
-          if Bdd.is_false high
-          then derive_num_inputs now state inputs time atoms low (inv_q, old_z)
-          else if Bdd.is_false low
-          then derive_num_inputs now state inputs time atoms high (q, old_z)
-          else
-            failwith
-              "derive_num_inputs: there should not be a choice in the diagram for \
-               rational values"
-        | true, true -> DQ.bottom, DZ.bottom))
+    let branch_choice =
+      if Bdd.is_false high
+      then Some false
+      else if Bdd.is_false low
+      then Some true
+      else None
+    in
+    let* branch, q, z =
+      match atom with
+      | BStateVar _ | BInputVar _ ->
+        failwith
+          "derive_num_inputs: state and input Booleans are supposed to be already \
+           factored out"
+      | IntComp (l, rel, r) ->
+        let l = reduce_int_expr state l
+        and r = reduce_int_expr state r in
+        (match l, r with
+         | Const l, Const r ->
+           let result =
+             Common.Expr.do_rel ~compare:Common.Number.Integer.compare rel l r
+           in
+           Some (result, old_q, old_z)
+         | Variable var, Const r ->
+           some_add_q old_q @@ NI.choose_branch ~flip:false branch_choice var rel r old_z
+         | Const l, Variable var ->
+           some_add_q old_q @@ NI.choose_branch ~flip:true branch_choice var rel l old_z
+         | Variable _, Variable _ ->
+           failwith "derive_num_inputs: cannot derive from diagonal relations")
+      | RatComp (l, rel, r) ->
+        let l = reduce_rat_expr state now time l
+        and r = reduce_rat_expr state now time r in
+        (match l, r with
+         | Const l, Const r ->
+           Format.printf
+             "we do comparison %s %s %s\n"
+             (Common.Number.Rational.to_string l)
+             (Common.Expr.show_num_rel (rel :> Common.Expr.num_rel))
+             (Common.Number.Rational.to_string r);
+           let result =
+             Common.Expr.do_rel ~compare:Common.Number.Rational.compare rel l r
+           in
+           Some (result, old_q, old_z)
+         | Variable var, Const r ->
+           some_add_z old_z @@ RI.choose_branch ~flip:false branch_choice var rel r old_q
+         | Const l, Variable var ->
+           some_add_z old_z @@ RI.choose_branch ~flip:true branch_choice var rel l old_q
+         | Variable v1, Variable v2 ->
+           failwithf
+             "derive_num_inputs: cannot derive from diagonal relations, %s %s %s\n"
+             v1
+             (Common.Expr.string_of_num_rel rel)
+             v2)
+      | IntVarMarker v ->
+        let choice =
+          match branch_choice with
+          | Some branch -> branch
+          | None -> false
+        in
+        if choice then required_ints := VarMap.add v () !required_ints;
+        Some (choice, old_q, old_z)
+      | RatVarMarker v ->
+        let choice =
+          match branch_choice with
+          | Some branch -> branch
+          | None -> false
+        in
+        if choice then required_rats := VarMap.add v () !required_rats;
+        Some (choice, old_q, old_z)
+    in
+    let branch = if branch then high else low in
+    derive_num_inputs now state inputs time atoms branch required_ints required_rats (q, z)
 ;;
 
 let accept_solution
@@ -562,11 +657,10 @@ let accept_solution
       state
       (clock_assignments, time)
   =
+  print_endline @@ VarMap.to_string Fun.id Bool.to_string clock_assignments;
   let input_int =
-    { rational =
-        (fun _ -> failwith "accept_solution: rational inputs should not be accessed")
-    ; integer =
-        (fun _ -> failwith "accept_solution: integer inputs should not be accessed")
+    { rational = (fun _ -> failwith "accept_solution: rational inputs should not be used")
+    ; integer = (fun _ -> failwith "accept_solution: integer inputs should not be used")
     ; bool = (fun v -> VarMap.value ~default:false v clock_assignments)
     }
   in
@@ -577,56 +671,41 @@ let accept_solution
   let partial_guard =
     factor_out_boolean_inputs atoms input_int threshold2 partial_guard
   in
-  let q, z =
-    derive_num_inputs now state_int input_int time atoms partial_guard (DQ.top, DZ.top)
-  in
-  print_endline (DQ.to_string String.to_string q);
-  print_endline (DZ.to_string String.to_string z);
+  let required_ints = ref VarMap.empty
+  and required_rats = ref VarMap.empty in
   let* q, z =
-    try Some (DQ.spawn q, DZ.spawn z) with
-    | Failure s ->
-      print_endline s;
-      None
+    derive_num_inputs
+      now
+      state_int
+      input_int
+      time
+      atoms
+      partial_guard
+      required_ints
+      required_rats
+      (VarMap.empty, VarMap.empty)
   in
-  let rationals =
-    q
-    |> Vpl.Vector.Rat.toList
-    |> List.to_seq
-    |> Seq.map (fun (var, value) -> IdentQ.ofVar var, DQ.Coeff.to_rational value)
-    |> VarMap.of_seq
-  in
+  let rationals = VarMap.filter_map (fun _ v -> RI.as_singleton v) q
+  and integers = VarMap.filter_map (fun _ v -> NI.as_singleton v) z in
+  print_endline @@ VarMap.to_string Fun.id Int.to_string integers;
   let rationals = VarMap.add now time rationals in
-  print_endline (Vpl.Vector.Rat.to_string Vpl.Var.to_string z);
-  IdentZ.print_maps ();
-  z
-  |> Vpl.Vector.Rat.toList
-  |> List.to_seq
-  |> Seq.iter (fun (var, _) -> Printf.printf "unknown var: %s" (Vpl.Var.to_string var));
-  let integers =
-    z
-    |> Vpl.Vector.Rat.toList
-    |> List.to_seq
-    |> Seq.map (fun (var, value) ->
-      Printf.printf "unknown var: %s" (Vpl.Var.to_string var);
-      IdentZ.ofVar var, Option.get (DQ.Coeff.to_int value Vpl.Scalar_type.Up))
-    |> VarMap.of_seq
-  in
   let input_int =
     { integer =
         (fun v ->
           try VarMap.find v integers with
-          | Not_found -> failwithf "not found: %s" v
-          | _ -> failwith "something")
+          | Not_found -> failwithf "not found: %s" v)
     ; rational =
         (fun v ->
           try VarMap.find v rationals with
-          | Not_found -> failwithf "not found: %s" v
-          | _ -> failwith "something else")
+          | Not_found -> failwithf "not found: %s" v)
     ; bool = (fun v -> VarMap.value ~default:false v clock_assignments)
     }
   in
   print_endline "is it in the assignments?";
-  Some (Transition.apply_assignments state_int input_int state assignments)
+  List.print
+    (Format.printf "%a\n" (PP.assignment Format.pp_print_string Format.pp_print_string))
+    assignments;
+  Some (Transition.apply_assignments state_int input_int default_state assignments)
 ;;
 
 let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =

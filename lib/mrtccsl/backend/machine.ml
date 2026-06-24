@@ -170,16 +170,18 @@ let delay_as_machine out arg delay base =
 
 (** Implements logical delay as abstract machine. Important difference with [delay_as_machine]: checks correctness of [delay] between [out] and [arg] (in terms of [base]) {e at the moment when [out] ticks}. *)
 let delay_as_late_acceptor out arg delay base =
+  let delay_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) delay in
   let queue_name, q, out, arg, delay, base = delay_vars out arg delay base in
   let positive_q = ilength queue_name >= i0 in
   let non_empty_q = ilength queue_name > i0 in
   let guard =
     bite non_empty_q (ifirst queue_name <= delay) t
-    && i0 <= delay
+    (* && i0 <= delay *)
     &&
     (* clock [out] will happen when *)
     out
-    <=> (base (* [base] ticks and *)
+    <=> (delay_present
+         && base (* [base] ticks and *)
          && bite
               non_empty_q
               (* if the counter in the queue is equal to the [delay], or *)
@@ -306,7 +308,7 @@ let periodic_as_machine out base period error offset =
   &&& (i0 <= period_counter)
 ;;
 
-let periodic_as_late_acceptor out base period error offset =
+let periodic_as_late_acceptor out base period error_arg offset =
   let period_counter_name =
     Printf.sprintf
       "period[%s,%s,%s]"
@@ -318,17 +320,21 @@ let periodic_as_late_acceptor out base period error offset =
   and out = binvar out
   and base = binvar base
   and offset = iparam_to_expr offset
-  and period = IConst period
-  and error = iparam_to_expr error
-  and nominal = bsvar nominal_name in
+  and period_minus_one = IConst Integer.(period - 1)
+  (* the period is preemptively decreased *)
+  and error = iparam_to_expr error_arg
+  and nominal = bsvar nominal_name
+  and error_present =
+    Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error_arg
+  in
   bite
     nominal
-    ((period_counter == error && base) <=> out)
+    ((error_present && period_counter == error && base) <=> out)
     (bite (period_counter == offset) (out <=> base) !out)
   |-> [ period_counter_name
         = iite
             out
-            (period - i1)
+            period_minus_one
             (iite
                base
                (iite nominal (period_counter - i1) (period_counter + i1))
@@ -458,16 +464,18 @@ let rtdelay_as_machine ~now out arg delay =
 (* TODO: another way to do acceptance is to capture symbolic value of the variable as entrace and check satisfaction when out.*)
 
 let rtdelay_as_late_acceptor ~now out arg delay =
+  let delay_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) delay in
   let queue_name, queue, out, arg, delay = rtdelay_vars out arg delay in
   let push = rqite arg (rpush queue now) queue in
   let pop = rqite out (rpop push) push in
   let update = [ queue_name =|. pop ] in
   bite
     (i0 < rlength queue_name)
-    ((* delay is positive in non-empty queue *)
-     r0 <. delay
+    (delay_present
+     (* delay is positive in non-empty queue *)
+     && r0 <. delay
      (* [now] cannot progress past first in the queue *)
-     && now <=. rfirst queue_name +. delay
+     && now -. rfirst queue_name <=. delay
      (* force tick if [now] and first in the queue coincide *)
      && now -. rfirst queue_name ==. delay <=> out)
     (out <=> (arg && delay ==. r0))
@@ -486,42 +494,47 @@ let rtperiodic_vars out period error offset =
 ;;
 
 let drift_periodic_as_machine ~now out period error offset =
+  let error_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error in
   let last_name, last, out, period, error, offset =
     rtperiodic_vars out period error offset
   in
-  let next_out = last +. period +. error in
   let update = [ last_name =. rite out now last ] in
   bite
     (last >=. r0)
-    ((* forbid progress ahead of when [out] should occur *)
-     now <=. next_out
+    (error_present
+     (* forbid progress ahead of when [out] should occur *)
+     && now -. last -. period <=. error
      (* [out] occurs precisely when [last + period + error] is *)
-     && out <=> (next_out ==. now))
+     && out <=> (now -. last -. period ==. error))
     (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
   |-> update
   &&& t
 ;;
 
 let jitter_periodic_as_machine ~now out period error offset =
+  let error_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error in
   let last_name = Printf.sprintf "last[%s]" out in
   let out = binvar out
   and period = rconst period
   and error = rparam_to_expr error
   and offset = rparam_to_expr offset
   and last = rsvar last_name in
-  let next_out = last +. period +. error in
   bite
     (last >=. r0)
-    ((* forbid progress ahead of when [out] should occur *)
-     now <=. next_out
+    (error_present
+     (* forbid progress ahead of when [out] should occur *)
+     && now -. last -. period <=. error
      (* [out] occurs precisely when [last + period + error] is *)
-     && out <=> (next_out ==. now))
+     && out <=> (now -. last -. period ==. error))
     (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
   |-> [ last_name =. rite out (rite (last >=. r0) (last +. period) offset) last ]
   &&& t
 ;;
 
 let sporadic_as_machine ~now out at_least strict =
+  let at_least_present =
+    Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) at_least
+  in
   let last_name = Printf.sprintf "last[%s]" out in
   let out = binvar out
   and at_least = rparam_to_expr at_least
@@ -531,7 +544,8 @@ let sporadic_as_machine ~now out at_least strict =
     (last >=. r0)
     ((* is [out] occurs then current time should depass previous + delay. *)
      out
-     ==> if strict then last +. at_least <. now else last +. at_least <=. now)
+     ==> (at_least_present
+          && if strict then at_least <. now -. last else at_least <=. now -. last))
     t
   |-> update
   &&& t
@@ -590,12 +604,15 @@ let empty =
 let numerical_relation_as_machine
       invar
       of_param
+      marker
       comp
       (Ccsl.Language.Cstr.NumRelation (var, rel, param))
   =
   let e1 = invar var
   and e2 = of_param param in
   let guard =
+    marker var
+    ==>
     match rel with
     | `Less -> comp (e1, `Less, e2)
     | `LessEq -> comp (e1, `LessEq, e2)
@@ -641,11 +658,11 @@ module Literal = struct
         (List.to_seq clock)
     and int_relations =
       Seq.map
-        (numerical_relation_as_machine iinvar iparam_to_expr icomp)
+        (numerical_relation_as_machine iinvar iparam_to_expr ipresent icomp)
         (List.to_seq integer)
     and rat_relations =
       Seq.map
-        (numerical_relation_as_machine rinvar rparam_to_expr rcomp)
+        (numerical_relation_as_machine rinvar rparam_to_expr rpresent rcomp)
         (List.to_seq duration)
     in
     let combined_machine =

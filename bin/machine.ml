@@ -19,13 +19,15 @@ let () =
                 (* Periodic
                   { out = "b"; period = 5; error = Var "e"; offset = Const 0; base = "r" } *)
                 (* Exclusion { args = [ "a"; "b" ]; choice = Some "c" } *)
-                Periodic
-                  { out = "o"; base = "b"; period = 3; error = var "e"; offset = const 2 }
+                (* Periodic
+                  { out = "o"; base = "b"; period = 3; error = var "e"; offset = const 2 } *)
+                   Delay { out = "o"; arg = "i"; delay = const 0; base = "i" }
               ]
         ; probabilistic = []
         ; duration = []
         ; integer =
-            [ NumRelation ("e", `LessEq, Const 1)
+            [
+               NumRelation ("e", `LessEq, Const 1)
             ; NumRelation ("e", `MoreEq, Const (-1))
             ]
         }

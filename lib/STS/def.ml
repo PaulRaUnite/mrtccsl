@@ -30,7 +30,7 @@ type 'atom bool_expr =
   | BNeq of 'atom bool_expr * 'atom bool_expr
   | BImply of 'atom bool_expr * 'atom bool_expr
   | BITE of ('atom bool_expr, 'atom bool_expr) ite
-[@@deriving compare, sexp, map, fold]
+[@@deriving compare, sexp, fold]
 
 type num_rel =
   [ `Less
@@ -43,6 +43,10 @@ type ('sv, 'iv) bool_atom =
   | BInputVar of 'iv
   | IntComp of ('sv, 'iv) int_expr * num_rel * ('sv, 'iv) int_expr
   | RatComp of ('sv, 'iv) rat_expr * num_rel * ('sv, 'iv) rat_expr
+  | IntVarMarker of 'iv
+  (** Marks whenever the integer variable ['iv] should be considered present. *)
+  | RatVarMarker of 'iv
+  (** Marks whenever the rational variable ['iv] should be considered present. *)
 
 (** Type of integer expressions. *)
 and ('sv, 'iv) int_expr =
@@ -116,6 +120,22 @@ type ('sv, 'iv) t =
 @returns a machine that satifies both all guards
 *)
 
+let rec map_bool_expr fa = function
+  | BConst c -> BConst c
+  | BAtom a -> BAtom (fa a)
+  | BNot e -> BNot (map_bool_expr fa e)
+  | BAnd es -> BAnd (List.map (map_bool_expr fa) es)
+  | BOr es -> BOr (List.map (map_bool_expr fa) es)
+  | BEq (x, y) -> BEq (map_bool_expr fa x, map_bool_expr fa y)
+  | BNeq (x, y) -> BNeq (map_bool_expr fa x, map_bool_expr fa y)
+  | BImply (x, y) -> BImply (map_bool_expr fa x, map_bool_expr fa y)
+  | BITE { cond; if_true; if_false } ->
+    let cond = map_bool_expr fa cond in
+    let if_true = map_bool_expr fa if_true in
+    let if_false = map_bool_expr fa if_false in
+    BITE { cond; if_true; if_false }
+;;
+
 let visit_atoms visit { guard; _ } = ignore @@ map_bool_expr visit guard
 
 type atom_index = (string, (string, string) bool_atom list) Hashtbl.t
@@ -161,9 +181,9 @@ module PP = struct
   let rec bool_expr pp_atom fmt = function
     | BConst b -> Format.fprintf fmt "%b" b
     | BAtom a -> Format.fprintf fmt "%a" pp_atom a
-    | BNot e -> Format.fprintf fmt "%a" (bool_expr pp_atom) e
-    | BAnd es -> pp_list ~sep:"&&" (bool_expr pp_atom) fmt es
-    | BOr es -> pp_list ~sep:"||" (bool_expr pp_atom) fmt es
+    | BNot e -> Format.fprintf fmt "~%a" (bool_expr pp_atom) e
+    | BAnd es -> pp_list ~sep:" && " (bool_expr pp_atom) fmt es
+    | BOr es -> pp_list ~sep:" || " (bool_expr pp_atom) fmt es
     | BEq (x, y) ->
       Format.fprintf fmt "%a = %a" (bool_expr pp_atom) x (bool_expr pp_atom) y
     | BNeq (x, y) ->
@@ -173,7 +193,7 @@ module PP = struct
     | BITE { cond; if_true; if_false } ->
       Format.fprintf
         fmt
-        "if %a then %a else %a"
+        "(if %a then %a else %a)"
         (bool_expr pp_atom)
         cond
         (bool_expr pp_atom)
@@ -203,6 +223,7 @@ module PP = struct
         (Expr.string_of_num_rel op)
         (rat_expr pp_sv pp_iv)
         y
+    | IntVarMarker v | RatVarMarker v -> Format.fprintf fmt "def(%a)" pp_iv v
 
   and int_expr pp_sv pp_iv fmt = function
     | IConst c -> Format.fprintf fmt "%i" c
@@ -220,7 +241,7 @@ module PP = struct
     | IITE { cond; if_true; if_false } ->
       Format.fprintf
         fmt
-        "if %a then %a else %a"
+        "(if %a then %a else %a)"
         (bool_expr @@ bool_atom pp_sv pp_iv)
         cond
         (int_expr pp_sv pp_iv)
@@ -247,7 +268,7 @@ module PP = struct
     | RITE { cond; if_true; if_false } ->
       Format.fprintf
         fmt
-        "if %a then %a else %a"
+        "(if %a then %a else %a)"
         (bool_expr @@ bool_atom pp_sv pp_iv)
         cond
         (rat_expr pp_sv pp_iv)
@@ -256,5 +277,65 @@ module PP = struct
         if_false
     | RPeekFirstQueue v -> Format.fprintf fmt "first(%a)" pp_sv v
     | RPeekLastQueue v -> Format.fprintf fmt "last(%a)" pp_sv v
+  ;;
+
+  let rec rat_queue_expr pp_sv pp_iv fmt = function
+    | RQVar v -> Format.fprintf fmt "%a" pp_sv v
+    | RPushQueue (q, v) ->
+      Format.fprintf
+        fmt
+        "push(%a, %a)"
+        (rat_queue_expr pp_sv pp_iv)
+        q
+        (rat_expr pp_sv pp_iv)
+        v
+    | RPopQueue q -> Format.fprintf fmt "pop(%a)" (rat_queue_expr pp_sv pp_iv) q
+    | RQITE { cond; if_true; if_false } ->
+      Format.fprintf
+        fmt
+        "(if %a then %a else %a)"
+        (bool_expr @@ bool_atom pp_sv pp_iv)
+        cond
+        (rat_queue_expr pp_sv pp_iv)
+        if_true
+        (rat_queue_expr pp_sv pp_iv)
+        if_false
+  ;;
+
+  let rec int_queue_expr pp_sv pp_iv fmt = function
+    | IQVar v -> Format.fprintf fmt "%a" pp_sv v
+    | IPushQueue (q, v) ->
+      Format.fprintf
+        fmt
+        "push(%a, %a)"
+        (int_queue_expr pp_sv pp_iv)
+        q
+        (int_expr pp_sv pp_iv)
+        v
+    | IPopQueue q -> Format.fprintf fmt "pop(%a)" (int_queue_expr pp_sv pp_iv) q
+    | IQITE { cond; if_true; if_false } ->
+      Format.fprintf
+        fmt
+        "(if %a then %a else %a)"
+        (bool_expr @@ bool_atom pp_sv pp_iv)
+        cond
+        (int_queue_expr pp_sv pp_iv)
+        if_true
+        (int_queue_expr pp_sv pp_iv)
+        if_false
+    | IIncreaseAllQueue q -> Format.fprintf fmt "inc(%a)" (int_queue_expr pp_sv pp_iv) q
+    | IDecreaseAllQueue q -> Format.fprintf fmt "dec(%a)" (int_queue_expr pp_sv pp_iv) q
+  ;;
+
+  let expr pp_sv pp_iv fmt = function
+    | BoolExpr e -> bool_expr (bool_atom pp_sv pp_iv) fmt e
+    | IntExpr e -> int_expr pp_sv pp_iv fmt e
+    | RatExpr e -> rat_expr pp_sv pp_iv fmt e
+    | RatQueueExpr e -> rat_queue_expr pp_sv pp_iv fmt e
+    | IntQueueExpr e -> int_queue_expr pp_sv pp_iv fmt e
+  ;;
+
+  let assignment pp_sv pp_iv fmt (v, e) =
+    Format.fprintf fmt "%a := %a" pp_sv v (expr pp_sv pp_iv) e
   ;;
 end

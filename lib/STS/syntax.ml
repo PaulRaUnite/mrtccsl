@@ -23,6 +23,9 @@ let iitec cond if_true if_false =
   IITE { cond; if_true = iconst if_true; if_false = iconst if_false }
 ;;
 
+let ipresent var = BAtom (IntVarMarker var)
+let rpresent var = BAtom (RatVarMarker var)
+
 let ilength q = IntQueueLength q
 let rlength q = RatQueueLength q
 let i0 = iconst 0
@@ -81,6 +84,7 @@ let ( <!> ) x y = BNeq (x, y)
 
 (** Boolean negation. *)
 let ( ! ) x = BNot x
+
 
 (** Boolean if-then-else. *)
 let bite cond if_true if_false = BITE { cond; if_true; if_false }

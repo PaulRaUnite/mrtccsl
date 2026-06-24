@@ -31,6 +31,18 @@ let rec eval_bool_atom
       rel
       (eval_rational state inputs e1)
       (eval_rational state inputs e2)
+  | IntVarMarker (v) ->
+    (try
+       ignore (inputs.integer v);
+       true
+     with
+     | _ -> false)
+  | RatVarMarker (v) ->
+    (try
+       ignore (inputs.rational v);
+       true
+     with
+     | _ -> false)
 
 (** Evaluate Boolean formula given state and input values. *)
 and eval_bool

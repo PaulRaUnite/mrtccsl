@@ -25,6 +25,8 @@ module type I = sig
   val inf : t
   val destr : t -> (bound * bound) option
   val constant_bounds : t -> (num * num) option
+
+  (** [inter x y] is intersection of [x] and [y]. *)
   val inter : t -> t -> t
 
   (** Is [x] subset of [y], [x <= y].**)
@@ -49,6 +51,7 @@ module type I = sig
   val is_right_unbound : t -> bool
   val is_any_unbound : t -> bool
   val of_rel : Expr.num_rel -> num -> t
+  val as_singleton : t -> num option
 
   include Sexplib0.Sexpable.S with type t := t
 end
@@ -252,6 +255,11 @@ module Make (N : Num) : I with type num = N.t = struct
     | `Less -> ninf_strict n
     | `MoreEq -> pinf n
     | `LessEq -> ninf n
+  ;;
+
+  let as_singleton = function
+    | Bound (Include x, Include y) when N.compare x y = 0 -> Some x
+    | _ -> None
   ;;
 end
 
