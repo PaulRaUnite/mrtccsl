@@ -1,5 +1,6 @@
 (* module Q = Common.Number.Rational *)
 open Common.Prelude
+open Common.Number
 
 let () =
   let _ = Bdd.init () in
@@ -19,16 +20,18 @@ let () =
                 (* Periodic
                   { out = "b"; period = 5; error = Var "e"; offset = Const 0; base = "r" } *)
                 (* Exclusion { args = [ "a"; "b" ]; choice = Some "c" } *)
-                (* Periodic
-                  { out = "o"; base = "b"; period = 3; error = var "e"; offset = const 2 } *)
-                   Delay { out = "o"; arg = "i"; delay = const 0; base = "i" }
+                Periodic
+                  { out = "o"; base = "b"; period = 3; error = var "e"; offset = const 2 }
+                (* Delay { out = "o"; arg = "i"; delay = var "e"; base = "i" } *)
+                (* RTdelay { arg = "i"; out = "o"; delay = var "t" } *)
               ]
         ; probabilistic = []
-        ; duration = []
+        ; duration =
+            [ (* NumRelation ("t", `LessEq, Const (Rational.of_int 3))
+            ; NumRelation ("t", `MoreEq, Const (Rational.of_int 1)) *) ]
         ; integer =
-            [
-               NumRelation ("e", `LessEq, Const 1)
-            ; NumRelation ("e", `MoreEq, Const (-1))
+            [ NumRelation ("e", `LessEq, Const 2)
+            ; NumRelation ("e", `MoreEq, Const (0))
             ]
         }
   in

@@ -282,7 +282,7 @@ let rec eval_bool_atom
     Dual.int_do_rel l r rel
   | RatComp (e1, rel, e2) ->
     Dual.rat_do_rel (eval_rational state inputs e1) (eval_rational state inputs e2) rel
-  | RatVarMarker _ | IntVarMarker _ -> DQZF.top, DQZF.bottom (* TODO: review *)
+  | RatVarMarker _ | IntVarMarker _ -> DQZF.top, DQZF.top (* TODO: review *)
 
 (** Paritally evaluate Boolean formula given state and input values. Returns conditions of when the function returns true and false. *)
 and eval_bool

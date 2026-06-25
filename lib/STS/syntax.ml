@@ -9,8 +9,20 @@ let ( > ) x y = BAtom (IntComp (y, `Less, x))
 let ( < ) x y = BAtom (IntComp (x, `Less, y))
 let ( >= ) x y = BAtom (IntComp (y, `LessEq, x))
 let ( <= ) x y = BAtom (IntComp (x, `LessEq, y))
-let ( == ) x y = BAnd [ BAtom (IntComp (x, `LessEq, y)); BAtom (IntComp (y, `LessEq, x)) ]
-let ( != ) x y = BOr [ BAtom (IntComp (x, `Less, y)); BAtom (IntComp (y, `Less, x)) ]
+
+let ( == ) x y =
+  BAnd
+    [ BAtom (IntComp (x, `LessEq, y))
+    ; BAtom (IntComp (y, `LessEq, x))
+    ; BNot
+        (BAnd
+           [ BNot (BAtom (IntComp (x, `LessEq, y)))
+           ; BNot (BAtom (IntComp (y, `LessEq, x)))
+           ])
+    ]
+;;
+
+let ( != ) x y = BNot (x == y)
 let iconst x = IConst x
 let ( + ) x y = IBinOp (x, `Add, y)
 let ( - ) x y = IBinOp (x, `Sub, y)
@@ -25,7 +37,6 @@ let iitec cond if_true if_false =
 
 let ipresent var = BAtom (IntVarMarker var)
 let rpresent var = BAtom (RatVarMarker var)
-
 let ilength q = IntQueueLength q
 let rlength q = RatQueueLength q
 let i0 = iconst 0
@@ -41,10 +52,18 @@ let ( >=. ) x y = BAtom (RatComp (y, `LessEq, x))
 let ( <=. ) x y = BAtom (RatComp (x, `LessEq, y))
 
 let ( ==. ) x y =
-  BAnd [ BAtom (RatComp (x, `LessEq, y)); BAtom (RatComp (y, `LessEq, x)) ]
+  BAnd
+    [ BAtom (RatComp (x, `LessEq, y))
+    ; BAtom (RatComp (y, `LessEq, x))
+    ; BNot
+        (BAnd
+           [ BNot (BAtom (RatComp (x, `LessEq, y)))
+           ; BNot (BAtom (RatComp (y, `LessEq, x)))
+           ])
+    ]
 ;;
 
-let ( !=. ) x y = BOr [ BAtom (RatComp (x, `Less, y)); BAtom (RatComp (y, `Less, x)) ]
+let ( !=. ) x y = BNot (x ==. y)
 let rconst x = RConst x
 let ( +. ) x y = RBinOp (x, `Add, y)
 let ( -. ) x y = RBinOp (x, `Sub, y)
@@ -84,7 +103,6 @@ let ( <!> ) x y = BNeq (x, y)
 
 (** Boolean negation. *)
 let ( ! ) x = BNot x
-
 
 (** Boolean if-then-else. *)
 let bite cond if_true if_false = BITE { cond; if_true; if_false }

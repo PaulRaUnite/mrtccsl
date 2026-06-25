@@ -11,6 +11,10 @@ module VarMap = struct
 
   let t_of_sexp conv s = list_of_sexp (pair_of_sexp string_of_sexp conv) s |> of_list
   let sexp_of_t conv m = to_list m |> sexp_of_list (sexp_of_pair sexp_of_string conv)
+
+  let pp pp fmt m =
+    m |> to_seq |> Seq.pp (fun fmt (k, v) -> Format.fprintf fmt "%s -> %a" k pp v) fmt
+  ;;
 end
 
 module Queue = struct
@@ -34,6 +38,7 @@ module Queue = struct
 
   let t_of_sexp conv s = list_of_sexp conv s
   let sexp_of_t conv q = sexp_of_list conv q
+  let pp pp fmt = Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ", ") pp fmt
 end
 
 open Sexplib0.Sexp_conv
@@ -46,7 +51,7 @@ type state =
   ; int_queues : int Queue.t VarMap.t (* [] *)
   ; rat_queues : Rational.t Queue.t VarMap.t (* [] *)
   }
-[@@deriving sexp]
+[@@deriving sexp, show]
 
 (** Default (unassigned/empty) state. *)
 let default_state =

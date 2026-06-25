@@ -182,8 +182,8 @@ module PP = struct
     | BConst b -> Format.fprintf fmt "%b" b
     | BAtom a -> Format.fprintf fmt "%a" pp_atom a
     | BNot e -> Format.fprintf fmt "~%a" (bool_expr pp_atom) e
-    | BAnd es -> pp_list ~sep:" && " (bool_expr pp_atom) fmt es
-    | BOr es -> pp_list ~sep:" || " (bool_expr pp_atom) fmt es
+    | BAnd es -> Format.fprintf fmt "(%a)" (pp_list ~sep:" && " (bool_expr pp_atom)) es
+    | BOr es -> Format.fprintf fmt "(%a)" (pp_list ~sep:" || " (bool_expr pp_atom)) es
     | BEq (x, y) ->
       Format.fprintf fmt "%a = %a" (bool_expr pp_atom) x (bool_expr pp_atom) y
     | BNeq (x, y) ->

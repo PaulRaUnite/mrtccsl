@@ -35,6 +35,24 @@ let rparam_to_string = Language.Cstr.unwrap_arg ~var:Fun.id ~const:Rational.to_s
 let iparam_to_expr = Language.Cstr.unwrap_arg ~var:iinvar ~const:iconst
 let rparam_to_expr = Language.Cstr.unwrap_arg ~var:rinvar ~const:rconst
 
+let sample_rat_marking clock arg =
+  Language.Cstr.unwrap_arg
+    ~var:(fun v ->
+      let sample = rpresent v in
+      clock <=> sample, !sample)
+    ~const:(fun _ -> t, t)
+    arg
+;;
+
+let sample_int_marking clock arg =
+  Language.Cstr.unwrap_arg
+    ~var:(fun v ->
+      let sample = ipresent v in
+      clock <=> sample, !sample)
+    ~const:(fun _ -> t, t)
+    arg
+;;
+
 (** Stateless constraints *)
 
 (** *)
@@ -169,25 +187,25 @@ let delay_as_machine out arg delay base =
 ;;
 
 (** Implements logical delay as abstract machine. Important difference with [delay_as_machine]: checks correctness of [delay] between [out] and [arg] (in terms of [base]) {e at the moment when [out] ticks}. *)
-let delay_as_late_acceptor out arg delay base =
-  let delay_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) delay in
-  let queue_name, q, out, arg, delay, base = delay_vars out arg delay base in
+let delay_as_late_acceptor out arg delay_arg base =
+  let queue_name, q, out, arg, delay, base = delay_vars out arg delay_arg base in
   let positive_q = ilength queue_name >= i0 in
   let non_empty_q = ilength queue_name > i0 in
+  let sample_delay, _ = sample_int_marking out delay_arg in
   let guard =
     bite non_empty_q (ifirst queue_name <= delay) t
     (* && i0 <= delay *)
-    &&
+    (* && out ==> delay_present *)
     (* clock [out] will happen when *)
-    out
-    <=> (delay_present
-         && base (* [base] ticks and *)
-         && bite
-              non_empty_q
-              (* if the counter in the queue is equal to the [delay], or *)
-              (ifirst queue_name == delay && i0 < delay)
-              (* [arg] and [base] ticked, and the [delay] is zero *)
-              (arg && delay == i0))
+    && sample_delay
+    && out
+       <=> (base (* [base] ticks and *)
+            && bite
+                 non_empty_q
+                 (* if the counter in the queue is equal to the [delay], or *)
+                 (ifirst queue_name == delay && i0 < delay)
+                 (* [arg] and [base] ticked, and the [delay] is zero *)
+                 (arg && delay == i0))
   in
   (* push into the queue [delay] value when [arg] ticks but only if there is no same element present (instead of Boolean latch variable) *)
   let push_queue =
@@ -195,7 +213,7 @@ let delay_as_late_acceptor out arg delay base =
   in
   (* pop the queue when [out] happens and the queue is not empty *)
   let pop_queue = iqite out (ipop push_queue) push_queue in
-  (* increase all counters in the queue [base] happens*)
+  (* increase all counters in the queue when [base] happens*)
   let increase_queue = iqite base (increase pop_queue) pop_queue in
   guard |-> [ queue_name =| increase_queue ] &&& positive_q
 ;;
@@ -308,29 +326,28 @@ let periodic_as_machine out base period error offset =
   &&& (i0 <= period_counter)
 ;;
 
-let periodic_as_late_acceptor out base period error_arg offset =
+let periodic_as_late_acceptor out base period error_arg offset_arg =
   let period_counter_name =
     Printf.sprintf
       "period[%s,%s,%s]"
       base
       (string_of_int period)
-      (iparam_to_string offset)
-  and nominal_name = Printf.sprintf "skip[%s,%s]" base (iparam_to_string offset) in
+      (iparam_to_string offset_arg)
+  and nominal_name = Printf.sprintf "skip[%s,%s]" base (iparam_to_string offset_arg) in
   let period_counter = IStateVar period_counter_name
   and out = binvar out
   and base = binvar base
-  and offset = iparam_to_expr offset
+  and offset = iparam_to_expr offset_arg
   and period_minus_one = IConst Integer.(period - 1)
   (* the period is preemptively decreased *)
   and error = iparam_to_expr error_arg
-  and nominal = bsvar nominal_name
-  and error_present =
-    Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error_arg
-  in
+  and nominal = bsvar nominal_name in
+  let sample_error, not_sample_error = sample_int_marking out error_arg
+  and sample_offset, not_sample_offset = sample_int_marking out offset_arg in
   bite
     nominal
-    ((error_present && period_counter == error && base) <=> out)
-    (bite (period_counter == offset) (out <=> base) !out)
+    (sample_error && not_sample_offset && (period_counter == error && base) <=> out)
+    (sample_offset && not_sample_error && (period_counter == offset && base) <=> out)
   |-> [ period_counter_name
         = iite
             out
@@ -463,22 +480,28 @@ let rtdelay_as_machine ~now out arg delay =
 
 (* TODO: another way to do acceptance is to capture symbolic value of the variable as entrace and check satisfaction when out.*)
 
-let rtdelay_as_late_acceptor ~now out arg delay =
-  let delay_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) delay in
-  let queue_name, queue, out, arg, delay = rtdelay_vars out arg delay in
+let rtdelay_as_late_acceptor ~now out arg delay_arg =
+  let queue_name, queue, out, arg, delay = rtdelay_vars out arg delay_arg in
+  let sample_delay =
+    Language.Cstr.unwrap_arg
+      ~var:(fun v -> out <=> rpresent v)
+      ~const:(fun _ -> t)
+      delay_arg
+  in
   let push = rqite arg (rpush queue now) queue in
   let pop = rqite out (rpop push) push in
   let update = [ queue_name =|. pop ] in
-  bite
-    (i0 < rlength queue_name)
-    (delay_present
-     (* delay is positive in non-empty queue *)
-     && r0 <. delay
-     (* [now] cannot progress past first in the queue *)
-     && now -. rfirst queue_name <=. delay
-     (* force tick if [now] and first in the queue coincide *)
-     && now -. rfirst queue_name ==. delay <=> out)
-    (out <=> (arg && delay ==. r0))
+  (sample_delay
+   && bite
+        (i0 < rlength queue_name)
+        (((* delay is positive in non-empty queue *)
+          r0 <. delay
+          (* [now] cannot progress past first in the queue *)
+          && now -. rfirst queue_name <=. delay
+          (* force tick if [now] and first in the queue coincide *)
+          && now -. rfirst queue_name ==. delay)
+         <=> out)
+        (out <=> (arg && delay ==. r0)))
   |-> update
   &&& t
 ;;
@@ -493,59 +516,69 @@ let rtperiodic_vars out period error offset =
   last_name, last, out, period, error, offset
 ;;
 
-let drift_periodic_as_machine ~now out period error offset =
-  let error_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error in
+let drift_periodic_as_machine ~now out period error_arg offset_arg =
   let last_name, last, out, period, error, offset =
-    rtperiodic_vars out period error offset
+    rtperiodic_vars out period error_arg offset_arg
+  in
+  let sample_error =
+    Language.Cstr.unwrap_arg
+      ~var:(fun v -> out <=> rpresent v)
+      ~const:(fun _ -> t)
+      error_arg
+  in
+  let sample_offset =
+    Language.Cstr.unwrap_arg
+      ~var:(fun v -> out <=> rpresent v)
+      ~const:(fun _ -> t)
+      offset_arg
   in
   let update = [ last_name =. rite out now last ] in
   bite
     (last >=. r0)
-    (error_present
+    (sample_error
      (* forbid progress ahead of when [out] should occur *)
      && now -. last -. period <=. error
      (* [out] occurs precisely when [last + period + error] is *)
      && out <=> (now -. last -. period ==. error))
-    (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
+    (sample_offset && now <=. offset && r0 <=. offset && out <=> (now ==. offset))
   |-> update
   &&& t
 ;;
 
-let jitter_periodic_as_machine ~now out period error offset =
-  let error_present = Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) error in
-  let last_name = Printf.sprintf "last[%s]" out in
-  let out = binvar out
-  and period = rconst period
-  and error = rparam_to_expr error
-  and offset = rparam_to_expr offset
-  and last = rsvar last_name in
+let jitter_periodic_as_machine ~now out period error_arg offset_arg =
+  let last_name, last, out, period, error, offset =
+    rtperiodic_vars out period error_arg offset_arg
+  in
+  let sample_error, not_sample_error = sample_rat_marking out error_arg in
+  let sample_offset, not_sample_offset = sample_rat_marking out offset_arg in
   bite
     (last >=. r0)
-    (error_present
+    (sample_error
+     && not_sample_offset
      (* forbid progress ahead of when [out] should occur *)
      && now -. last -. period <=. error
      (* [out] occurs precisely when [last + period + error] is *)
      && out <=> (now -. last -. period ==. error))
-    (now <=. offset && r0 <=. offset && out <=> (now ==. offset))
+    (sample_offset
+     && not_sample_error
+     && now <=. offset
+     && r0 <=. offset
+     && out <=> (now ==. offset))
   |-> [ last_name =. rite out (rite (last >=. r0) (last +. period) offset) last ]
   &&& t
 ;;
 
-let sporadic_as_machine ~now out at_least strict =
-  let at_least_present =
-    Language.Cstr.unwrap_arg ~var:ipresent ~const:(fun _ -> t) at_least
-  in
+let sporadic_as_machine ~now out at_least_arg strict =
   let last_name = Printf.sprintf "last[%s]" out in
   let out = binvar out
-  and at_least = rparam_to_expr at_least
+  and at_least = rparam_to_expr at_least_arg
   and last = rsvar last_name in
   let update = [ last_name =. rite out now last ] in
   bite
     (last >=. r0)
     ((* is [out] occurs then current time should depass previous + delay. *)
      out
-     ==> (at_least_present
-          && if strict then at_least <. now -. last else at_least <=. now -. last))
+     ==> if strict then at_least <. now -. last else at_least <=. now -. last)
     t
   |-> update
   &&& t
@@ -604,15 +637,13 @@ let empty =
 let numerical_relation_as_machine
       invar
       of_param
-      marker
+      _marker
       comp
       (Ccsl.Language.Cstr.NumRelation (var, rel, param))
   =
   let e1 = invar var
   and e2 = of_param param in
   let guard =
-    marker var
-    ==>
     match rel with
     | `Less -> comp (e1, `Less, e2)
     | `LessEq -> comp (e1, `LessEq, e2)
