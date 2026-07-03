@@ -2,7 +2,8 @@ open Common
 open Mrtccsl
 open Prelude
 module A = Backend.Naive.Make (String) (Number.Rational)
-module ST = Backend.Naive.Strategy (A)
+module NumStrat = Backend.Strategy.Num (Number.Rational) (A.NI)
+module LabelStrat = Backend.Strategy.Solution (A.L) (A.NI)
 module Trace = Common.Trace.MakeIO (Number.Rational) (A.L)
 open Number.Rational
 
@@ -39,9 +40,9 @@ let rec random_exp l r =
 ;;
 
 let random_strat ~rounding_error ~upper_bound =
-  ST.Solution.refuse_empty
-  @@ ST.Solution.random_label
-       (ST.Num.random_leap
+  LabelStrat.refuse_empty
+  @@ LabelStrat.random_label
+       (NumStrat.random_leap
           ~upper_bound
           ~ceil:(round_up rounding_error)
           ~floor:(round_down rounding_error)
@@ -247,7 +248,11 @@ let simulate ~config m =
 ;;
 
 let cmd =
-  Cmd.v (Cmd.info "simulate" ~version ~doc:"Simulate a CCSL+ specification using \"naive\" backend.")
+  Cmd.v
+    (Cmd.info
+       "simulate"
+       ~version
+       ~doc:"Simulate a CCSL+ specification using \"naive\" backend.")
   @@ Term.ret
   @@ let+ specification = spec_file_arg
      and+ output_dir = output_dir_arg

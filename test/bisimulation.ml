@@ -50,11 +50,12 @@ module DiagramBackend = struct
   end
 end
 
-module ST = Backend.Naive.Strategy (NaiveBackend)
+module NumStrat = Backend.Strategy.Num (NaiveBackend.N) (NaiveBackend.NI)
+module LabelStrat = Backend.Strategy.Solution (NaiveBackend.L) (NaiveBackend.NI)
 open Number
 
 let leap_strat ~rounding_error ~upper_bound =
-  ST.Num.random_leap
+  NumStrat.random_leap
     ~upper_bound
     ~ceil:(Rational.round_up rounding_error)
     ~floor:(Rational.round_down rounding_error)
@@ -62,8 +63,8 @@ let leap_strat ~rounding_error ~upper_bound =
 ;;
 
 let random_strat ~rounding_error ~upper_bound =
-  ST.Solution.refuse_empty
-  @@ ST.Solution.random_label (leap_strat ~rounding_error ~upper_bound)
+  LabelStrat.refuse_empty
+  @@ LabelStrat.random_label (leap_strat ~rounding_error ~upper_bound)
 ;;
 
 let specs =
@@ -84,26 +85,14 @@ let specs =
 let rounding_error = Rational.of_frac 1 1000
 let upper_bound = Rational.of_int 1000
 
-(* TODO: cannot use the same strategies in both native and diagram backends *)
-let diagram_leap cond =
-  let open Backend.Machine.Diagram.Simulation.RI in
-  let open Rational in
-  let left_bound = Option.value ~default:zero (left_bound_opt cond) in
-  let cond =
-    if is_right_unbound cond
-    then inter cond (left_bound =-= left_bound + upper_bound)
-    else cond
-  in
-  let x, y =
-    match cond with
-    | Bound (Include x, Include y) -> x, y
-    | Bound (Exclude x, Include y) -> round_up rounding_error x y, y
-    | Bound (Include x, Exclude y) -> x, round_down rounding_error x y
-    | Bound (Exclude x, Exclude y) ->
-      round_up rounding_error x y, round_down rounding_error x y
-    | _ -> invalid_arg "random on infinite interval is not supported"
-  in
-  Rational.random x y
+module DiagramStrat =
+  Backend.Strategy.Num (Rational) (Backend.Machine.Diagram.Simulation.RI)
+let diagram_leap =
+  DiagramStrat.random_leap
+    ~upper_bound
+    ~ceil:(Rational.round_up rounding_error)
+    ~floor:(Rational.round_down rounding_error)
+    ~rand:Rational.random
 ;;
 
 let trace_length = 10000

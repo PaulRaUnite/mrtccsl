@@ -1,30 +1,22 @@
 open Common
 open Mrtccsl
 open Prelude
+open Number
 
 module Trace =
   Common.Trace.MakeIO (Number.Rational) (STS.Interpretation.Diagram.VarMap.Label)
 
 open Number.Rational
 
-let diagram_leap ~upper_bound ~rounding_error cond =
-  let open Backend.Machine.Diagram.Simulation.RI in
-  let left_bound = Option.value ~default:zero (left_bound_opt cond) in
-  let cond =
-    if is_right_unbound cond
-    then inter cond (left_bound =-= left_bound + upper_bound)
-    else cond
-  in
-  let x, y =
-    match cond with
-    | Bound (Include x, Include y) -> x, y
-    | Bound (Exclude x, Include y) -> round_up rounding_error x y, y
-    | Bound (Include x, Exclude y) -> x, round_down rounding_error x y
-    | Bound (Exclude x, Exclude y) ->
-      round_up rounding_error x y, round_down rounding_error x y
-    | _ -> invalid_arg "random on infinite interval is not supported"
-  in
-  random x y
+module DiagramStrat =
+  Backend.Strategy.Num (Rational) (Backend.Machine.Diagram.Simulation.RI)
+
+let diagram_leap ~upper_bound ~rounding_error =
+  DiagramStrat.random_leap
+    ~upper_bound
+    ~ceil:(Rational.round_up rounding_error)
+    ~floor:(Rational.round_down rounding_error)
+    ~rand:Rational.random
 ;;
 
 type 'n config =

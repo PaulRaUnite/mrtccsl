@@ -128,7 +128,6 @@ module Make
      end) =
 struct
   module A = Backend.Naive.Make (C) (N)
-  module ST = Backend.Naive.Strategy (A)
   module CMap = Map.Make (A.C)
   module Trace = Trace.MakeIO (N) (A.L)
 

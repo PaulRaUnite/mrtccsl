@@ -28,7 +28,6 @@ let nextclock_arg =
 
 open Mrtccsl
 module A = Backend.Naive.Make (String) (Number.Rational)
-module ST = Backend.Naive.Strategy (A)
 module Opt = Optimization.Order.Make (String)
 module IO = Common.Trace.MakeIO (Number.Rational) (A.L)
 
