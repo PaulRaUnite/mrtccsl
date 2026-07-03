@@ -1,0 +1,4 @@
+structure {
+    forbid c in [a, b[;
+    // allow d in [a,b[;
+}

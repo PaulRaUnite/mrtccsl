@@ -27,3 +27,37 @@ let to_int = int_of_float
 let of_float x = x
 let to_float x = x
 let of_string = float_of_string
+
+(* TODO: refactor out distributions to numbers *)
+let factor = 1000.0
+
+let truncated_distribution ~a ~b ~cdf ~ppf =
+  let a, b = factor *. a, factor *. b in
+  let prob_l, prob_r = Prelude.Tuple.map2 cdf (a, b) in
+  if abs (prob_r -. prob_l) < 0.000001
+  then Random.float (b -. a) +. a
+  else (
+    let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
+    let result = ppf sample_prob in
+    result /. factor)
+;;
+
+let truncated_guassian_rvs ~a ~b ~mu ~sigma =
+  if equal sigma 0.0
+  then mu
+  else (
+    let mu, sigma = factor *. mu, factor *. sigma in
+    let cdf = Owl.Stats.gaussian_cdf ~mu ~sigma in
+    let ppf = Owl.Stats.gaussian_ppf ~mu ~sigma in
+    truncated_distribution ~a ~b ~cdf ~ppf)
+;;
+
+let truncated_exponential_rvs ~a ~b ~rate =
+  let lambda = rate /. factor in
+  let cdf = Owl.Stats.exponential_cdf ~lambda in
+  let ppf = Owl.Stats.exponential_ppf ~lambda in
+  let result = truncated_distribution ~a ~b ~cdf ~ppf in
+  result
+;;
+
+let exponential_rvs ~rate = Owl.Stats.exponential_rvs ~lambda:rate

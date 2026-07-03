@@ -1,0 +1,6 @@
+structure {
+    integer : 0 <= v <= 2;
+    discrete process v with 0 1 2 ~ 1:1:1;
+    (b $ 3 on c) precedes (b $ 1);
+    a = b $ v on c;
+}

@@ -1,0 +1,8 @@
+structure {
+    a causes b;
+    b causes c;
+    c causes d;
+    d causes e;
+    e causes f;
+    a alternates f;
+}

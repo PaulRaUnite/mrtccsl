@@ -173,6 +173,7 @@ module Cstr = struct
   (** Numerical relation constraint, represents ['v |><| ('v | 'c)] relation, where ['v] is variable type and ['c] is constant type. *)
   type ('v, 'c) numeric_rel_constr = NumRelation of 'v * num_rel * ('v, 'c) arg
   [@@deriving map, show, fold]
+  (* TODO: remove the argument part? we do not allow it anyway. *)
 
   (** Variants of continuous-valued distributions that can be used in a simulation. *)
   type 'n distribution =

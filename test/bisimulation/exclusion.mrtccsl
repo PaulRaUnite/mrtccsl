@@ -1,0 +1,4 @@
+structure {
+    a # b;
+    b # c;
+}

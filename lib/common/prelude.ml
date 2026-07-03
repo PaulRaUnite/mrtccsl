@@ -101,6 +101,15 @@ module Option = struct
     | Some x -> x
     | None -> default ()
   ;;
+
+  let or_else f s =
+    match f with
+    | Some x -> Some x
+    | None ->
+      (match s with
+       | Some x -> Some x
+       | None -> None)
+  ;;
 end
 
 module Result = struct
@@ -691,6 +700,9 @@ module Buffer = struct
 end
 
 module Tuple = struct
+  type ('a, 'b, 'c) t3 = 'a * 'b * 'c [@@deriving compare]
+  type ('a, 'b, 'c, 'd) t4 = 'a * 'b * 'c * 'd [@@deriving compare]
+
   let map2 f (x, y) = f x, f y
   let map3 f (x, y, z) = f x, f y, f z
   let map4 f (x, y, z, w) = f x, f y, f z, f w
@@ -947,6 +959,12 @@ module Array = struct
   let to_tuple4 a = a.(0), a.(1), a.(2), a.(3)
   let to_tuple5 a = a.(0), a.(1), a.(2), a.(3), a.(4)
   let to_tuple6 a = a.(0), a.(1), a.(2), a.(3), a.(4), a.(5)
+
+  let random arr =
+    let len = length arr in
+    let i = Random.int len in
+    arr.(i)
+  ;;
 end
 
 module Dynarray = struct

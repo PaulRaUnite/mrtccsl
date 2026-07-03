@@ -24,6 +24,12 @@
  (deps
   (glob_files code/*.mrtccsl)))
 
+(executable
+ (public_name bisimulation)
+ (name bisimulation)
+ (modules bisimulation)
+ (libraries mrtccsl mrtccsl.mrtccslparsing))
+
 (env
  (dev
   (flags

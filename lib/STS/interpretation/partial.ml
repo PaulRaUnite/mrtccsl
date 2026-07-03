@@ -330,10 +330,8 @@ and eval_integer state inputs : _ -> Dual.int_result = function
     |> List.map (fun ((d1, e1), (d2, e2)) ->
       ( DQZF.(d1 && d2)
       , match op with
-        | `Div -> DZ.Term.Div (e1, e2)
         | `Add -> DZ.Term.Add (e1, e2)
-        | `Sub -> DZ.Term.Add (e1, DZ.Term.Opp e2)
-        | `Mul -> DZ.Term.Mul (e1, e2) ))
+        | `Sub -> DZ.Term.Add (e1, DZ.Term.Opp e2) ))
   | IPeekFirstQueue qe ->
     Dual.wrap_const_result
     @@ DZ.Term.Cte (DZ.Coeff.of_int @@ Queue.peek @@ get_iqueue state qe)
@@ -367,10 +365,8 @@ and eval_rational state inputs : _ -> Dual.rat_result = function
     |> List.map (fun ((d1, e1), (d2, e2)) ->
       ( DQZF.(d1 && d2)
       , match op with
-        | `Div -> DQ.Term.Div (e1, e2)
         | `Add -> DQ.Term.Add (e1, e2)
-        | `Sub -> DQ.Term.Add (e1, DQ.Term.Opp e2)
-        | `Mul -> DQ.Term.Mul (e1, e2) ))
+        | `Sub -> DQ.Term.Add (e1, DQ.Term.Opp e2) ))
   | RPeekFirstQueue qe ->
     Dual.wrap_const_result
     @@ DQ.Term.Cte (DQ.of_rational @@ Queue.peek @@ get_rqueue state qe)

@@ -15,11 +15,12 @@ let clocks_to_bvars clocks = List.map (fun v -> binvar v) clocks
 let build_excl_dec_tree choice_var vars =
   let rec aux level = function
     | v :: tail ->
-      bite
-        (* either the clock v is true and the choice variable is correct *)
-        (match choice_var with
-         | Some choice_var -> choice_var == iconst level && v
-         | None -> v)
+      (* either the clock v is true and the choice variable is correct *)
+      (match choice_var with
+       | Some choice_var ->
+         fun if_true if_false ->
+           bite (choice_var == iconst level) (bite v if_true f) (!v && if_false)
+       | None -> bite v)
         (* then other clocks should be false (unless it is the last condition) *)
         (if List.is_empty tail then t else !(BOr tail))
         (* or we recursively choose the next clock *)
@@ -142,7 +143,7 @@ let causality_as_machine ~strict cause conseq =
   let counter = IStateVar counter_name in
   let cause = binvar cause
   and conseq = binvar conseq in
-  bite (counter == i0) (if strict then !conseq else conseq ==> cause) t
+  bite (counter > i0) t (if strict then !conseq else conseq ==> cause)
   |-> [ diff_counter_update counter_name counter cause conseq ]
   &&& (i0 <= counter)
 ;;
@@ -203,7 +204,7 @@ let delay_as_late_acceptor out arg delay_arg base =
             && bite
                  non_empty_q
                  (* if the counter in the queue is equal to the [delay], or *)
-                 (ifirst queue_name == delay && i0 < delay)
+                 (ifirst queue_name == delay)
                  (* [arg] and [base] ticked, and the [delay] is zero *)
                  (arg && delay == i0))
   in
@@ -249,8 +250,8 @@ let sample_as_machine out arg base =
   (* [out] clock ticks when there is a [base] tick and either arg already ticked before (saved in [latch]) or it ticks now. *)
   let guard = out <=> (base && (latch || arg)) in
   guard
-  |-> [ (* in [latch], [out] clears the memory, [arg] is saved, otherwise [latch] is unchanged *)
-        latch_name =& bite out f (latch || arg)
+  |-> [ (* in [latch], [base] clears the memory, [arg] is saved, otherwise [latch] is unchanged *)
+        latch_name =& bite base f (latch || arg)
       ]
   &&& t
 ;;
@@ -367,17 +368,25 @@ let first_sampled_as_machine out arg base =
   and arg = binvar arg
   and base = binvar base
   and first = bsvar first_name in
-  bite first !out (out <=> arg) |-> [ first_name =& bite base f (bite out t first) ] &&& t
+  bite first !out (out <=> arg) |-> [ first_name =& bite base f (bite arg t first) ] &&& t
 ;;
 
 let last_sampled_as_machine out arg base =
-  let last_name = Printf.sprintf "last[%s->%s]" arg base in
+  let last_name = Printf.sprintf "last[%s->%s]" arg base
+  and latch_name = Printf.sprintf "latch[%s->%s]" arg base in
   let out = binvar out
   and arg = binvar arg
   and base = binvar base
-  and last = bsvar last_name in
-  bite last (!arg && !out) (out ==> arg)
-  |-> [ last_name =& bite base f (bite out t last) ]
+  and last = bsvar last_name
+  and latch = bsvar latch_name in
+  bite
+    last
+    (!arg && !out)
+    (out ==> arg && bite latch (base ==> out) ((arg && base) ==> out))
+  |-> [ last_name =& bite base f (bite out t last)
+      ; (* same as in the sample constraint *)
+        latch_name =& bite base f (latch || arg)
+      ]
   &&& t
 ;;
 
@@ -391,7 +400,7 @@ let forbid_as_machine left right args =
   bite
     (stack >= i1)
     (bite (stack > i1) forbid_args (bite (right && !left) t forbid_args))
-    (bite left forbid_args !right)
+    (left ==> forbid_args && !right)
   |-> stack_update
   &&& (i0 <= stack)
 ;;
@@ -406,43 +415,43 @@ let allow_as_machine left right args =
   bite
     (stack >= i1)
     (bite (stack > i1) t (bite (right && !left) forbid_args t))
-    (!left ==> forbid_args)
+    (!left ==> forbid_args && !right)
   |-> stack_update
   &&& (i0 <= stack)
 ;;
 
 let mutex_as_machine open_close_pairs =
-  let free_name =
-    Printf.sprintf "free[%s]"
+  let taken_name =
+    Printf.sprintf "taken[%s]"
     @@ List.to_string ~sep:"," (Tuple.to_string2 Fun.id) open_close_pairs
   in
   let resource_name =
     Printf.sprintf "res[%s]"
     @@ List.to_string ~sep:"," (Tuple.to_string2 Fun.id) open_close_pairs
   in
-  let free = bsvar free_name
+  let taken = bsvar taken_name
   and resource = IStateVar resource_name in
   let pairs = List.map (Tuple.map2 binvar) open_close_pairs in
   let opens, closes = List.split pairs in
-  let any_open = BOr opens in
+  let some_open = build_excl_dec_tree None opens in
+  let some_close = build_excl_dec_tree None closes in
   let any_close = BOr closes in
+  let any_open = BOr opens in
+  (* let some_close = build_excl_dec_tree None closes in *)
   let update =
-    [ free_name =& bite any_open t (bite any_close f free)
+    [ taken_name =& bite any_open t (bite any_close f taken)
     ; resource_name
-      = iite
-          any_open
-          (List.reduce_left
-             ( + )
-             Fun.id
-             (List.mapi (fun i open_v -> iite open_v (iconst i) i0) opens))
-          i0
+      = List.fold_lefti
+          (fun e i open_v -> iite open_v (iconst i) e)
+          (iite any_close i0 resource)
+          opens
     ]
   in
   let match_on_resource = build_excl_dec_tree (Some resource) closes in
   bite
-    free
-    (any_open && !any_close)
-    ((match_on_resource || !any_close) && any_open ==> any_close)
+    taken
+    ((match_on_resource || !any_close) && any_open ==> (some_open && some_close))
+    ((some_open || !any_open) && !any_close)
   |-> update
   &&& (i0 <= resource && resource < iconst (List.length open_close_pairs))
 ;;
@@ -494,13 +503,13 @@ let rtdelay_as_late_acceptor ~now out arg delay_arg =
   (sample_delay
    && bite
         (i0 < rlength queue_name)
-        (((* delay is positive in non-empty queue *)
-          r0 <. delay
-          (* [now] cannot progress past first in the queue *)
-          && now -. rfirst queue_name <=. delay
-          (* force tick if [now] and first in the queue coincide *)
-          && now -. rfirst queue_name ==. delay)
-         <=> out)
+        ((* delay is positive in non-empty queue *)
+         r0 <. delay
+         (* [now] cannot progress past first in the queue *)
+         && now -. rfirst queue_name <=. delay
+         &&
+         (* force tick if [now] and first in the queue coincide *)
+         now -. rfirst queue_name ==. delay <=> out)
         (out <=> (arg && delay ==. r0)))
   |-> update
   &&& t
@@ -619,7 +628,7 @@ let of_constr now : _ Ccsl.Language.Cstr.clock_constr -> (string, string) STS.t 
   | Pool (1, open_close_pairs) -> mutex_as_machine open_close_pairs
   | Pool _ ->
     failwith "pool constraint with n > 1 is not supported in symbolic representation"
-  | _ -> failwith "not implemented"
+  | _ -> failwith "not implemented" (* TODO: implement the rest of the definitions *)
 ;;
 
 (** Empty (as it does not constrain any clocks) machine with the basic condition of strict monotonicity on the real-time progression. *)
@@ -658,10 +667,11 @@ let numerical_relation_as_machine
 open Interpretation
 
 module Literal = struct
-  type sim = var * (var, var) t * atom_index
+  type repr = var * (var, var) t * atom_index
 
   (** Converts the specification constraints into a synchronized abstract machine. *)
-  let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : sim =
+
+  let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : repr =
     let open STS in
     let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
     and rcomp (e1, rel, e2) = BAtom (RatComp (e1, rel, e2)) in
@@ -742,24 +752,227 @@ module Literal = struct
 end
 
 module Diagram = struct
-  type sim = (var, var) Diagram.t * atom_index
+  (* TODO: generalize over label and time *)
+  type trace = (bool VarMap.t, Rational.t) Trace.t
 
-  let of_spec ?debug:_ spec : sim =
-    let now, m, index = Literal.of_spec spec in
-    let diag = Diagram.of_machine ~order:Diagram.Order.state_bool_now_numeric now m in
-    diag, index
-  ;;
+  module Acceptance = struct
+    type repr = (var, var) Diagram.t * atom_index
 
-  let accept_trace (d, _) trace =
-    let state = default_state in
-    let state =
-      Seq.fold_left_opt
-        (fun state Trace.{ label; time } ->
-           let ticked = VarMap.of_seq (Seq.map (fun c -> c, true) (List.to_seq label)) in
-           Diagram.accept_solution d state (ticked, time))
+    let of_spec ?debug:_ spec : repr =
+      let now, m, index = Literal.of_spec spec in
+      let diag, index = Diagram.acceptance_diagram now m index in
+      diag, index
+    ;;
+
+    let accept_trace ((d, _) : repr) (trace : trace) =
+      let state = default_state in
+      let state =
+        Seq.fold_leftr
+          (fun state Trace.{ label; time } ->
+             match Diagram.accept_solution d state (label, time) with
+             | Some state -> Ok state
+             | None ->
+               Printf.printf
+                 "--- step no accepted ---\ntime: %s\nclocks: %s\nstate:\n%s\n"
+                 (Rational.to_string time)
+                 (VarMap.to_string ~sep:", " Fun.id Bool.to_string label)
+                 (show_state state);
+               Error
+                 ( state
+                 , Diagram.make_satisfaction_index
+                     (state_to_interface state)
+                     { rational =
+                         (fun v ->
+                           if String.equal d.now v
+                           then time
+                           else failwithf "requested undefined value for %s" v)
+                     ; integer =
+                         (fun _ -> failwith "integer inputs are not defined by trace")
+                     ; bool = (fun v -> VarMap.value ~default:false v label)
+                     }
+                     (* TODO: refactor into a function, probably use it in few places? *)
+                     d.atoms ))
+          (Ok state)
+          trace
+      in
+      state
+    ;;
+  end
+
+  module Simulation = struct
+    module RI = Interval.Make (Rational)
+
+    module II = struct
+      include Interval.Make (Integer)
+
+      let to_nonstrict = function
+        | Bound (left, right) ->
+          let left =
+            match left with
+            | Include left -> left
+            | Exclude left -> succ left
+            | Inf -> failwith "to_nonstrict: [-oo, x] is not bound"
+          and right =
+            match right with
+            | Include right -> right
+            | Exclude right -> pred right
+            | Inf -> failwith "to_nonstrict: [x, +oo] is not bound"
+          in
+          left, right
+        | Empty -> failwith "to_nonstrict: interval is empty"
+      ;;
+    end
+
+    type repr = (var, var) Diagram.sim_repr * atom_index
+
+    let discr_dist_value ratios interval =
+      let open Stdlib in
+      let left, right = II.to_nonstrict interval in
+      let available =
+        List.filter (fun (value, _) -> left <= value && value <= right) ratios
+      in
+      let sum = List.fold_left (fun acc (_, ratio) -> acc + ratio) 0 available in
+      let rvs () =
+        let choice = Random.int sum in
+        let chosen, _ =
+          List.fold_left
+            (fun (chosen, choice) (value, ratio) ->
+               match chosen with
+               | Some _ as x -> x, choice
+               | None ->
+                 let choice = choice - ratio in
+                 if choice < 0 then Some value, choice else None, choice)
+            (None, choice)
+            available
+        in
+        Option.get chosen
+      in
+      Diagram.make_gen 0 rvs
+    ;;
+
+    (* TODO: refactor this bulshit, this needs to be unified with the native backend *)
+    let cont_dist_value dist cond =
+      let open Language.Cstr in
+      let open Number in
+      let rvs =
+        match dist with
+        | Uniform ->
+          let lower, upper =
+            Option.unwrap
+              ~expect:"uniform distribution is undefined on exclusive intervals"
+            @@ RI.constant_bounds cond
+          in
+          fun () -> Rational.random lower upper
+        | Normal { mean; deviation } ->
+          let mu = Rational.to_float mean in
+          let sigma = Rational.to_float deviation in
+          let bounds =
+            Option.unwrap ~expect:"gaussian distribution is undefined on exclusive bounds"
+            @@ RI.constant_bounds cond
+          in
+          let a, b = Tuple.map2 Rational.to_float bounds in
+          fun () ->
+            let sample = Float.truncated_guassian_rvs ~a ~b ~mu ~sigma in
+            Rational.of_float sample
+        | Exponential { rate } ->
+          let rate = Rational.to_float rate in
+          (match RI.constant_bounds cond with
+           | None -> fun () -> Rational.of_float @@ Float.exponential_rvs ~rate
+           | Some bounds ->
+             let a, b = Tuple.map2 Rational.to_float bounds in
+             fun () -> Rational.of_float @@ Float.truncated_exponential_rvs ~a ~b ~rate)
+      in
+      Diagram.make_gen Rational.zero rvs
+    ;;
+
+    let sim_of_spec ?debug:_ ?(instances = 1) spec : repr list =
+      let now, m, index =
+        Literal.of_spec { spec with integer = []; duration = []; probabilistic = [] }
+      in
+      let clocks = List.sort_uniq String.compare @@ Language.Specification.clocks spec in
+      let duration_bounds =
+        Language.Specification.(spec.duration)
+        |> List.map (function
+          | Language.Cstr.NumRelation (v, rel, Const c) -> v, RI.of_rel rel c
+          | _ -> failwith "uncertainty relations between variables are not supported")
+        |> List.fold_left
+             (fun acc (v, rel) -> VarMap.entry ~default:rel (RI.inter rel) v acc)
+             VarMap.empty
+      and integer_bounds =
+        Language.Specification.(spec.integer)
+        |> List.map (function
+          | Language.Cstr.NumRelation (v, rel, Const c) -> v, II.of_rel rel c
+          | _ -> failwith "uncertainty relations between variables are not supported")
+        |> List.fold_left
+             (fun acc (v, rel) -> VarMap.entry ~default:rel (II.inter rel) v acc)
+             VarMap.empty
+      in
+      let diag, index = Diagram.simulation_diagram now m clocks index in
+      List.init instances (fun _ ->
+        let int_gens, rat_gens =
+          List.partition_map
+            Language.Cstr.(
+              function
+              | DiscreteValued { name; ratios } ->
+                Either.Left
+                  (name, discr_dist_value ratios (VarMap.find name integer_bounds))
+              | ContinuousValued { name; dist } ->
+                Either.Right
+                  (name, cont_dist_value dist (VarMap.find name duration_bounds)))
+            spec.probabilistic
+        in
+        let int_gens = VarMap.of_list int_gens
+        and rat_gens = VarMap.of_list rat_gens in
+        let int_gens =
+          VarMap.merge
+            (fun _ gen bound ->
+               match gen, bound with
+               | Some gen, _ -> Some gen
+               | _, Some bound ->
+                 let l, r =
+                   Option.unwrap ~expect:"bounds have to be defined for integer variables"
+                   @@ II.constant_bounds bound
+                 in
+                 let open Stdlib in
+                 let ratios = List.init (r - l + 1) (fun i -> i + l, 1) in
+                 Some (discr_dist_value ratios bound)
+               | _ -> failwith "unreachable")
+            int_gens
+            integer_bounds
+        and rat_gens =
+          VarMap.merge
+            (fun _ gen bound ->
+               match gen, bound with
+               | Some gen, _ -> Some gen
+               | _, Some bound -> Some (cont_dist_value Uniform bound)
+               | _ -> failwith "unreachable")
+            rat_gens
+            duration_bounds
+        in
+        ( Diagram.{ diagram = diag; rat_gens; int_gens; clocks = Array.of_list clocks }
+        , index ))
+    ;;
+
+    let gen_trace time_strategy (repr, _) : trace =
+      let state = default_state in
+      Seq.unfold
+        (fun state ->
+           match Diagram.gen_step time_strategy repr state with
+           | Some (state, (label, time)) -> Some (Trace.{ label; time }, state)
+           | None ->
+             Printf.printf
+               "generation stopped in state %s\nint params: %s\nrat params: %s\n"
+               (show_state state)
+               (VarMap.to_string
+                  Fun.id
+                  (fun g -> Integer.to_string Diagram.(g.value))
+                  repr.int_gens)
+               (VarMap.to_string
+                  Fun.id
+                  (fun g -> Rational.to_string Diagram.(g.value))
+                  repr.rat_gens);
+             None)
         state
-        trace
-    in
-    Option.is_some state
-  ;;
+    ;;
+  end
 end

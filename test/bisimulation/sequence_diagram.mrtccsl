@@ -1,0 +1,83 @@
+structure {
+    lane0 {
+        var c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15 : clock;
+        c0 precedes c1;
+        c1 precedes c2;
+        c2 precedes c3;
+        c3 precedes c4;
+        c4 precedes c5;
+        c5 precedes c6;
+        c6 precedes c7;
+        c7 precedes c8;
+        c8 precedes c9;
+        c9 precedes c10;
+        c10 precedes c11;
+        c11 precedes c12;
+        c12 precedes c13;
+        c13 precedes c14;
+        c14 precedes c15;
+    };
+    lane1 {
+        var c0,c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11 : clock;
+        c0 precedes c1;
+        c1 precedes c2;
+        c2 precedes c3;
+        c3 precedes c4;
+        c4 precedes c5;
+        c5 precedes c6;
+        c6 precedes c7;
+        c7 precedes c8;
+        c8 precedes c9;
+        c9 precedes c10;
+        c10 precedes c11;
+    };
+    lane2 {
+        var c0,c1,c2,c3,c4,c5,c6,c7,c8 : clock;
+        c0 precedes c1;
+        c1 precedes c2;
+        c2 precedes c3;
+        c3 precedes c4;
+        c4 precedes c5;
+        c5 precedes c6;
+        c6 precedes c7;
+        c7 precedes c8;
+    };
+    lane3 {
+        var c0,c1,c2,c3,c4,c5,c6,c7 : clock;
+        c0 precedes c1;
+        c1 precedes c2;
+        c2 precedes c3;
+        c3 precedes c4;
+        c4 precedes c5;
+        c6 precedes c7;
+    };
+    lane0.c0 causes lane1.c0;
+    lane1.c1 causes lane0.c1;
+
+    lane0.c2 causes lane1.c2;
+    lane1.c3 causes lane0.c3;
+
+    lane0.c4 causes lane2.c0;
+    lane2.c1 causes lane3.c0;
+    lane3.c1 causes lane2.c2;
+    lane2.c2 causes lane1.c4;
+
+    lane1.c5 causes lane2.c3;
+    lane2.c4 causes lane3.c2;
+    lane3.c3 causes lane2.c5;
+    lane2.c6 causes lane0.c5;
+
+    lane0.c6 causes lane1.c6;
+    lane1.c7 causes lane0.c7;
+
+    lane0.c8 causes lane3.c4;
+    lane3.c5 causes lane0.c9;
+
+    lane0.c12 causes lane2.c7;
+    lane2.c8 causes lane1.c8;
+    lane1.c9 causes lane3.c6;
+    lane3.c7 causes lane1.c10;
+    lane1.c11 causes lane0.c14;
+
+    lane0.c0 alternates lane0.c15;
+}

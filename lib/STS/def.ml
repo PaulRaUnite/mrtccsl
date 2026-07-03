@@ -3,7 +3,6 @@
 open Common
 open Prelude
 open Number
-open Expr
 open Ppx_compare_lib.Builtin
 open Ppx_sexp_conv_lib.Conv
 
@@ -35,6 +34,12 @@ type 'atom bool_expr =
 type num_rel =
   [ `Less
   | `LessEq
+  ]
+[@@deriving compare, sexp]
+
+type num_op =
+  [ `Add
+  | `Sub
   ]
 [@@deriving compare, sexp]
 
@@ -337,5 +342,51 @@ module PP = struct
 
   let assignment pp_sv pp_iv fmt (v, e) =
     Format.fprintf fmt "%a := %a" pp_sv v (expr pp_sv pp_iv) e
+  ;;
+end
+
+module Rewrite = struct
+  let contains compare target_var =
+    fold_rat_expr
+      (fun acc _ -> acc)
+      (fun constains ivar -> if constains then constains else compare target_var ivar = 0)
+      false
+  ;;
+
+  let rec unwrap compare var flip b target =
+    match target with
+    | RConst _ | RStateVar _ | RPeekFirstQueue _ | RPeekLastQueue _ ->
+      failwith "Rewrite.isolate: impossible as variable is confirmed"
+    | RInputVar _ -> flip, target, b
+    | RITE _ ->
+      failwith "Rewrite.isolate: if-then-else is not reversible so is not supported"
+    | RBinOp (inter_l, op, inter_r) ->
+      let flip, other, target =
+        match contains compare var inter_l, op, contains compare var inter_r with
+        | true, _, true | false, _, false -> failwith "Rewrite.unwrap: impossible"
+        (* x + A < B ==> x < B - A *)
+        | true, `Add, false -> flip, RBinOp (b, `Sub, inter_r), inter_l
+        (* x - A < B ==> x < B + A *)
+        | true, `Sub, false -> flip, RBinOp (b, `Add, inter_r), inter_l
+        (* A + x < B ==> x < B - A *)
+        | false, `Add, true -> flip, RBinOp (b, `Sub, inter_l), inter_r
+        (* A - x < B ==> x > A - B *)
+        | false, `Sub, true -> not flip, RBinOp (inter_l, `Sub, b), inter_r
+      in
+      unwrap compare var flip other target
+  ;;
+
+  let isolate compare var l rel r =
+    let in_left = contains compare var l
+    and in_right = contains compare var r in
+    let flip, l, r =
+      match in_left, in_right with
+      | true, true ->
+        failwith "Rewrite.isolate: impossible to isolate variable on both sides"
+      | false, false -> false, l, r
+      | true, false -> unwrap compare var false r l
+      | false, true -> unwrap compare var true l r
+    in
+    if flip then RatComp (r, rel, l) else RatComp (l, rel, r)
   ;;
 end

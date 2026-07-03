@@ -1,0 +1,7 @@
+structure {
+    a = b;
+    b subclocks c;
+    d = c except a;
+    e = d and c;
+    f = e or a;
+}

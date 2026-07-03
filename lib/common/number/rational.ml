@@ -1,6 +1,6 @@
 open Prelude
-include Mpqf
 open Sexplib0.Sexp_conv
+include Mpqf
 
 include Interface.ExpOrder.Make (struct
     include Mpqf
@@ -199,9 +199,18 @@ let to_int n =
   let result = Mpzf.fdiv_q nom denom in
   Mpz.get_int result
 ;;
+
 let to_int2 n =
   let nom, denom = to_mpzf2 n in
   Mpz.get_int nom, Mpz.get_int denom
 ;;
 
 let pp fmt x = Format.pp_print_string fmt (to_string x)
+
+let do_op op l r =
+  match op with
+  | `Add -> add l r
+  | `Sub -> sub l r
+  | `Mul -> mul l r
+  | `Div -> div l r
+;;

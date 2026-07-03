@@ -72,11 +72,7 @@ and eval_integer state inputs = function
   | IBinOp (e1, op, e2) ->
     let e1 = eval_integer state inputs e1
     and e2 = eval_integer state inputs e2 in
-    (match op with
-     | `Div -> Int.div e1 e2
-     | `Add -> Int.add e1 e2
-     | `Sub -> Int.sub e1 e2
-     | `Mul -> Int.mul e1 e2)
+    Integer.do_op op e1 e2
   | IPeekFirstQueue qe -> Queue.peek @@ get_iqueue state qe
   | IPeekLastQueue qe -> Queue.last @@ get_iqueue state qe
   | IntQueueLength qe -> Queue.length @@ get_iqueue state qe
@@ -94,11 +90,7 @@ and eval_rational state inputs = function
   | RBinOp (e1, op, e2) ->
     let e1 = eval_rational state inputs e1
     and e2 = eval_rational state inputs e2 in
-    (match op with
-     | `Div -> Rational.div e1 e2
-     | `Add -> Rational.add e1 e2
-     | `Sub -> Rational.sub e1 e2
-     | `Mul -> Rational.mul e1 e2)
+    Rational.do_op op e1 e2
   | RPeekFirstQueue qe -> Queue.peek @@ get_rqueue state qe
   | RPeekLastQueue qe -> Queue.last @@ get_rqueue state qe
   | RITE { cond; if_true; if_false } ->

@@ -26,8 +26,6 @@ let ( != ) x y = BNot (x == y)
 let iconst x = IConst x
 let ( + ) x y = IBinOp (x, `Add, y)
 let ( - ) x y = IBinOp (x, `Sub, y)
-let ( * ) x y = IBinOp (x, `Mul, y)
-let ( / ) x y = IBinOp (x, `Div, y)
 let iite cond if_true if_false = IITE { cond; if_true; if_false }
 let iinvar v = IInputVar v
 
@@ -67,8 +65,6 @@ let ( !=. ) x y = BNot (x ==. y)
 let rconst x = RConst x
 let ( +. ) x y = RBinOp (x, `Add, y)
 let ( -. ) x y = RBinOp (x, `Sub, y)
-let ( *. ) x y = RBinOp (x, `Mul, y)
-let ( /. ) x y = RBinOp (x, `Div, y)
 let rite cond if_true if_false = RITE { cond; if_true; if_false }
 let r0 = RConst Rational.zero
 

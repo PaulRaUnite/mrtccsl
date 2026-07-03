@@ -4,7 +4,7 @@
  (public_name mrtccsl.common)
  (name common)
  (inline_tests)
- (libraries containers uuseg sexplib0 gmp zarith iter csv)
+ (libraries containers uuseg sexplib0 gmp zarith iter csv owl)
  (preprocess
   (pps
    ppx_inline_test

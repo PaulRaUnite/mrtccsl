@@ -1,0 +1,10 @@
+structure {
+    duration : -1s <= jitter1 <= 1s;
+    duration : -1s <= jitter2 <= 1s;
+    duration : 0s <= delay1 <= 2s;
+
+    a = periodic 5s with jitter jitter1 offset 0s;
+    b = periodic 5s with drift jitter2 offset 0s;
+    c = delay a by delay1;
+    d = sporadic 3s;
+}

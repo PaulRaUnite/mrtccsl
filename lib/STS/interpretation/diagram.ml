@@ -41,10 +41,13 @@ module Order = struct
     fold_bool_atom (with_max lv0) (with_max lv1 ~except:(now, lv2)) lv0 atom
   ;;
 
-  let state_numeric_bool_now ~now = function
+  let state_numeric_now_bool ~now:_ = function
     | BStateVar _ -> lv0
     | BInputVar _ -> lv2
-    | atom -> fold_bool_atom (with_max lv0) (with_max lv1 ~except:(now, lv3)) lv0 atom
+    | RatVarMarker _ -> lv3
+    | IntVarMarker _ -> lv3
+    | IntComp _ -> lv0
+    | RatComp _ -> lv1
   ;;
 
   let state_bool_now_numeric ~now = function
@@ -56,7 +59,7 @@ module Order = struct
     | IntComp (IConst _, _, IInputVar _) -> lv3
     | RatVarMarker _ -> lv2
     | IntVarMarker _ -> lv2
-    | atom -> fold_bool_atom (with_max lv0) (with_max ~except:(now, lv2) lv3) lv0 atom
+    | atom -> fold_bool_atom (with_max lv0) (with_max lv3 ~except:(now, lv2)) lv0 atom
   ;;
 
   module LvIndMap = Map.Make (struct
@@ -117,7 +120,6 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
   let index = ref LvMap.empty in
   let assign_temp_id expr =
     let lv = order ~now expr in
-    let (Level.Level lvl_i) = lv in
     let map = LvMap.value ~default:AtomIndex.empty lv !index in
     let i = AtomIndex.value ~default:(AtomIndex.cardinal map) expr map in
     let map = AtomIndex.add expr i map in
@@ -164,9 +166,76 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
   }
 ;;
 
+open Aux
+
+type ('sv, 'iv) acc_repr = ('sv, 'iv) t
+
+(** Makes a BDD diagram out of machine definition. Assumes that the rational numerical comparisons arranged such that the  *)
+let acceptance_diagram now mach index : _ acc_repr * atom_index =
+  of_machine ~order:Order.state_bool_now_numeric now mach, index
+;;
+
+(* TODO: refactor out and probably use in the native backend too *)
+type 'n num_generator =
+  { mutable value : 'n
+  ; update : 'n num_generator -> unit
+  }
+
+type 'n generators = 'n num_generator VarMap.t
+
+let get_value generators var = (VarMap.find var generators).value
+
+let update_value generators var =
+  let gen = VarMap.find var generators in
+  gen.update gen
+;;
+
+let make_gen zero rvs =
+  let update record = record.value <- rvs () in
+  let gen = { value = zero; update } in
+  update gen;
+  gen
+;;
+
+type ('sv, 'iv) sim_repr =
+  { diagram : ('sv, 'iv) t
+  ; int_gens : int generators
+  ; rat_gens : Common.Number.Rational.t generators
+  ; clocks : 'iv array
+  }
+
+let simulation_diagram now machine clocks index =
+  let Def.{ guard; _ } = machine in
+  (* "at least some clock has to tick" *)
+  let non_empty_solution_cond = BOr (List.map (fun c -> BAtom (BInputVar c)) clocks) in
+  let guard = BAnd [ guard; non_empty_solution_cond ] in
+  let diagram =
+    of_machine ~order:Order.state_numeric_now_bool now { machine with guard }
+  in
+  let atoms =
+    (* rewrite the atoms such that the now variable appears *)
+    Dynarray.map
+      (function
+        | RatComp (l, rel, r) -> Rewrite.isolate String.compare now l rel r
+        | other -> other)
+      diagram.atoms
+  in
+  let index =
+    Hashtbl.map_v
+      (List.map (function
+         | RatComp (l, rel, r) -> Def.Rewrite.isolate String.compare now l rel r
+         | other -> other))
+      index
+  in
+  { diagram with atoms }, index
+;;
+
 module V = struct
   type t =
-    | BDDNode of string
+    | AtomNode of
+        { name : string
+        ; satisfied : bool option
+        }
     | Constraint of string
 end
 
@@ -174,15 +243,14 @@ module E = struct
   let compare_bool = Bool.compare
 
   type t =
-    | BDDEdge of
-        { complement : bool
-        ; label : bool
+    | AtomDecisionEdge of
+        { label : bool
         ; selected : bool
         }
-    | PointerEdge
+    | RefTrackingEdge
   [@@deriving compare]
 
-  let default = PointerEdge
+  let default = RefTrackingEdge
 end
 
 module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
@@ -197,10 +265,17 @@ module Dot = Graph.Graphviz.Dot (struct
     let vertex_attributes v =
       let label = V.label v in
       match label with
-      | BDDNode node_name ->
-        (match node_name with
-         | "0" | "1" -> [ `Label node_name; `Shape `Box ]
-         | _ -> [ `Label node_name ])
+      | AtomNode node ->
+        (match node.name with
+         | "0" | "1" -> [ `Label node.name; `Shape `Box ]
+         | _ ->
+           (match node.satisfied with
+            | Some satisfied ->
+              [ `Label node.name
+              ; (if satisfied then `Color 0x00ff00 else `Color 0xff0000)
+              ; `Style `Bold
+              ]
+            | None -> [ `Label node.name ]))
       | Constraint s -> [ `Label s; `Shape `Box; `Color 0xff00ff ]
     ;;
 
@@ -208,58 +283,27 @@ module Dot = Graph.Graphviz.Dot (struct
 
     let edge_attributes e =
       match G.E.label e with
-      | BDDEdge label ->
+      | AtomDecisionEdge label ->
         [ `Label (string_of_bool label.label)
-        ; `Arrowhead (if label.complement then `Dot else `Normal)
+        ; `Style (if label.label then `Solid else `Dashed)
         ; `Color (if label.selected then 0xff0000 else 0)
         ]
-      | PointerEdge -> [ `Arrowhead `Normal; `Color 0xff00ff ]
+      | RefTrackingEdge -> [ `Arrowhead `Normal; `Color 0xff00ff ]
     ;;
+
+    (* TODO: add more colors, PointerEdge is a dumb name too *)
 
     let get_subgraph _ = None
   end)
 
 let to_dot graph = Dot.output_graph stdout graph
-let interpret_bdd _node = ()
 
-(* let do_transition
-      ~input_to_interface
-      ~eval_guard
-      { guard; assignments; invariant }
-      state
-      inputs
-  =
-  let statei = state_to_interface state in
-  let abstract_inputs = input_to_interface inputs in
-  let real_inputs = Full.input_to_interface inputs in
-  let empty_inputs = empty_input_interface in
-  let t = eval_guard statei abstract_inputs guard in
-  if t
-  then (
-    let new_state = apply_assignments statei real_inputs default_state assignments in
-    let new_state_int = state_to_interface new_state in
-    if Full.eval_bool new_state_int empty_inputs invariant
-    then Ok new_state
-    else Error FailedInvariant)
-  else Error FailedGuard
-;; *)
-
-(*
-TODO:
-- structure for the step
-  - it should constrain the numerical values
-  - should be able to return concrete values
-- traversal of the diagram:
-  - separate atoms into to be evaluated, decided and constraining
-  - define clock strategies on the diagrams  
-*)
-
-type var = int
+type bool_var = int
 
 type 'a b =
   | BFalse
   | BTrue
-  | BIf of var * 'a * 'a
+  | BIf of bool_var * 'a * 'a
 
 let[@inline always] inspect bdd =
   if Bdd.is_true bdd
@@ -268,8 +312,6 @@ let[@inline always] inspect bdd =
   then BFalse
   else BIf (Bdd.root_var bdd, Bdd.high_part bdd, Bdd.low_part bdd)
 ;;
-
-open Aux
 
 (** @returns BDD that was specialized by the state and input variables *)
 let rec factor_out_state_numerical
@@ -327,76 +369,180 @@ module A (I : Common.Interval.I) = struct
     ( (if is_empty p_comb then None else Some (with_value p_comb))
     , if is_empty n_comb then None else Some (with_value n_comb) )
   ;;
+
+  let pos_neg ~flip (rel : num_rel) value old_cond =
+    let rel = if flip then Common.Expr.flip rel else (rel :> Common.Expr.num_rel) in
+    let positive = of_rel rel value
+    and negative = of_rel (Common.Expr.invert rel) value in
+    let p_comb = inter positive old_cond
+    and n_comb = inter negative old_cond in
+    ( (if is_empty p_comb then None else Some p_comb)
+    , if is_empty n_comb then None else Some n_comb )
+  ;;
 end
 
 module RI = A (Common.Interval.Make (Common.Number.Rational))
 module NI = A (Common.Interval.Make (Common.Number.Integer))
 
 (** @returns a solution to the diagram as a tuple [(map : c -> bool, timestamp)] *)
-let rec random_label_strategy
-          state
-          inputs
-          delay_strategy
-          now
-          atoms
-          clocks
-          guard
-          clock_assignments
-          delay_interval
+let rec random_label_strategy atoms clocks guard rat_updates int_updates clock_assignments
   =
   match inspect guard with
   | BFalse -> None
-  | BTrue ->
-    Some (random_not_assigned clocks clock_assignments, delay_strategy delay_interval)
+  | BTrue -> Some (random_not_assigned clocks clock_assignments, rat_updates, int_updates)
   | BIf (v, h, l) ->
     let atom = Dynarray.get atoms v in
     let chosen_high =
       if Bdd.is_false h then false else if Bdd.is_false l then true else Random.bool ()
     in
     let branch = if chosen_high then h else l in
-    let inversion = if chosen_high then Fun.id else Common.Expr.invert in
-    let clock_assignments, delay_interval =
+    (match atom with
+     | BInputVar clock ->
+       let clock_assignments = VarMap.add clock chosen_high clock_assignments in
+       random_label_strategy atoms clocks branch rat_updates int_updates clock_assignments
+     (* rational and integer markers are assigned the lowest priority, so should appear last and the choice is deterministic *)
+     | RatVarMarker var ->
+       let rat_updates = if chosen_high then List.cons var rat_updates else rat_updates in
+       random_label_strategy atoms clocks branch rat_updates int_updates clock_assignments
+     | IntVarMarker var ->
+       let int_updates = if chosen_high then List.cons var int_updates else int_updates in
+       random_label_strategy atoms clocks branch rat_updates int_updates clock_assignments
+     | BStateVar _ ->
+       failwith
+         "random_label_strategy: Boolean state variable should not appear after input"
+     | RatComp _ | IntComp _ ->
+       failwith
+         "random_label_strategy: rational and integer comparisons should not appear")
+;;
+
+type 'v reduction =
+  | Const of 'v
+  | Variable of var
+
+let rec reduce_inputs_rat_expr (state : _ state_interface) inputs now = function
+  | RConst c -> Const c
+  | RStateVar v -> Const (state.rational v)
+  | RInputVar v -> if String.equal v now then Variable v else Const (inputs.rational v)
+  | RITE _ ->
+    failwith "reduce_rat_expr: if-then-else should not occur in an atom"
+    (* TODO: remove this case on type level *)
+  | RBinOp (l, op, r) ->
+    let l = reduce_inputs_rat_expr state inputs now l
+    and r = reduce_inputs_rat_expr state inputs now r in
+    (match l, r with
+     | Const l, Const r -> Const (Common.Number.Rational.do_op op l r)
+     | _ ->
+       failwith
+         "reduce_rat_expr: binary operation cannot add variable and constant, both have \
+          to be constant")
+  | RPeekFirstQueue q -> Const (Queue.peek (state.rat_queue q))
+  | RPeekLastQueue q -> Const (Queue.last (state.rat_queue q))
+;;
+
+let rec reduce_to_bool_solutions atoms bool_threshold state inputs now guard time_cond =
+  match inspect guard with
+  | BTrue -> [ time_cond, guard ]
+  | BFalse -> []
+  | BIf (v, high, low) ->
+    if bool_threshold <= v
+    then [ time_cond, guard ]
+    else (
+      let atom = Dynarray.get atoms v in
       match atom with
-      | BStateVar _ ->
-        failwith
-          "random_label_strategy: Boolean state variable should not appear after input"
-      | BInputVar clock ->
-        let clock_assignments = VarMap.add clock chosen_high clock_assignments in
-        clock_assignments, delay_interval
+      | RatComp (l, rel, r) ->
+        let l = reduce_inputs_rat_expr state inputs now l
+        and r = reduce_inputs_rat_expr state inputs now r in
+        let when_high, when_low =
+          match l, r with
+          | Const l, Variable _ -> RI.pos_neg ~flip:true rel l time_cond
+          | Variable _, Const r -> RI.pos_neg ~flip:false rel r time_cond
+          | Const l, Const r ->
+            if Common.Expr.do_rel ~compare:Common.Number.Rational.compare rel l r
+            then Some time_cond, None
+            else None, Some time_cond
+          | Variable _, Variable _ ->
+            failwith
+              "reduce_to_bool_solutions: variable-variable comparisons are not supported"
+        in
+        let high_solutions =
+          match when_high with
+          | Some time_cond ->
+            reduce_to_bool_solutions atoms bool_threshold state inputs now high time_cond
+          | None -> []
+        and low_solutions =
+          match when_low with
+          | Some time_cond ->
+            reduce_to_bool_solutions atoms bool_threshold state inputs now low time_cond
+          | None -> []
+        in
+        List.append high_solutions low_solutions
       | IntComp _ ->
         failwith
-          "random_label_strategy: integer-related comparison should not occur during \
-           strategy resolution"
-      | RatComp (RInputVar maybe_now, rel, expr) when String.equal maybe_now now ->
-        let delay_interval =
-          RI.iterpret_relation
-            ~flip:false
-            (inversion (rel :> Common.Expr.num_rel))
-            (Full.eval_rational state inputs expr)
-            delay_interval
-        in
-        clock_assignments, delay_interval
-      | RatComp (expr, rel, RInputVar maybe_now) when String.equal maybe_now now ->
-        let delay_interval =
-          RI.iterpret_relation
-            ~flip:true
-            (inversion (Common.Expr.flip rel))
-            (Full.eval_rational state inputs expr)
-            delay_interval
-        in
-        clock_assignments, delay_interval
-      | _ -> failwith "unreachable"
-    in
-    random_label_strategy
+          "reduce_to_bool_solutions: integer comparisons should be already resolved"
+      | BStateVar _ ->
+        failwith
+          "reduce_to_bool_solutions: boolean state variables should be already applied"
+      | BInputVar _ ->
+        failwith
+          "reduce_to_bool_solutions: input variables should be detected by threshold"
+      | IntVarMarker _ | RatVarMarker _ ->
+        failwith
+          "reduce_to_bool_solutions: markers should not appear before the threshold")
+;;
+
+let gen_step
+      bound_strategy
+      ({ diagram = { now; guard; assignments; threshold1; threshold2; atoms }
+       ; int_gens
+       ; rat_gens
+       ; clocks
+       } :
+        _ sim_repr)
       state
-      inputs
-      delay_strategy
-      now
+  : (state * (bool VarMap.t * Common.Number.Rational.t)) option
+  =
+  let state_int = state_to_interface state in
+  let partial_input_int =
+    { rational = get_value rat_gens
+    ; integer = get_value int_gens
+    ; bool =
+        (fun _ -> failwith "do_step: Boolean inputs are supposed to be chosen by the ")
+    }
+  in
+  let solution_guard =
+    factor_out_state_numerical state_int partial_input_int threshold1 atoms guard
+  in
+  let solutions =
+    reduce_to_bool_solutions
       atoms
-      clocks
-      branch
-      clock_assignments
-      delay_interval
+      threshold2
+      state_int
+      partial_input_int
+      now
+      solution_guard
+      RI.inf
+  in
+  if List.is_empty solutions
+  then None
+  else (
+    let solutions = Array.of_list solutions in
+    let bound, clock_bdd = Array.random solutions in
+    let* clock_assignments, rat_updates, int_updates =
+      random_label_strategy atoms clocks clock_bdd [] [] VarMap.empty
+    in
+    let time = bound_strategy bound in
+    let input_int =
+      { rational = (fun v -> if String.equal now v then time else get_value rat_gens v)
+      ; integer = get_value int_gens
+      ; bool = (fun v -> VarMap.find v clock_assignments)
+      }
+    in
+    let new_state =
+      Transition.apply_assignments state_int input_int default_state assignments
+    in
+    List.iter (update_value rat_gens) rat_updates;
+    List.iter (update_value int_gens) int_updates;
+    Some (new_state, (clock_assignments, time)))
 ;;
 
 (** Follows Boolean variables as assigned in the [clock_values].
@@ -420,11 +566,7 @@ let rec factor_out_boolean_inputs atoms clock_values threshhold guard =
       | _ -> guard)
 ;;
 
-type 'v reduction =
-  | Const of 'v
-  | Variable of var
-
-let rec reduce_rat_expr (state : _ state_interface) now time = function
+let rec reduce_time_rat_expr (state : _ state_interface) now time = function
   | RConst c -> Const c
   | RStateVar v -> Const (state.rational v)
   | RInputVar v -> if String.equal v now then Const time else Variable v
@@ -432,17 +574,10 @@ let rec reduce_rat_expr (state : _ state_interface) now time = function
     failwith "reduce_rat_expr: if-then-else should not occur in an atom"
     (* TODO: remove this case on type level *)
   | RBinOp (l, op, r) ->
-    let l = reduce_rat_expr state now time l
-    and r = reduce_rat_expr state now time r in
+    let l = reduce_time_rat_expr state now time l
+    and r = reduce_time_rat_expr state now time r in
     (match l, r with
-     | Const l, Const r ->
-       Const
-         Common.Number.Rational.(
-           match op with
-           | `Add -> add l r
-           | `Sub -> sub l r
-           | `Mul -> mul l r
-           | `Div -> div l r)
+     | Const l, Const r -> Const (Common.Number.Rational.do_op op l r)
      | _ ->
        failwith
          "reduce_rat_expr: binary operation cannot add variable and constant, both have \
@@ -462,14 +597,7 @@ let rec reduce_int_expr (state : _ state_interface) = function
     let l = reduce_int_expr state l
     and r = reduce_int_expr state r in
     (match l, r with
-     | Const l, Const r ->
-       Const
-         Common.Number.Integer.(
-           match op with
-           | `Add -> add l r
-           | `Sub -> sub l r
-           | `Mul -> mul l r
-           | `Div -> div l r)
+     | Const l, Const r -> Const (Common.Number.Integer.do_op op l r)
      | _ ->
        failwith
          "reduce_int_expr: binary operation cannot add variable and constant, both have \
@@ -516,6 +644,7 @@ let some_add_z z o =
   Option.map addz q, Option.map addz nq
 ;;
 
+(* TODO: maybe go back to using native equality in the constraints and use disjunctions as the domain (in a sense, it is a DFS instead of DFS) *)
 (** Collects numerical relations into Q and Z polyhedras. Assumes that state and clock were already followed. *)
 let rec derive_num_inputs
           now
@@ -533,8 +662,6 @@ let rec derive_num_inputs
   | BFalse -> None
   | BIf (v, high, low) ->
     let atom = Dynarray.get atoms v in
-    let can_high = not (Bdd.is_false high)
-    and can_low = not (Bdd.is_false low) in
     let when_high, when_low =
       match atom with
       | BStateVar _ | BInputVar _ ->
@@ -557,8 +684,8 @@ let rec derive_num_inputs
          | Variable _, Variable _ ->
            failwith "derive_num_inputs: cannot derive from diagonal relations")
       | RatComp (l, rel, r) ->
-        let l = reduce_rat_expr state now time l
-        and r = reduce_rat_expr state now time r in
+        let l = reduce_time_rat_expr state now time l
+        and r = reduce_time_rat_expr state now time r in
         (match l, r with
          | Const l, Const r ->
            let result =
@@ -582,6 +709,8 @@ let rec derive_num_inputs
       | RatVarMarker v -> if choice then required_rats := VarMap.add v () !required_rats
       | _ -> ()
     in
+    let can_high = not (Bdd.is_false high)
+    and can_low = not (Bdd.is_false low) in
     let when_high = if can_high then when_high else None
     and when_low = if can_low then when_low else None in
     (match when_high, when_low with
@@ -722,7 +851,26 @@ let accept_solution
   else None
 ;;
 
-let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
+(** Records evaluations of all Boolean atoms in a diagram, if it is fully evaluable from the input values. Assumes consistent index with the target diagram. *)
+type atom_satisfaction_index = bool option Dynarray.t
+
+let make_satisfaction_index state inputs atoms =
+  Dynarray.map
+    (fun atom ->
+       try Some (Full.eval_bool_atom state inputs atom) with
+       (* we suppress any errors related to the computation, as some inputs can only be deduced in a path, i.e. do not have definitive solution in an atom *)
+       | _ -> None)
+    atoms
+;;
+
+let to_graph
+      ?(cstr_index : atom_index option)
+      ?(atom_index : atom_satisfaction_index option)
+      { guard; atoms; _ }
+  =
+  let atom_index_to_satisfaction =
+    Option.map_or ~default:(fun _ -> None) Dynarray.get atom_index
+  in
   let atom_to_string a =
     Format.asprintf "%a" (PP.bool_atom Format.pp_print_string Format.pp_print_string) a
   in
@@ -731,8 +879,8 @@ let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
   let atom_label i = Dynarray.get labels i in
   let index = Hashtbl.create 48 in
   let graph = G.create () in
-  let v1 = G.V.create (BDDNode "1") in
-  let v0 = G.V.create (BDDNode "0") in
+  let v1 = G.V.create (AtomNode { name = "1"; satisfied = None }) in
+  let v0 = G.V.create (AtomNode { name = "0"; satisfied = None }) in
   let rec visit bdd =
     match inspect bdd with
     | BTrue -> v1
@@ -742,7 +890,9 @@ let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
        | Some v -> v
        | None ->
          let label = atom_label v in
-         let var_vertex = G.V.create (BDDNode label)
+         let var_vertex =
+           G.V.create
+             (AtomNode { name = label; satisfied = atom_index_to_satisfaction v })
          and true_vertex = visit h
          and false_vertex = visit l in
          Hashtbl.add index (v, h, l) var_vertex;
@@ -751,13 +901,13 @@ let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
            graph
            (G.E.create
               var_vertex
-              (E.BDDEdge { label = true; complement = false; selected = false })
+              (E.AtomDecisionEdge { label = true; selected = false })
               true_vertex);
          G.add_edge_e
            graph
            (G.E.create
               var_vertex
-              (E.BDDEdge { label = false; complement = false; selected = false })
+              (E.AtomDecisionEdge { label = false; selected = false })
               false_vertex);
          var_vertex)
   in
@@ -775,7 +925,7 @@ let to_graph ?(cstr_index : atom_index option) { guard; atoms; _ } =
             |> Seq.map List.to_seq
             |> Seq.concat
             |> Seq.iter (fun target ->
-              G.add_edge_e graph (G.E.create source PointerEdge target)))
+              G.add_edge_e graph (G.E.create source RefTrackingEdge target)))
          index)
     cstr_index;
   graph

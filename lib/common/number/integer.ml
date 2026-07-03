@@ -23,3 +23,13 @@ include Interface.Number.Operators.Make (Int)
 
 let to_rational = Rational.of_int
 let of_string = int_of_string
+
+let do_op op l r =
+  match op with
+  | `Add -> add l r
+  | `Sub -> sub l r
+  | `Mul -> mul l r
+  | `Div -> div l r
+;;
+
+let pp = Format.pp_print_int

@@ -25,6 +25,13 @@ let string_of_num_op = function
   | `Div -> "/"
 ;;
 
+let invert_op = function
+  | `Add -> `Sub
+  | `Sub -> `Add
+  | `Mul -> `Div
+  | `Div -> `Mul
+;;
+
 (** Reduced set of numeric relations. *)
 type reduced_num_rel =
   [ `Less (** < *)

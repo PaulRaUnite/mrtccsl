@@ -3,39 +3,6 @@ open Prelude
 open Language
 open Cstr
 
-let factor = 1000.0
-
-let truncated_distribution ~a ~b ~cdf ~ppf =
-  let a, b = factor *. a, factor *. b in
-  let prob_l, prob_r = Tuple.map2 cdf (a, b) in
-  if Float.abs (prob_r -. prob_l) < 0.000001
-  then Random.float (b -. a) +. a
-  else (
-    let sample_prob = Owl.Stats.uniform_rvs ~a:prob_l ~b:prob_r in
-    let result = ppf sample_prob in
-    result /. factor)
-;;
-
-let truncated_guassian_rvs ~a ~b ~mu ~sigma =
-  if Float.equal sigma 0.0
-  then mu
-  else (
-    let mu, sigma = factor *. mu, factor *. sigma in
-    let cdf = Owl.Stats.gaussian_cdf ~mu ~sigma in
-    let ppf = Owl.Stats.gaussian_ppf ~mu ~sigma in
-    truncated_distribution ~a ~b ~cdf ~ppf)
-;;
-
-let truncated_exponential_rvs ~a ~b ~rate =
-  let lambda = rate /. factor in
-  let cdf = Owl.Stats.exponential_cdf ~lambda in
-  let ppf = Owl.Stats.exponential_ppf ~lambda in
-  let result = truncated_distribution ~a ~b ~cdf ~ppf in
-  result
-;;
-
-let exponential_rvs ~rate = Owl.Stats.exponential_rvs ~lambda:rate
-
 (**Specifies the distribution of the time variable. *)
 type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
 
@@ -147,28 +114,33 @@ module type S = sig
     ; print_state : unit -> string
     }
 
-  type sim
+  type repr
 
-  val empty_sim : sim
+  val empty_sim : repr
 
   val of_spec
     :  ?debug:bool
     -> (clock, param, param, var, var, N.t) Language.Specification.t
-    -> sim
+    -> repr
 
   type trace = (L.t, N.t) Trace.t
 
-  val gen_trace : sol_strategy -> sim -> trace
-  val bisimulate : sol_strategy -> sim -> sim -> trace
-  val accept_trace : sim -> trace -> bool
+  val gen_trace : sol_strategy -> repr -> trace
+  val bisimulate : sol_strategy -> repr -> repr -> trace
+  val accept_trace : repr -> trace -> bool
 end
 
+(* TODO: generalize over Label, not bijection module *)
 module MakeWithBijection
     (C : ID)
     (N : Num)
     (B : BitvectorSet.BijectionToInt.S with type elt = C.t) =
 struct
-  module C = C
+  module C = struct
+    include C
+
+    let equal x y = compare x y = 0
+  end
 
   type clock = C.t
   type param = C.t
@@ -356,7 +328,7 @@ struct
     ; print_state : unit -> string
     }
 
-  type sim =
+  type repr =
     { durations : NI.t VarSeq.container
     ; integers : II.t VarSeq.container
     ; automata : t list
@@ -384,7 +356,7 @@ struct
     }
   ;;
 
-  let empty_sim : sim =
+  let empty_sim : repr =
     { durations = VarSeq.empty_container ()
     ; integers = VarSeq.empty_container ()
     ; automata = []
@@ -413,6 +385,10 @@ struct
              eq && contains)
           possible
       in
+      if not present
+      then
+        Printf.printf "%s violates the guard: %s\n" (solution_to_string (l, n'))
+        @@ guard_to_string possible;
       present && transition n (l, n')
     in
     { name; guard; transition; clocks; print_state }
@@ -537,10 +513,9 @@ struct
     let c = ref 0 in
     let l1 = List.map L.of_list (List.powerset [ c1; c2 ]) in
     let l2 =
-      l1
-      |> List.filter (fun x ->
-        if strict then not (L.mem c2 x) else not ((not @@ L.mem c1 x) && L.mem c2 x))
-      |> Array.of_list
+      if strict
+      then [| L.empty; L.singleton c1 |]
+      else [| L.empty; L.singleton c1; L.doubleton c1 c2 |]
     in
     let l1 = Array.of_list l1 in
     let g now =
@@ -588,10 +563,17 @@ struct
         let queue = Heap.create () in
         let g now =
           match Heap.peek queue with
-          | None -> [| L.singleton a, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
+          | None ->
+            if NI.subset (NI.return N.zero) (current_delay ())
+            then
+              [| L.singleton a, NI.pinf_strict now
+               ; L.doubleton a b, NI.pinf_strict now
+               ; L.empty, NI.pinf_strict now
+              |]
+            else [| L.singleton a, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some next ->
-            [| L.singleton a, Option.get (NI.complement_left next)
-             ; L.empty, Option.get (NI.complement_left next)
+            [| L.singleton a, NI.ninf_strict (Option.get @@ NI.right_bound_opt next)
+             ; L.empty, NI.ninf_strict (Option.get @@ NI.right_bound_opt next)
              ; L.doubleton a b, next
              ; L.singleton b, next
             |]
@@ -622,7 +604,9 @@ struct
             | Some v -> NI.shift_by (current_error ()) N.(v + period)
           in
           let g =
-            [| L.singleton out, next; L.empty, Option.get (NI.complement_left next) |]
+            [| L.singleton out, next
+             ; L.empty, NI.ninf_strict (Option.get @@ NI.right_bound_opt next)
+            |]
           in
           (* let _ = Printf.printf "%s: %s\n" (C.to_string period) (guard_to_string g) in  *)
           g
@@ -656,7 +640,9 @@ struct
             | None -> current_offset ()
             | Some v -> NI.shift_by (current_error ()) N.(v + period)
           in
-          [| L.singleton out, next; L.empty, Option.get (NI.complement_left next) |]
+          [| L.singleton out, next
+           ; L.empty, NI.ninf_strict (Option.get @@ NI.right_bound_opt next)
+          |]
         in
         let t _ (l, n') =
           let _ =
@@ -697,10 +683,7 @@ struct
             (* has to be present *)
             [| ( L.singleton c
                , if strict then NI.pinf_strict left_bound else NI.pinf left_bound )
-             ; ( L.empty
-               , Option.value
-                   ~default:NI.inf
-                   (Option.map NI.ninf_strict (NI.right_bound_opt next_after)) )
+             ; L.empty, NI.inf
             |]
         in
         let t _ (l, n') =
@@ -729,8 +712,6 @@ struct
         let c = ref 0 in
         let nominal = ref false in
         let g now =
-          Printf.printf "counter %i\n" !c;
-          Printf.printf "%s\n" @@ II.to_string (current_error ());
           let labels =
             if !nominal
             then
@@ -797,60 +778,75 @@ struct
           end)
         in
         let latch = ref None in
-        let queue = Heap.create () in
+        let queue = ref [] in
         let labels_empty = [ []; [ arg ]; [ arg; base ]; [ base ] ] in
-        let labels_ne_can = [ []; [ arg ]; [ arg; base ]; [ out; base ]; [ base ] ] in
+        let labels_ne_can_alone =
+          [ []; [ arg ]; [ arg; base ]; [ out; base ]; [ base ] ]
+        in
+        let labels_ne_can =
+          [ []; [ arg ]; [ arg; base ]; [ out; base ]; [ base ]; [ out; arg; base ] ]
+        in
+        let labels_ne_must_alone = [ [ out; base ]; [] ] in
         let labels_ne_must = [ [ out; base ]; [ out; arg; base ]; [] ] in
         let g now =
           let labels =
-            match Heap.peek queue, II.to_nonstrict (current_delay ()) with
+            match
+              ( Option.or_else (List.first !queue) !latch
+              , II.to_nonstrict (current_delay ()) )
+            with
             | None, (0, 0) when diff_base -> [ []; [ arg ]; [ out; arg; base ]; [ base ] ]
             | None, (0, 0) -> [ []; [ out; arg ] ]
             | None, (0, _) -> [ []; [ arg ]; [ out; arg; base ]; [ base ]; [ arg; base ] ]
             | None, _ -> labels_empty
+            | Some (_, 0), (_, 0) -> labels_ne_must_alone
             | Some (_, 0), _ -> labels_ne_must
+            | Some (x, _), (_, 0) when x <= 0 -> labels_ne_can_alone
             | Some (x, _), _ when x <= 0 -> labels_ne_can
             | Some _, _ -> labels_empty
           in
           let labels = label_array labels in
           lo_guard labels now
         in
+        let p () =
+          let interval_str (l, r) = Printf.sprintf "[%i, %i]" l r in
+          Printf.sprintf
+            "latched: %s, heap: %s"
+            (Option.to_string ~default:"empty" interval_str !latch)
+            (List.to_string interval_str !queue)
+        in
         let t _ (l, _) =
+          (* Printf.printf "before: %s %s \n" (p ()) (solution_to_string sol); *)
           let _ =
-            if L.mem arg l then latch := Some (II.to_nonstrict (current_delay ()))
+            if L.mem arg l
+            then (
+              latch := Some (II.to_nonstrict (current_delay ()));
+              consume_delay ())
           in
           if L.mem base l
           then (
-            Option.iter
-              (fun delay ->
-                 Heap.add queue delay;
-                 consume_delay ())
-              !latch;
+            Option.iter (fun delay -> queue := List.append !queue [ delay ]) !latch;
             latch := None);
           let test1 =
             if L.mem out l
             then (
-              match Heap.pop_min queue with
-              | None -> false
-              | Some (x, _) -> x <= 0)
+              match !queue with
+              | [] -> false
+              | (x, _) :: tail ->
+                queue := tail;
+                x <= 0)
             else true
           in
           let test2 =
             if L.mem base l
             then
               not
-                (Heap.map (fun (x, y) -> x - 1, y - 1) queue;
-                 Heap.exists (fun (_, y) -> y < 0) queue)
+                (queue := List.map (fun (x, y) -> x - 1, y - 1) !queue;
+                 List.exists (fun (_, y) -> y < 0) !queue)
             else true
           in
+          (* Printf.printf "after: %s %s \n" (p ()) (solution_to_string sol);
+          Printf.printf "%b %b\n" test1 test2; *)
           test1 && test2
-        in
-        let p () =
-          let interval_str (l, r) = Printf.sprintf "[%i, %i]" l r in
-          Printf.sprintf
-            "latched: %s, heap: %s"
-            (Option.to_string ~default:"empty" interval_str !latch)
-            (List.to_string interval_str (Heap.to_list queue))
         in
         g, t, p
       | Minus { out; arg; except } ->
@@ -921,7 +917,11 @@ struct
         in
         let g_slow () =
           let slowest_clocks, _, _ = !state in
-          List.map (fun l -> if l = slowest_clocks then out :: l else l) pws
+          List.map
+            (fun l ->
+               if L.subset (L.of_list slowest_clocks) (L.of_list l) then out :: l else l)
+               (* TODO: this is inneficient *)
+            pws
         in
         let g_without_n, t =
           match constr with
@@ -942,37 +942,41 @@ struct
       | Allow { left = from; right = until; args; left_strict; right_strict }
       | Forbid { left = from; right = until; args; left_strict; right_strict } ->
         let folds = ref 0 in
-        let eventwith = [] in
-        let eventwith = if left_strict then eventwith else [ from ] :: eventwith in
-        let eventwith = if right_strict then eventwith else [ until ] :: eventwith in
-        let eventwith =
-          if right_strict && left_strict then eventwith else [ from; until ] :: eventwith
-          (*TODO: I am not extremely sure; this essentially means that there is a microstep order and until happens before from and everything else is around it. Same in forbid. *)
-        in
-        let without = [] in
-        let without = if left_strict then [ from ] :: without else without in
-        let without = if right_strict then [ until ] :: without else without in
-        let without =
-          if right_strict && left_strict then [ from; until ] :: without else without
-        in
-        let on inner outer =
+        let pws = List.powerset args in
+        let allow_more = label_array @@ List.powerset (from :: until :: args)
+        and forbid_more = label_array @@ List.powerset [ from; until ]
+        and allow_label0 =
           label_array
-          @@ List.append outer
-          @@ List.flat_cartesian ([] :: inner) (List.powerset args)
-        and off inner outer =
+            ([] :: [ from ] :: (if left_strict then [] else List.map (List.cons from) pws))
+        and allow_label1 =
           label_array
-          @@ List.append ([] :: outer)
-          @@ List.flat_cartesian inner (List.powerset args)
-        and allow_more = label_array @@ List.powerset (from :: until :: args)
-        and forbid_more = label_array @@ List.powerset [ from; until ] in
+            ([ until ]
+             :: List.flat_cartesian
+                  (if right_strict
+                   then [ [ from; until ]; [ from ]; [] ]
+                   else [ [ from; until ]; [ from ]; [ until ]; [] ])
+                  pws)
+        and forbid_label0 =
+          label_array
+            ([ from ]
+             :: List.flat_cartesian (if left_strict then [ [ from ]; [] ] else [ [] ]) pws
+            )
+        and forbid_label1 =
+          label_array
+            ([]
+             :: [ until ]
+             :: [ from; until ]
+             :: [ from ]
+             :: (if right_strict then List.map (List.cons until) pws else []))
+        in
         let g =
           match constr with
           | Allow _ ->
             fun n ->
               let labels =
                 match !folds with
-                | 0 -> off eventwith without
-                | 1 -> on eventwith without
+                | 0 -> allow_label0
+                | 1 -> allow_label1
                 | _ -> allow_more
               in
               lo_guard labels n
@@ -980,8 +984,8 @@ struct
             fun n ->
               let labels =
                 match !folds with
-                | 0 -> on without eventwith
-                | 1 -> off without eventwith
+                | 0 -> forbid_label0
+                | 1 -> forbid_label1
                 | _ -> forbid_more
               in
               lo_guard labels n
@@ -1004,7 +1008,7 @@ struct
         let g n =
           let labels =
             if !sampled
-            then [ []; [ arg ]; [ base ] ]
+            then [ []; [ arg ]; [ base ]; [ arg; base ] ]
             else [ []; [ out; arg; base ]; [ out; arg ]; [ base ] ]
           in
           let labels = label_array labels in
@@ -1018,21 +1022,23 @@ struct
         let p () = string_of_bool !sampled in
         g, t, p
       | LastSampled { out; arg; base } ->
-        let last = ref false in
+        let last = ref None in
         let g n =
           let labels =
-            if !last
-            then [ []; [ base ] ]
-            else [ []; [ out; arg; base ]; [ out; arg ]; [ arg ] ]
+            match !last with
+            | Some true -> [ []; [ base ] ]
+            | Some false -> [ []; [ out; arg; base ]; [ out; arg ]; [ arg ] ]
+            | None -> [ []; [ out; arg; base ]; [ out; arg ]; [ arg ]; [ base ] ]
           in
           lo_guard (label_array labels) n
         in
         let t _ (l, _) =
-          let _ = if L.mem out l then last := true in
-          let _ = if L.mem base l then last := false in
+          let _ = if L.mem arg l then last := Some (Option.value ~default:false !last) in
+          let _ = if L.mem out l then last := Some true in
+          let _ = if L.mem base l then last := None in
           true
         in
-        let p () = string_of_bool !last in
+        let p () = Option.to_string ~default:"none" string_of_bool !last in
         g, t, p
       | Subclocking { sub = a; super = b; _ } ->
         stateless (label_array [ []; [ a; b ]; [ b ] ])
@@ -1137,7 +1143,9 @@ struct
     Option.get chosen
   ;;
 
-  let cont_dist_value = function
+  let cont_dist_value =
+    let open Number in
+    function
     | Uniform ->
       fun cond ->
         let lower, upper =
@@ -1154,21 +1162,21 @@ struct
           @@ NI.constant_bounds cond
         in
         let a, b = Tuple.map2 N.to_float bounds in
-        let sample = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+        let sample = Float.truncated_guassian_rvs ~a ~b ~mu ~sigma in
         N.of_float sample
     | Exponential { rate } ->
       let rate = N.to_float rate in
       fun cond ->
         (match NI.constant_bounds cond with
-         | None -> N.of_float @@ exponential_rvs ~rate
+         | None -> N.of_float @@ Float.exponential_rvs ~rate
          | Some bounds ->
            let a, b = Tuple.map2 N.to_float bounds in
-           let sample = truncated_exponential_rvs ~a ~b ~rate in
+           let sample = Float.truncated_exponential_rvs ~a ~b ~rate in
            N.of_float sample)
   ;;
 
   (** Creates automata from specification. CORRECTNESS: should be run sequentially with other [of_spec].*)
-  let of_spec ?(debug = false) spec : sim =
+  let of_spec ?(debug = false) spec : repr =
     let duration_bounds =
       Language.Specification.(spec.duration)
       |> List.map NI.of_var_rel
@@ -1501,7 +1509,7 @@ let%test_module _ =
 ;;
 
 let test_truncated a b mu sigma =
-  let v = truncated_guassian_rvs ~a ~b ~mu ~sigma in
+  let v = Number.Float.truncated_guassian_rvs ~a ~b ~mu ~sigma in
   a <= v && v <= b
 ;;
 

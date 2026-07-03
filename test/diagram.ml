@@ -9,14 +9,21 @@ module DiagramBackend = struct
   module N = Number.Rational
 
   module Backend = struct
-    include Backend.Machine.Diagram
+    include Backend.Machine.Diagram.Acceptance
 
     let accept_trace m trace =
-      accept_trace
-        m
-        (Seq.map
-           Trace.(fun { label; time } -> { label = SSet.to_list label; time })
-           trace)
+      Result.is_ok
+      @@ accept_trace
+           m
+           (Seq.map
+              Trace.(
+                fun { label; time } ->
+                  { label =
+                      STS.Interpretation.VarMap.of_seq
+                      @@ Seq.map (fun c -> c, true) (SSet.to_seq label)
+                  ; time
+                  })
+              trace)
     ;;
   end
 

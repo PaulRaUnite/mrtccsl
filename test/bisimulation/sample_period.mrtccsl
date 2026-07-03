@@ -1,0 +1,7 @@
+structure {
+    // a = sample b on c;
+    // a subclocks c; 
+    // c = skip 2 every 4 with jitter [0,0] of d;
+    // al = last sample b on c;
+    af = first sample b on c;
+}

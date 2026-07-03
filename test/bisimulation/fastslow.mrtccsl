@@ -1,0 +1,4 @@
+structure {
+    r1 = fastest of a b;
+    r2 = slowest of a b;
+}

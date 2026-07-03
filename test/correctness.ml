@@ -24,14 +24,14 @@ module type BackendS = sig
   end
 
   module Backend : sig
-    type sim
+    type repr
 
     val of_spec
       :  ?debug:bool
       -> (string, string, string, string, string, N.t) Specification.t
-      -> sim
+      -> repr
 
-    val accept_trace : sim -> Trace.t -> bool
+    val accept_trace : repr -> Trace.t -> bool
   end
 end
 
@@ -219,12 +219,18 @@ module Make (B : BackendS) = struct
       ; ( "fastest"
         , order_test
             (cco [ Fastest { out = "o"; args = [ "a"; "b" ] } ])
-            [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(ao)(ao)bbb" ]
+            [ "(ao)b(bo)a"; "(abo)(abo)"; "(ao)(abo)(abo)"; "(ao)(ao)(ao)bbb" ]
             [ "aaaa"; "bbb"; "ooo"; "(ao)(bo)"; "(ao)a" ] )
       ; ( "slowest"
         , order_test
             (cco [ Slowest { out = "o"; args = [ "a"; "b" ] } ])
-            [ "a(bo)b(ao)"; "(abo)(abo)"; "aaa(bo)(bo)(bo)"; "aaaa"; "bbb" ]
+            [ "a(bo)b(ao)"
+            ; "(abo)(abo)"
+            ; "aaa(bo)(bo)(bo)"
+            ; "aa(abo)(abo)"
+            ; "aaaa"
+            ; "bbb"
+            ]
             [ "ooo"; "ab"; "bo" ] )
       ; ( "allow[f,t)"
         , order_test
@@ -237,8 +243,8 @@ module Make (B : BackendS) = struct
                    ; right_strict = true
                    }
                ])
-            [ "fab(ab)t"; "(fa)t" ]
-            [ "aftb"; "b" ] )
+            [ "fab(ab)t"; "(fa)t"; "f(ft)t"; "fa(ft)t"; "ffffttt" ]
+            [ "aftb"; "b"; "ftt"; "(ft)" ] )
         (* ; ( "allow(f,t]"
       , rglwt
           (cco
@@ -255,21 +261,41 @@ module Make (B : BackendS) = struct
       ; ( "allow-prec"
         , order_test
             (cco
-               [ Allow { left = "f"; right = "t"; args = [ "a"; "b" ] ; left_strict = false; right_strict=true}
+               [ Allow
+                   { left = "f"
+                   ; right = "t"
+                   ; args = [ "a"; "b" ]
+                   ; left_strict = false
+                   ; right_strict = true
+                   }
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
                ])
             [ "fat"; "fabt"; "fafatt" ]
-            [ "aftb"; "b"; "(fa)tb"; "faaat" ] )
+            [ "aftb"; "b"; "(fa)tb"; "faaat"; "(ft)" ] )
       ; ( "forbid[f,t)"
         , order_test
-            (cco [ Forbid { left = "f"; right = "t"; args = [ "a" ] ; left_strict = false; right_strict=true} ])
-            [ "f"; "afta"; "f(ta)"; "(ft)" ]
-            [ "fat"; "ffatt"; "a(fa)"; "t" ] )
+            (cco
+               [ Forbid
+                   { left = "f"
+                   ; right = "t"
+                   ; args = [ "a" ]
+                   ; left_strict = false
+                   ; right_strict = true
+                   }
+               ])
+            [ "f"; "afta"; "f(ta)"; "f(ft)t"; "ffffttt" ]
+            [ "fat"; "ffatt"; "a(fa)"; "t"; "ftt"; "(ta)"; "(ft)"; "fa(ft)t" ] )
       ; ( "forbid-prec"
         , order_test
             (cco
-               [ Forbid { left = "f"; right = "t"; args = [ "a" ]; left_strict = false; right_strict=true }
+               [ Forbid
+                   { left = "f"
+                   ; right = "t"
+                   ; args = [ "a" ]
+                   ; left_strict = false
+                   ; right_strict = true
+                   }
                ; Precedence { cause = "f"; conseq = "a" }
                ; Precedence { cause = "a"; conseq = "t" }
                ])
@@ -281,8 +307,18 @@ module Make (B : BackendS) = struct
                [ FirstSampled { out = "f"; arg = "a"; base = "b" }
                ; LastSampled { out = "l"; arg = "a"; base = "b" }
                ])
-            [ "(falb)(fa)(al)b" ]
-            [ "ab"; "(lab)" ] )
+            [ "(falb)(fa)(al)b"; "b" ]
+            [ "ab"; "(lab)"; "(ab)" ] )
+      ; ( "first-sampled"
+        , order_test
+            (cco [ FirstSampled { out = "f"; arg = "a"; base = "b" } ])
+            [ "(fab)"; "b"; "(fa)ab"; "(fa)" ]
+            [ "ab"; "(ab)"; "(fb)"; "fa" ] )
+      ; ( "last-sampled"
+        , order_test
+            (cco [ LastSampled { out = "l"; arg = "a"; base = "b" } ])
+            [ "(lab)"; "b"; "a(la)b"; "(la)" ]
+            [ "ab"; "(ab)"; "(lb)"; "la" ] )
       ; ( "subclocking"
         , order_test
             (cco [ Subclocking { sub = "a"; super = "b"; choice = None } ])
@@ -293,19 +329,29 @@ module Make (B : BackendS) = struct
             (cco [ Intersection { out = "i"; args = [ "a"; "b"; "c" ] } ])
             [ "(iabc)abc"; "(ab)" ]
             [ "(abc)"; "(iab)"; "i" ] )
+      ; ( "mutex"
+        , order_test
+            (cco [ Pool (1, [("a","b");("c","d")]) ])
+            [ "abcd"; "a(bc)d" ]
+            [ "(ab)"; "a(ac)"; "c(abd)" ; "a(bcd)"; "(abcd)"; "c(abcd)"] )
       ; ( "rt-delay-const"
         , rtime_test
             (cco [ RTdelay { arg = "i"; out = "o"; delay = const 4 } ])
             [ "io", [ 4; 8 ]; "i(io)o", [ 2; 6; 10 ]; "i", [ 500 ] ]
             [ "io", [ 1; 2 ]; "io", [ 1; 10 ]; "o", [ 5 ] ] )
+      ; ( "rt-delay-const0"
+        , rtime_test
+            (cco [ RTdelay { arg = "i"; out = "o"; delay = const 0 } ])
+            [ "(io)", [ 4; 8 ] ]
+            [ "io", [ 1; 2 ] ] )
       ; ( "rt-delay"
         , rtime_test
             (of_decl (fun b ->
                logical b @@ RTdelay { arg = "i"; out = "o"; delay = var "t" };
                duration b @@ NumRelation ("t", `LessEq, Const 3);
-               duration b @@ NumRelation ("t", `MoreEq, Const 1)))
-            [ "io", [ 4; 6 ]; "i(io)o", [ 2; 3; 6 ]; "i", [ 500 ] ]
-            [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ] ] )
+               duration b @@ NumRelation ("t", `MoreEq, Const 2)))
+            [ "io", [ 4; 7 ]; "i(io)o", [ 2; 4; 7 ]; "i", [ 500 ] ]
+            [ "ioo", [ 1; 2; 3 ]; "io", [ 3; 10 ]; "io", [ 3; 4 ]; "ib", [ 1; 10 ] ] )
       ; ( "cumul-period"
         , rtime_test
             (of_decl (fun b ->
@@ -315,7 +361,7 @@ module Make (B : BackendS) = struct
                duration b @@ NumRelation ("e", `LessEq, Const 1);
                duration b @@ NumRelation ("e", `MoreEq, Const (-1))))
             [ "ooo", [ 2; 6; 10 ]; "ooo", [ 2; 5; 8 ] ]
-            [ "o", [ 4 ]; "o", [ 1 ]; "oo", [ 2; 11 ] ] )
+            [ "o", [ 4 ]; "o", [ 1 ]; "oo", [ 2; 11 ]; "b", [ 4 ] ] )
       ; ( "abs-period"
         , rtime_test
             (of_decl (fun b ->
