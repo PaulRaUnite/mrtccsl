@@ -340,7 +340,21 @@ let rec factor_out_state_numerical
           (if result then h else l))
 ;;
 
-module VarMap = Map.Make (String)
+module VarMap = struct
+  include Map.Make (String)
+
+  module Label = struct
+    module E = String
+
+    type nonrec t = bool t
+    type elt = E.t
+
+    let mem e map = value ~default:false e map
+    let to_iter map = to_iter map |> Iter.map fst
+    let of_iter iter = iter |> Iter.map (fun e -> e, true) |> Iter.to_list |> of_list
+    let singleton e = VarMap.singleton e true
+  end
+end
 
 (** Assigns random values to free clocks. *)
 let random_not_assigned clocks clock_assignments =

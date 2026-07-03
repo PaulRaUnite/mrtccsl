@@ -247,7 +247,7 @@ let simulate ~config m =
 ;;
 
 let cmd =
-  Cmd.v (Cmd.info "simulate" ~version ~doc:"Simulate a CCSL+ specification.")
+  Cmd.v (Cmd.info "simulate" ~version ~doc:"Simulate a CCSL+ specification using \"naive\" backend.")
   @@ Term.ret
   @@ let+ specification = spec_file_arg
      and+ output_dir = output_dir_arg

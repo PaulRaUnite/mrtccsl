@@ -10,12 +10,13 @@ let cmd =
        "ccsl+"
        ~doc:"Collection of tools for CCSL+ (modular, real-time, probabilistic CCSL).")
     [ Simulate.cmd
+    ; Simulate2.cmd
     ; Reaction.cmd
     ; Reaction2.cmd
     ; Reaction_check.cmd
     ; Trace.cmd
     ; Check.cmd
-    ; Viewgraph.cmd
+    ; View.cmd
     ; Debug.cmd
     ; Compare.cmd
     ]

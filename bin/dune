@@ -1,7 +1,7 @@
 (executable
  (public_name ccsl+)
  (name ccslplus)
- (modules ccslplus aux reaction reaction2 reaction_check simulate convert check trace filter viewgraph debug compare)
+ (modules ccslplus aux reaction reaction2 reaction_check simulate simulate2 convert check trace filter viewgraph debug compare viewdiagram view)
  (libraries mrtccsl common domainslib mrtccslparsing cmdliner dune-build-info causeEffect))
 
 (executable
@@ -10,11 +10,6 @@
  (modules exec)
  (libraries mrtccsl common domainslib))
 
-(executable
- (public_name machine)
- (name machine)
- (modules machine)
- (libraries mrtccsl common sts vpl-core))
 
 (env
  (dev
