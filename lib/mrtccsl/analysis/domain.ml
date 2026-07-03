@@ -33,13 +33,14 @@ module type S = sig
   include Interface.Stringable with type t := t
 end
 
-module type Alloc = sig
+exception NonConvex
+
+(* module type Alloc = sig
   type dom
 
   val alloc : dom Apron.Manager.t
 end
 
-exception NonConvex
 
 module Polka (A : Alloc) (V : Var) (N : Num) = struct
   open Denotational
@@ -117,7 +118,7 @@ module Polka (A : Alloc) (V : Var) (N : Num) = struct
   let infinite_in _ _ = failwith "not implemented"
   let set_debug _ = ()
   let project _ _ = failwith "not implemented"
-end
+end *)
 
 module VPL (V : Var) (N : Num) = struct
   open Denotational

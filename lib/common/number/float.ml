@@ -27,6 +27,7 @@ let to_int = int_of_float
 let of_float x = x
 let to_float x = x
 let of_string = float_of_string
+let of_pair (nom, denom) = of_int nom /. of_int denom
 
 (* TODO: refactor out distributions to numbers *)
 let factor = 1000.0

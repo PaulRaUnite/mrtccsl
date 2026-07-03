@@ -12,8 +12,7 @@ module Make
        include Map.OrderedType with type t := t
        include Interface.Stringable with type t := t
 
-       val from_pair : int * int -> t
-       val to_int : t -> int
+       val of_pair : int * int -> t
      end) =
 struct
   module Categories = Map.Make (Category)
@@ -60,10 +59,9 @@ struct
         (CategorySet.empty, Bins.empty, 0)
         reaction_times
     in
+    let total_num = Num.of_pair (total, 1) in
     let normalized_bins =
-      Bins.map
-        (Categories.map (fun count -> Num.div count (Num.from_pair (total, 1))))
-        bins
+      Bins.map (Categories.map (fun count -> Num.div count total_num)) bins
     in
     { bins = normalized_bins; categories; total; step_width }
   ;;
@@ -81,7 +79,7 @@ struct
         reaction_times
     in
     let normalized_bins =
-      Bins.map (Categories.map (fun count -> Num.from_pair (count, total))) bins
+      Bins.map (Categories.map (fun count -> Num.of_pair (count, total))) bins
     in
     { bins = normalized_bins; categories; total; step_width }
   ;;

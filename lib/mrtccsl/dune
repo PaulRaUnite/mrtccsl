@@ -5,8 +5,6 @@
  (public_name mrtccsl)
  (inline_tests)
  (libraries
-  apron
-  apron.polkaMPQ
   vpl-core
   ocamlgraph
   common

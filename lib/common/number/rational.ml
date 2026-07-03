@@ -58,9 +58,9 @@ let random l r =
 ;;
 
 let to_rational = Fun.id
-let from_pair (nom, denom) = of_frac nom denom
+let of_pair (nom, denom) = of_frac nom denom
 
-let of_decimal_string s =
+let of_positive_string s =
   match String.split_on_char '.' s with
   | [ whole; decimal ] ->
     let whole = (of_int << int_of_string) whole in
@@ -70,6 +70,23 @@ let of_decimal_string s =
     add whole decimal
   | [ whole ] -> of_int (int_of_string whole)
   | _ -> failwithf "wrong decimal number: %s" s
+;;
+
+let of_decimal_string s =
+  let negative = String.chop_prefix ~pre:"-" s in
+  match negative with
+  | Some positive -> neg @@ of_positive_string positive
+  | None -> of_positive_string s
+;;
+
+
+let%test_unit "parsing" =
+  [%test_eq: t] (of_decimal_string "0.0") zero;
+  [%test_eq: t] (of_decimal_string "-0.0") zero;
+  [%test_eq: t] (of_decimal_string "1.0") one;
+  [%test_eq: t] (of_decimal_string "-1.0") minus_one;
+  [%test_eq: t] (of_decimal_string "1.010") (of_frac 101 100);
+  [%test_eq: t] (of_decimal_string "-0.010") (of_frac (-1) 100)
 ;;
 
 let of_float v =

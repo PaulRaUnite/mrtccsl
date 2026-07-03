@@ -77,8 +77,8 @@ non_empty_dangling_list(sep, X):
 %inline percentage : DECIMAL ; PERCENT { Percent $1 }
 
 %inline duration : 
-| value=DECIMAL ; scale=SECOND { Second { value ; scale=(Number.Rational.from_pair scale) } }
-| value=INT ; scale=SECOND { Second {value=Number.Rational.of_int value; scale=(Number.Rational.from_pair scale)}}
+| value=DECIMAL ; scale=SECOND { Second { value ; scale=(Number.Rational.of_pair scale) } }
+| value=INT ; scale=SECOND { Second {value=Number.Rational.of_int value; scale=(Number.Rational.of_pair scale)}}
 
 %inline interval(X) :
 | LBRACKET ; left=X ; COMMA ; right=X ; RBRACKET { {left_strict=false; left; right; right_strict=false} }

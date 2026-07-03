@@ -72,14 +72,22 @@ let extract_histogram ~scale reactions =
   histogram
 ;;
 
-let do_command ~scale ~output_dir ~microstep_file ~network_file ~cause ~conseq trace_files
+let do_command
+      ?threshold
+      ~scale
+      ~output_dir
+      ~microstep_file
+      ~network_file
+      ~cause
+      ~conseq
+      trace_files
   =
   let traces = List.map load_trace trace_files in
   let network_decl = load_declaration network_file in
   let sequalizer = microstep_sequalizer microstep_file in
   let do_trace trace =
     let trace = Trace.sequalize_trace ~label_to_seq:sequalizer trace in
-    let result = React.collect ~cause ~conseq network_decl trace in
+    let result = React.collect ?threshold ~cause ~conseq network_decl trace in
     result
   in
   let all_results = List.map do_trace traces in
@@ -127,6 +135,16 @@ let scale_arg =
     required
     & opt (some rational) None
     & info [ "d"; "scale" ] ~doc:"Scale used for histograms." ~docv:"SCALE")
+;;
+
+let threshold_arg =
+  Arg.(
+    value
+    & opt (some rational) None
+    & info
+        [ "t"; "threshold" ]
+        ~doc:"Log functional chains bigger than the threshold."
+        ~docv:"SCALE")
 ;;
 
 let output_dir_arg =
@@ -205,7 +223,8 @@ let cmd =
   and+ scale = scale_arg
   and+ cause = start_semantics_arg
   and+ conseq = finish_semantics_arg
-  and+ output_dir = output_dir_arg in
+  and+ output_dir = output_dir_arg
+  and+ threshold = threshold_arg in
   let traces = if List.length traces = 0 then [ "-" ] else traces in
   if
     network_file :: microstep_file :: traces
@@ -217,6 +236,7 @@ let cmd =
     `Ok
       (Ok
          (do_command
+            ?threshold
             ~scale
             ~output_dir
             ~microstep_file

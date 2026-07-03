@@ -59,9 +59,17 @@ Syntax is available at: [syntax.ebnf](./lib/mrtccslparsing/syntax.ebnf)
 - install opam from https://opam.ocaml.org
 - clone the repo with `git clone https://github.com/PaulRaUnite/mrtccsl`
 - (recommended) create local switch with `opam switch create ./` (run inside the directory)
+- (optionally) add at the end of the command `ocaml-variants.5.4.1+options ocaml-option-flambda` or run `opam install ocaml-variants.5.4.1+options ocaml-option-flambda` to get flambda version of the compiler, which provides better optimization, but is more limited in supported output (no bytecode, for example)
 - run `eval $(opam env)` (and every time before starting development)
-- run `opam install . --deps-only --with-tests --with-docs` to install *all* the dependencies (add `-w` when installing development version different from the published version)
-- finally, `dune build` to simply build and `dune runtest` to run the tests of the project
+- either:
+    - to install:
+        - run `opam install .` to install the package with the tool available as `ccsl+` binary
+        - add `-w` when installing development version different from the git version
+        - to reinstall, do `opam remove mrtccsl` and `opam pin remove mrtccsl` before rerunning `opam install`
+    - to develop locally only:
+        - `opam install . --deps-only` to install the dependencies of the project only
+        - install the language server and `ocamlformat` (its version is indicated in the file [.ocamlformat](.ocamlformat)): `opam install ocaml-lsp-server ocamlformat`
+        - `dune build` to build locally and `dune runtest` to run the tests of the project
 
-The project uses [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) scheme and generate the changelogs using [git-cliff](https://git-cliff.org/) since version `0.5.0`.
+This project uses [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) scheme and generates the changelogs using [git-cliff](https://git-cliff.org/) since version `0.5.0`.
 We use (unironically) the [zero-based versioning](https://0ver.org/) until some stable API can be sort of guaranteed (either as text and CLI, or as a library).

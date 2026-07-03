@@ -138,17 +138,22 @@ module Make (C : Set.OrderedType) = struct
 
   let graph (spec : _ Specification.t) =
     let constr = Array.of_list spec.clock in
+    let graph = G.create ~size:(Array.length constr) () in
     let vertices =
       Array.mapi
         (fun i c ->
            let labels = squish c in
-           G.V.create
-             { solutions = List.length labels
-             ; labels
-             ; constr = i
-             ; constr_str = Cstr.name c
-             ; clocks = L.of_list @@ Cstr.clocks c
-             })
+           let v =
+             G.V.create
+               { solutions = List.length labels
+               ; labels
+               ; constr = i
+               ; constr_str = Cstr.name c
+               ; clocks = L.of_list @@ Cstr.clocks c
+               }
+           in
+           G.add_vertex graph v;
+           v)
         constr
     in
     let iter = Iter.int_range ~start:0 ~stop:(Array.length vertices - 1) in
@@ -168,7 +173,7 @@ module Make (C : Set.OrderedType) = struct
                   if solutions > 0
                   then G.add_edge_e m (G.E.create vertices.(i) solutions vertices.(j));
                   m)))
-           (G.create ~size:(Array.length vertices) ())
+           graph
     in
     constr, graph
   ;;
@@ -178,11 +183,14 @@ module Make (C : Set.OrderedType) = struct
     let module Components = Graph.Components.Undirected (G) in
     let components = Components.components_list graph in
     let optimize_component component =
-      let root = root graph component in
-      let clocks =
-        List.fold_left L.union L.empty (List.map (fun v -> (G.V.label v).clocks) root)
-      in
-      optimize graph (List.length component) root clocks
+      if List.length component <= 2
+      then component
+      else (
+        let root = root graph component in
+        let clocks =
+          List.fold_left L.union L.empty (List.map (fun v -> (G.V.label v).clocks) root)
+        in
+        optimize graph (List.length component) root clocks)
     in
     let constraints =
       List.rev_map

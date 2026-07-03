@@ -17,6 +17,7 @@ let cmd =
     ; Check.cmd
     ; Viewgraph.cmd
     ; Debug.cmd
+    ; Compare.cmd
     ]
 ;;
 
