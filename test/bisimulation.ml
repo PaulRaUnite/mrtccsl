@@ -122,7 +122,7 @@ let from_naive_to_diagram name spec =
       clocks
       trace;
     let diagram, cstr_index = diagram in
-    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index ~atom_index diagram in
+    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index ~atom_index diagram.atoms diagram.guard in
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_accept.dot" name))
       graph
@@ -154,7 +154,7 @@ let from_diagram_to_naive name spec =
       clocks
       trace;
     let STS.Interpretation.Diagram.{ diagram; _ }, cstr_index = diagram in
-    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index diagram in
+    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index diagram.atoms diagram.guard in
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_simulate.dot" name))
       graph)

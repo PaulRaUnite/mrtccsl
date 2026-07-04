@@ -53,7 +53,7 @@ let make_diagram simulation spec_filename output =
       let open STS.Interpretation.Diagram in
       acceptance_diagram now m cstr_index)
   in
-  Dot.output_graph output @@ to_graph ~cstr_index d
+  Dot.output_graph output @@ to_graph ~cstr_index d.atoms d.guard
 ;;
 
 let cmd : (unit, string) result Cmd.t =

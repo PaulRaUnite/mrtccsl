@@ -69,18 +69,322 @@ module Order = struct
   module LvMap = Map.Make (Level)
 end
 
-let rec bool_expr_to_bdd = function
+type ('sv, 'iv) t =
+  { now : 'iv
+  ; atoms : ('sv, 'iv) bool_atom Dynarray.t
+  ; guard : Bdd.t
+  ; assignments : ('sv, 'iv) assignment list
+  ; threshold1 : int
+  ; threshold2 : int
+  }
+
+(** Records evaluations of all Boolean atoms in a diagram, if it is fully evaluable from the input values. Assumes consistent index with the target diagram. *)
+type atom_satisfaction_index = bool option Dynarray.t
+
+let make_satisfaction_index state inputs atoms =
+  Dynarray.map
+    (fun atom ->
+       try Some (Full.eval_bool_atom state inputs atom) with
+       (* we suppress any errors related to the computation, as some inputs can only be deduced in a path, i.e. do not have definitive solution in an atom *)
+       | _ -> None)
+    atoms
+;;
+
+module V = struct
+  type t =
+    | AtomNode of
+        { name : string
+        ; satisfied : bool option
+        }
+    | Constraint of string
+  [@@deriving show]
+end
+
+module E = struct
+  let compare_bool = Bool.compare
+
+  type t =
+    | AtomDecisionEdge of
+        { label : bool
+        ; selected : bool
+        }
+    | RefTrackingEdge
+  [@@deriving compare, show]
+
+  let default = RefTrackingEdge
+end
+
+module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
+
+module Dot = Graph.Graphviz.Dot (struct
+    include G
+
+    let vertex_name v = string_of_int (V.hash v)
+    let graph_attributes _ = []
+    let default_vertex_attributes _ = []
+
+    let vertex_attributes v =
+      let label = V.label v in
+      match label with
+      | AtomNode node ->
+        (match node.name with
+         | "0" | "1" -> [ `Label node.name; `Shape `Box ]
+         | _ ->
+           (match node.satisfied with
+            | Some satisfied ->
+              [ `Label node.name
+              ; (if satisfied then `Color 0x00ff00 else `Color 0xff0000)
+              ; `Style `Bold
+              ]
+            | None -> [ `Label node.name ]))
+      | Constraint s -> [ `Label s; `Shape `Box; `Color 0xff00ff ]
+    ;;
+
+    let default_edge_attributes _ = []
+
+    let edge_attributes e =
+      match G.E.label e with
+      | AtomDecisionEdge label ->
+        [ `Label (string_of_bool label.label)
+        ; `Style (if label.label then `Solid else `Dashed)
+        ; `Color (if label.selected then 0xff0000 else 0)
+        ]
+      | RefTrackingEdge -> [ `Arrowhead `Normal; `Color 0xff00ff ]
+    ;;
+
+    (* TODO: add more colors, PointerEdge is a dumb name too *)
+
+    let get_subgraph _ = None
+  end)
+
+let to_dot graph = Dot.output_graph stdout graph
+
+type bool_var = int
+
+type 'a b =
+  | BFalse
+  | BTrue
+  | BIf of bool_var * 'a * 'a
+
+let[@inline always] inspect bdd =
+  if Bdd.is_true bdd
+  then BTrue
+  else if Bdd.is_false bdd
+  then BFalse
+  else BIf (Bdd.root_var bdd, Bdd.high_part bdd, Bdd.low_part bdd)
+;;
+
+let to_graph
+      ?(cstr_index : atom_index option)
+      ?(atom_index : atom_satisfaction_index option)
+      atoms
+      guard
+  =
+  let atom_index_to_satisfaction =
+    Option.map_or ~default:(fun _ -> None) Dynarray.get atom_index
+  in
+  let atom_to_string a =
+    Format.asprintf "%a" (PP.bool_atom Format.pp_print_string Format.pp_print_string) a
+  in
+  let labels = Dynarray.map atom_to_string atoms in
+  let local_atom_index = Hashtbl.create 16 in
+  let atom_label i = Dynarray.get labels i in
+  let index = Hashtbl.create 48 in
+  let graph = G.create () in
+  let v1 = G.V.create (AtomNode { name = "1"; satisfied = None }) in
+  let v0 = G.V.create (AtomNode { name = "0"; satisfied = None }) in
+  let rec visit bdd =
+    match inspect bdd with
+    | BTrue -> v1
+    | BFalse -> v0
+    | BIf (v, h, l) ->
+      (match Hashtbl.find_opt index (v, h, l) with
+       | Some v -> v
+       | None ->
+         let label = atom_label v in
+         let var_vertex =
+           G.V.create
+             (AtomNode { name = label; satisfied = atom_index_to_satisfaction v })
+         in
+         G.add_vertex graph var_vertex;
+         let true_vertex = visit h
+         and false_vertex = visit l in
+         Hashtbl.add index (v, h, l) var_vertex;
+         Hashtbl.entry ~default:[] (List.cons var_vertex) label local_atom_index;
+         G.add_edge_e
+           graph
+           (G.E.create
+              var_vertex
+              (E.AtomDecisionEdge { label = true; selected = false })
+              true_vertex);
+         G.add_edge_e
+           graph
+           (G.E.create
+              var_vertex
+              (E.AtomDecisionEdge { label = false; selected = false })
+              false_vertex);
+         var_vertex)
+  in
+  G.add_vertex graph @@ visit guard;
+  Option.iter
+    (fun index ->
+       Hashtbl.iter
+         (fun k v ->
+            let source = G.V.create (Constraint k) in
+            G.add_vertex graph source;
+            v
+            |> List.to_seq
+            |> Seq.map atom_to_string
+            |> Seq.filter_map (Hashtbl.find_opt local_atom_index)
+            |> Seq.map List.to_seq
+            |> Seq.concat
+            |> Seq.iter (fun target ->
+              G.add_edge_e graph (G.E.create source RefTrackingEdge target)))
+         index)
+    cstr_index;
+  (* Printf.printf "V: %i, E: %i\n" (G.nb_vertex graph) (G.nb_edges graph);
+  G.iter_edges_e
+    (fun e ->
+       let s = G.V.label @@ G.E.src e
+       and d = G.V.label @@ G.E.dst e
+       and l = G.E.label e in
+       Printf.printf "%s -- %s -> %s\n" (V.show s) (E.show l) (V.show d))
+    graph; *)
+  graph
+;;
+
+(* module Bdd2 = struct
+  let file = open_out "./debug/dots.md"
+  let diagrams = Dynarray.of_list [ Bdd.dfalse (); Bdd.dtrue () ]
+
+  type t = Bdd.t * int
+
+  let dfalse () =
+    let f = Bdd.dfalse () in
+    f, 0
+  ;;
+
+  let dtrue () =
+    let t = Bdd.dtrue () in
+    t, 1
+  ;;
+
+  let get (x, _) atoms =
+    Dynarray.iteri
+      (fun i d ->
+         (* Printf.printf "diagram: %i\nis_true: %b\n" i (Bdd.is_true d); *)
+         let f = open_out (Printf.sprintf "./debug/%i.dot" i) in
+         Dot.output_graph f (to_graph atoms d);
+         close_out f)
+      diagrams;
+    Dynarray.clear diagrams;
+    Dynarray.append_list diagrams [ Bdd.dfalse (); Bdd.dtrue () ];
+    x
+  ;;
+
+  let dnot (x, x_id) : t =
+    let res = Bdd.dnot x in
+    let id = Dynarray.length diagrams in
+    Dynarray.add_last diagrams res;
+    Printf.fprintf file "- [%i](./%i.dot) := NOT [%i](./%i.dot)\n" id id x_id x_id;
+    res, id
+  ;;
+
+  let dand (x, x_id) (y, y_id) =
+    let res = Bdd.dand x y in
+    let id = Dynarray.length diagrams in
+    Dynarray.add_last diagrams res;
+    Printf.fprintf
+      file
+      "- [%i](./%i.dot) := [%i](./%i.dot) && [%i](%i.dot)\n"
+      id
+      id
+      x_id
+      x_id
+      y_id
+      y_id;
+    res, id
+  ;;
+
+  let dor (x, x_id) (y, y_id) =
+    if Bdd.is_false x
+    then y, y_id
+    else if Bdd.is_false y
+    then x, x_id
+    else (
+      let res = Bdd.dor x y in
+      let id = Dynarray.length diagrams in
+      Dynarray.add_last diagrams res;
+      Printf.fprintf
+        file
+        "- [%i](./%i.dot) := [%i](./%i.dot) || [%i](%i.dot)\n"
+        id
+        id
+        x_id
+        x_id
+        y_id
+        y_id;
+      res, id)
+  ;;
+
+  let eq (x, x_id) (y, y_id) =
+    let res = Bdd.eq x y in
+    let id = Dynarray.length diagrams in
+    Dynarray.add_last diagrams res;
+    Printf.fprintf
+      file
+      "- [%i](./%i.dot) := [%i](./%i.dot) == [%i](%i.dot)\n"
+      id
+      id
+      x_id
+      x_id
+      y_id
+      y_id;
+    res, id
+  ;;
+
+  let ite (x, x_id) (y, y_id) (z, z_id) =
+    let res = Bdd.ite x y z in
+    let id = Dynarray.length diagrams in
+    Dynarray.add_last diagrams res;
+    Printf.fprintf
+      file
+      "- [%i](./%i.dot) := if [%i](./%i.dot) then [%i](%i.dot) else [%i](%i.dot)\n"
+      id
+      id
+      x_id
+      x_id
+      y_id
+      y_id
+      z_id
+      z_id;
+    res, id
+  ;;
+
+  let idy v : t =
+    let res = Bdd.idy v in
+    let id = Dynarray.length diagrams in
+    Dynarray.add_last diagrams res;
+    Printf.fprintf file "- [%i](./%i.dot) := VAR %i \n" id id v;
+    res, id
+  ;;
+end *)
+
+let rec bool_expr_to_bdd
+  =
+  (* let module Bdd = Bdd2 in *)
+  function
   | BConst c -> if c then Bdd.dtrue () else Bdd.dfalse ()
   | BAtom a -> Bdd.idy a
   | BNot e ->
     let e = bool_expr_to_bdd e in
     Bdd.dnot e
-  | BAnd es ->
-    let es = List.map bool_expr_to_bdd es in
-    List.fold_left Bdd.dand (Bdd.dtrue ()) es
-  | BOr es ->
-    let es = List.map bool_expr_to_bdd es in
-    List.fold_left Bdd.dor (Bdd.dfalse ()) es
+  | BAnd exprs ->
+    let exprs = List.map bool_expr_to_bdd exprs in
+    List.fold_left Bdd.dand (Bdd.dtrue ()) exprs
+  | BOr exprs ->
+    let exprs = List.map bool_expr_to_bdd exprs in
+    List.fold_left Bdd.dor (Bdd.dfalse ()) exprs
   | BEq (x, y) ->
     let x = bool_expr_to_bdd x
     and y = bool_expr_to_bdd y in
@@ -99,15 +403,6 @@ let rec bool_expr_to_bdd = function
     and if_false = bool_expr_to_bdd if_false in
     Bdd.ite cond if_true if_false
 ;;
-
-type ('sv, 'iv) t =
-  { now : 'iv
-  ; atoms : ('sv, 'iv) bool_atom Dynarray.t
-  ; guard : Bdd.t
-  ; assignments : ('sv, 'iv) assignment list
-  ; threshold1 : int
-  ; threshold2 : int
-  }
 
 module AtomIndex = Map.Make (struct
     type t = (string, string) bool_atom
@@ -150,6 +445,7 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
       (Dynarray.create (), Order.LvIndMap.empty, LvMap.empty)
   in
   let guard = map_bool_expr (fun k -> LvIndMap.find k remap) guard in
+  (* let guard = Bdd2.get (bool_expr_to_bdd guard) bool_atoms in *)
   let guard = bool_expr_to_bdd guard in
   { now
   ; atoms = bool_atoms
@@ -228,89 +524,6 @@ let simulation_diagram now machine clocks index =
       index
   in
   { diagram with atoms }, index
-;;
-
-module V = struct
-  type t =
-    | AtomNode of
-        { name : string
-        ; satisfied : bool option
-        }
-    | Constraint of string
-end
-
-module E = struct
-  let compare_bool = Bool.compare
-
-  type t =
-    | AtomDecisionEdge of
-        { label : bool
-        ; selected : bool
-        }
-    | RefTrackingEdge
-  [@@deriving compare]
-
-  let default = RefTrackingEdge
-end
-
-module G = Graph.Imperative.Digraph.AbstractLabeled (V) (E)
-
-module Dot = Graph.Graphviz.Dot (struct
-    include G
-
-    let vertex_name v = string_of_int (V.hash v)
-    let graph_attributes _ = []
-    let default_vertex_attributes _ = []
-
-    let vertex_attributes v =
-      let label = V.label v in
-      match label with
-      | AtomNode node ->
-        (match node.name with
-         | "0" | "1" -> [ `Label node.name; `Shape `Box ]
-         | _ ->
-           (match node.satisfied with
-            | Some satisfied ->
-              [ `Label node.name
-              ; (if satisfied then `Color 0x00ff00 else `Color 0xff0000)
-              ; `Style `Bold
-              ]
-            | None -> [ `Label node.name ]))
-      | Constraint s -> [ `Label s; `Shape `Box; `Color 0xff00ff ]
-    ;;
-
-    let default_edge_attributes _ = []
-
-    let edge_attributes e =
-      match G.E.label e with
-      | AtomDecisionEdge label ->
-        [ `Label (string_of_bool label.label)
-        ; `Style (if label.label then `Solid else `Dashed)
-        ; `Color (if label.selected then 0xff0000 else 0)
-        ]
-      | RefTrackingEdge -> [ `Arrowhead `Normal; `Color 0xff00ff ]
-    ;;
-
-    (* TODO: add more colors, PointerEdge is a dumb name too *)
-
-    let get_subgraph _ = None
-  end)
-
-let to_dot graph = Dot.output_graph stdout graph
-
-type bool_var = int
-
-type 'a b =
-  | BFalse
-  | BTrue
-  | BIf of bool_var * 'a * 'a
-
-let[@inline always] inspect bdd =
-  if Bdd.is_true bdd
-  then BTrue
-  else if Bdd.is_false bdd
-  then BFalse
-  else BIf (Bdd.root_var bdd, Bdd.high_part bdd, Bdd.low_part bdd)
 ;;
 
 (** @returns BDD that was specialized by the state and input variables *)
@@ -863,84 +1076,4 @@ let accept_solution
     in
     Some (Transition.apply_assignments state_int input_int default_state assignments))
   else None
-;;
-
-(** Records evaluations of all Boolean atoms in a diagram, if it is fully evaluable from the input values. Assumes consistent index with the target diagram. *)
-type atom_satisfaction_index = bool option Dynarray.t
-
-let make_satisfaction_index state inputs atoms =
-  Dynarray.map
-    (fun atom ->
-       try Some (Full.eval_bool_atom state inputs atom) with
-       (* we suppress any errors related to the computation, as some inputs can only be deduced in a path, i.e. do not have definitive solution in an atom *)
-       | _ -> None)
-    atoms
-;;
-
-let to_graph
-      ?(cstr_index : atom_index option)
-      ?(atom_index : atom_satisfaction_index option)
-      { guard; atoms; _ }
-  =
-  let atom_index_to_satisfaction =
-    Option.map_or ~default:(fun _ -> None) Dynarray.get atom_index
-  in
-  let atom_to_string a =
-    Format.asprintf "%a" (PP.bool_atom Format.pp_print_string Format.pp_print_string) a
-  in
-  let labels = Dynarray.map atom_to_string atoms in
-  let local_atom_index = Hashtbl.create 16 in
-  let atom_label i = Dynarray.get labels i in
-  let index = Hashtbl.create 48 in
-  let graph = G.create () in
-  let v1 = G.V.create (AtomNode { name = "1"; satisfied = None }) in
-  let v0 = G.V.create (AtomNode { name = "0"; satisfied = None }) in
-  let rec visit bdd =
-    match inspect bdd with
-    | BTrue -> v1
-    | BFalse -> v0
-    | BIf (v, h, l) ->
-      (match Hashtbl.find_opt index (v, h, l) with
-       | Some v -> v
-       | None ->
-         let label = atom_label v in
-         let var_vertex =
-           G.V.create
-             (AtomNode { name = label; satisfied = atom_index_to_satisfaction v })
-         and true_vertex = visit h
-         and false_vertex = visit l in
-         Hashtbl.add index (v, h, l) var_vertex;
-         Hashtbl.entry ~default:[] (List.cons var_vertex) label local_atom_index;
-         G.add_edge_e
-           graph
-           (G.E.create
-              var_vertex
-              (E.AtomDecisionEdge { label = true; selected = false })
-              true_vertex);
-         G.add_edge_e
-           graph
-           (G.E.create
-              var_vertex
-              (E.AtomDecisionEdge { label = false; selected = false })
-              false_vertex);
-         var_vertex)
-  in
-  let _ = visit guard in
-  Option.iter
-    (fun index ->
-       Hashtbl.iter
-         (fun k v ->
-            let source = G.V.create (Constraint k) in
-            G.add_vertex graph source;
-            v
-            |> List.to_seq
-            |> Seq.map atom_to_string
-            |> Seq.filter_map (Hashtbl.find_opt local_atom_index)
-            |> Seq.map List.to_seq
-            |> Seq.concat
-            |> Seq.iter (fun target ->
-              G.add_edge_e graph (G.E.create source RefTrackingEdge target)))
-         index)
-    cstr_index;
-  graph
 ;;
