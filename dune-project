@@ -59,7 +59,10 @@
    (>= 1.3.1))
   (containers
    (>= 3.0.0))
-  (alcotest :with-test)
+  (alcotest
+   (and
+    (= 1.9.1)
+    :with-test))
   (domainslib
    (>= 0.5))
   (sexplib
@@ -79,9 +82,13 @@
   (gbddml
    (= 2.71.15))
   (mtime
-   (= 2.1.0))
+   (and
+    (= 2.1.0)
+    :with-test))
   (unionFind
-   (= 20260226)))
+   (= 20260226))
+  (mlgmpidl
+   (= 1.3.0)))
  (tags
   (simulation
    "model checking"
