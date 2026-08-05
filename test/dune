@@ -30,6 +30,12 @@
  (modules bisimulation)
  (libraries mrtccsl mrtccsl.mrtccslparsing))
 
+(executable
+ (public_name bdd_complexity)
+ (name bdd_complexity)
+ (modules bdd_complexity)
+ (libraries mrtccsl mtime.clock))
+
 (env
  (dev
   (flags

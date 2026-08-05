@@ -109,7 +109,7 @@ type ('sv, 'iv) guard = ('sv, 'iv) bool_atom bool_expr [@@deriving compare]
 (** Type of transition assignments. *)
 type ('sv, 'iv) assignment = 'sv * ('sv, 'iv) expr [@@deriving compare]
 
-(** Type of abstract machines. *)
+(** Type of symbolic machines. *)
 type ('sv, 'iv) t =
   { guard : ('sv, 'iv) guard
     (** State and input conditions of the form [S -> B^n -> Q^m -> Z^k -> B], where [B^n] encodes the clock ticks, [Q^m] next possible time and rational inputs, [Z^k] integer inputs. *)

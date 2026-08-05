@@ -12,18 +12,16 @@ module DiagramBackend = struct
     include Backend.Machine.Diagram.Acceptance
 
     let accept_trace m trace =
-      Result.is_ok
-      @@ accept_trace
-           m
-           (Seq.map
-              Trace.(
-                fun { label; time } ->
-                  { label =
-                      STS.Interpretation.VarMap.of_seq
-                      @@ Seq.map (fun c -> c, true) (SSet.to_seq label)
-                  ; time
-                  })
-              trace)
+      let convert_step =
+        let open Trace in
+        fun { label; time } ->
+          { label =
+              STS.Interpretation.VarMap.of_seq
+              @@ Seq.map (fun c -> c, true) (SSet.to_seq label)
+          ; time
+          }
+      in
+      satisfied_by m (Seq.map convert_step trace)
     ;;
   end
 

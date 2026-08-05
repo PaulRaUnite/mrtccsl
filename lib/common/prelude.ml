@@ -332,6 +332,30 @@ module Seq = struct
       let* accu = f accu x in
       fold_left_opt f accu xs
   ;;
+
+  let rec last prev seq =
+    match seq () with
+    | Cons (x, tail) -> last x tail
+    | Nil -> prev
+  ;;
+
+  let last_opt seq =
+    match seq () with
+    | Cons (x, tail) -> Some (last x tail)
+    | Nil -> None
+  ;;
+
+  let last seq = Option.unwrap ~expect:"Seq.last: sequence is empty" @@ last_opt seq
+
+  let rec scanr f s seq =
+    fun () ->
+    match s with
+    | Ok s ->
+      (match seq () with
+       | Seq.Cons (x, tail) -> scanr f (f s x) tail ()
+       | Seq.Nil -> Seq.Nil)
+    | Error _ -> Seq.return s ()
+  ;;
 end
 
 module List = struct
@@ -845,7 +869,7 @@ module Map = struct
   module Make (K : OrderedType) = struct
     include Make (K)
 
-    (**[entry update default key map]*)
+    (**[entry ~default update key map] *)
     let entry ~default f k m =
       update
         k

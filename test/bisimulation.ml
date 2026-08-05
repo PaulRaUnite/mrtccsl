@@ -87,6 +87,7 @@ let upper_bound = Rational.of_int 1000
 
 module DiagramStrat =
   Backend.Strategy.Num (Rational) (Backend.Machine.Diagram.Simulation.RI)
+
 let diagram_leap =
   DiagramStrat.random_leap
     ~upper_bound
@@ -113,7 +114,7 @@ let from_naive_to_diagram name spec =
       trace);
   let diagram = DiagramBackend.Acceptance.of_spec spec in
   print_endline "diagram built";
-  let accepted = DiagramBackend.Acceptance.accept_trace diagram trace in
+  let accepted = Seq.last @@ DiagramBackend.Acceptance.accept_trace diagram trace in
   Printf.printf "naive->diagram : %b\n" (Result.is_ok accepted);
   match accepted with
   | Error (_, atom_index) ->
@@ -122,7 +123,13 @@ let from_naive_to_diagram name spec =
       clocks
       trace;
     let diagram, cstr_index = diagram in
-    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index ~atom_index diagram.atoms diagram.guard in
+    let graph =
+      STS.Interpretation.Diagram.to_graph
+        ~cstr_index
+        ~atom_index
+        diagram.atoms
+        diagram.guard
+    in
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_accept.dot" name))
       graph
@@ -154,7 +161,9 @@ let from_diagram_to_naive name spec =
       clocks
       trace;
     let STS.Interpretation.Diagram.{ diagram; _ }, cstr_index = diagram in
-    let graph = STS.Interpretation.Diagram.to_graph ~cstr_index diagram.atoms diagram.guard in
+    let graph =
+      STS.Interpretation.Diagram.to_graph ~cstr_index diagram.atoms diagram.guard
+    in
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_simulate.dot" name))
       graph)

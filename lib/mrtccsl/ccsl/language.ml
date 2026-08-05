@@ -24,6 +24,8 @@ module Cstr = struct
     | Const c -> const c
   ;;
 
+  (* TODO: time to remove the tp ip types? *)
+
   (** Clock constraint type. ['c] is clock variable symbols type, ['_p] is parameter (unchanged during execution) symbols type (['tp] is for durations, ['ip] is for integers), ['_v] is symbol type for variables (change during execution), ['t] is the type of duration constants. *)
   type ('c, 'tp, 'ip, 'tv, 'iv, 't) clock_constr =
     | Precedence of

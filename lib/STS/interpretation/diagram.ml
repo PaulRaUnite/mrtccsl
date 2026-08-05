@@ -81,7 +81,7 @@ type ('sv, 'iv) t =
 (** Records evaluations of all Boolean atoms in a diagram, if it is fully evaluable from the input values. Assumes consistent index with the target diagram. *)
 type atom_satisfaction_index = bool option Dynarray.t
 
-let make_satisfaction_index state inputs atoms =
+let make_satisfaction_index state inputs atoms : atom_satisfaction_index =
   Dynarray.map
     (fun atom ->
        try Some (Full.eval_bool_atom state inputs atom) with
@@ -253,7 +253,8 @@ let to_graph
   graph
 ;;
 
-(* module Bdd2 = struct
+(* 
+module Bdd2 = struct
   let file = open_out "./debug/dots.md"
   let diagrams = Dynarray.of_list [ Bdd.dfalse (); Bdd.dtrue () ]
 
@@ -445,8 +446,8 @@ let of_machine ~order now { guard; assignments; invariant = _ } : _ t =
       (Dynarray.create (), Order.LvIndMap.empty, LvMap.empty)
   in
   let guard = map_bool_expr (fun k -> LvIndMap.find k remap) guard in
-  (* let guard = Bdd2.get (bool_expr_to_bdd guard) bool_atoms in *)
   let guard = bool_expr_to_bdd guard in
+  (* let guard = bool_expr_to_bdd guard in *)
   { now
   ; atoms = bool_atoms
   ; guard
@@ -1009,6 +1010,7 @@ let accept_solution
       { now; atoms; guard; assignments; threshold1; threshold2 }
       state
       (clock_assignments, time)
+  : (state * parameters) option
   =
   let input_int =
     { rational = (fun _ -> failwith "accept_solution: rational inputs should not be used")
@@ -1061,7 +1063,7 @@ let accept_solution
   in
   if all_sampled
   then (
-    let rationals = VarMap.add now time rationals in
+    let all_rationals = VarMap.add now time rationals in
     let input_int =
       { integer =
           (fun v ->
@@ -1069,11 +1071,13 @@ let accept_solution
             | Not_found -> failwithf "not found: %s" v)
       ; rational =
           (fun v ->
-            try VarMap.find v rationals with
+            try VarMap.find v all_rationals with
             | Not_found -> failwithf "not found: %s" v)
       ; bool = (fun v -> VarMap.value ~default:false v clock_assignments)
       }
     in
-    Some (Transition.apply_assignments state_int input_int default_state assignments))
+    Some
+      ( Transition.apply_assignments state_int input_int default_state assignments
+      , (integers, rationals) ))
   else None
 ;;

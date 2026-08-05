@@ -9,19 +9,7 @@ let ( > ) x y = BAtom (IntComp (y, `Less, x))
 let ( < ) x y = BAtom (IntComp (x, `Less, y))
 let ( >= ) x y = BAtom (IntComp (y, `LessEq, x))
 let ( <= ) x y = BAtom (IntComp (x, `LessEq, y))
-
-let ( == ) x y =
-  BAnd
-    [ BAtom (IntComp (x, `LessEq, y))
-    ; BAtom (IntComp (y, `LessEq, x))
-    ; BNot
-        (BAnd
-           [ BNot (BAtom (IntComp (x, `LessEq, y)))
-           ; BNot (BAtom (IntComp (y, `LessEq, x)))
-           ])
-    ]
-;;
-
+let ( == ) x y = BAnd [ BAtom (IntComp (x, `LessEq, y)); BAtom (IntComp (y, `LessEq, x)) ]
 let ( != ) x y = BNot (x == y)
 let iconst x = IConst x
 let ( + ) x y = IBinOp (x, `Add, y)
@@ -50,15 +38,7 @@ let ( >=. ) x y = BAtom (RatComp (y, `LessEq, x))
 let ( <=. ) x y = BAtom (RatComp (x, `LessEq, y))
 
 let ( ==. ) x y =
-  BAnd
-    [ BAtom (RatComp (x, `LessEq, y))
-    ; BAtom (RatComp (y, `LessEq, x))
-    ; BNot
-        (BAnd
-           [ BNot (BAtom (RatComp (x, `LessEq, y)))
-           ; BNot (BAtom (RatComp (y, `LessEq, x)))
-           ])
-    ]
+  BAnd [ BAtom (RatComp (x, `LessEq, y)); BAtom (RatComp (y, `LessEq, x)) ]
 ;;
 
 let ( !=. ) x y = BNot (x ==. y)

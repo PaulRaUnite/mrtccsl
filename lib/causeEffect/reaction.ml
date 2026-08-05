@@ -99,7 +99,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
     next_ref_instant
   ;;
 
-  let process_contributions reaction total contributions =
+  let convert_contributions reaction total contributions =
     if Time.compare total Time.zero = 0
     then [ "reaction", Time.zero ]
     else (
@@ -133,7 +133,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
          Printf.printf "reaction is %s" (Time.to_string reaction);
          print_endline @@ Sexplib.Sexp.to_string_hum @@ Token.sexp_of_t token)
      | None -> ());
-    sink (process_contributions reaction reaction contributions, reaction)
+    sink (convert_contributions reaction reaction contributions, reaction)
   ;;
 
   (** Adds duration of the interval between (succesuful) causal-effect chains (tokens).  *)
@@ -150,7 +150,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
       let interval = Time.sub time1 time0
       and reaction = Time.sub time2 time1
       and total = Time.sub time2 time0 in
-      let contributions = process_contributions reaction total contributions in
+      let contributions = convert_contributions reaction total contributions in
       Some (("interval", Time.div interval total) :: contributions, total)
     in
     fun token -> Option.iter sink (reaction token)
@@ -179,7 +179,7 @@ module Make (F : Impl.S) (IDs : Impl.I) (Time : Signature.Time) = struct
       and reaction = Time.sub time2 time1
       and total = Time.sub time2 time0 in
       times_so_far := token_times;
-      let contributions = process_contributions reaction total contributions in
+      let contributions = convert_contributions reaction total contributions in
       Some (("interval", Time.div interval total) :: contributions, total)
     in
     let consume_chain token = Option.iter sink (chain token) in

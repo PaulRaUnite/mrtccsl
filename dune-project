@@ -77,7 +77,11 @@
   (csv
    (= 2.4))
   (gbddml
-   (= 2.71.15)))
+   (= 2.71.15))
+  (mtime
+   (= 2.1.0))
+  (unionFind
+   (= 20260226)))
  (tags
   (simulation
    "model checking"

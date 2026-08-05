@@ -487,8 +487,6 @@ let rtdelay_as_machine ~now out arg delay =
   &&& t
 ;;
 
-(* TODO: another way to do acceptance is to capture symbolic value of the variable as entrace and check satisfaction when out.*)
-
 let rtdelay_as_late_acceptor ~now out arg delay_arg =
   let queue_name, queue, out, arg, delay = rtdelay_vars out arg delay_arg in
   let sample_delay =
@@ -671,7 +669,6 @@ module Literal = struct
   type repr = var * (var, var) t * atom_index
 
   (** Converts the specification constraints into a synchronized abstract machine. *)
-
   let of_spec ?debug:_ Language.Specification.{ clock; integer; duration; _ } : repr =
     let open STS in
     let icomp (e1, rel, e2) = BAtom (IntComp (e1, rel, e2))
@@ -765,38 +762,144 @@ module Diagram = struct
       diag, index
     ;;
 
-    let accept_trace ((d, _) : repr) (trace : trace) =
+    let transit ((d, _) : repr) state Trace.{ label; time } =
+      match Diagram.accept_solution d state (label, time) with
+      | Some (state, parameters) -> Ok (state, parameters)
+      | None ->
+        Printf.printf
+          "--- step no accepted ---\ntime: %s\nclocks: %s\nstate:\n%s\n"
+          (Rational.to_string time)
+          (VarMap.to_string ~sep:", " Fun.id Bool.to_string label)
+          (show_state state);
+        Error
+          ( state
+          , Diagram.make_satisfaction_index
+              (state_to_interface state)
+              { rational =
+                  (fun v ->
+                    if String.equal d.now v
+                    then time
+                    else failwithf "requested undefined value for %s" v)
+              ; integer = (fun _ -> failwith "integer inputs are not defined by trace")
+              ; bool = (fun v -> VarMap.value ~default:false v label)
+              }
+              (* TODO: refactor into a function, probably use it in few places? *)
+              d.atoms )
+    ;;
+
+    let accept_trace (r : repr) (trace : trace)
+      : (state * Diagram.parameters, state * Diagram.atom_satisfaction_index) result Seq.t
+      =
       let state = default_state in
       let state =
-        Seq.fold_leftr
-          (fun state Trace.{ label; time } ->
-             match Diagram.accept_solution d state (label, time) with
-             | Some state -> Ok state
-             | None ->
-               Printf.printf
-                 "--- step no accepted ---\ntime: %s\nclocks: %s\nstate:\n%s\n"
-                 (Rational.to_string time)
-                 (VarMap.to_string ~sep:", " Fun.id Bool.to_string label)
-                 (show_state state);
-               Error
-                 ( state
-                 , Diagram.make_satisfaction_index
-                     (state_to_interface state)
-                     { rational =
-                         (fun v ->
-                           if String.equal d.now v
-                           then time
-                           else failwithf "requested undefined value for %s" v)
-                     ; integer =
-                         (fun _ -> failwith "integer inputs are not defined by trace")
-                     ; bool = (fun v -> VarMap.value ~default:false v label)
-                     }
-                     (* TODO: refactor into a function, probably use it in few places? *)
-                     d.atoms ))
-          (Ok state)
+        Seq.scanr
+          (fun (s, _) -> transit r s)
+          (Ok (state, (VarMap.empty, VarMap.empty)))
           trace
       in
       state
+    ;;
+
+    let satisfied_by (r : repr) (trace : trace) =
+      Option.map_or ~default:true Result.is_ok @@ Seq.last_opt (accept_trace r trace)
+    ;;
+  end
+
+  module ParallelAcceptance = struct
+    type repr = Acceptance.repr array
+
+    module NumVarComponents = Common.Relation.Transitive.ByTag (String)
+
+    let of_spec ?debug:_ spec : repr =
+      let Language.Specification.{ clock; integer; duration; _ } = spec in
+      let clock_constraints =
+        List.map
+          (fun c ->
+             Language.Specification.
+               { clock = [ c ]; integer = []; duration = []; probabilistic = [] })
+          clock
+      and integer_constraints =
+        List.map
+          (fun c ->
+             Language.Specification.
+               { clock = []; integer = [ c ]; duration = []; probabilistic = [] })
+          integer
+      and duration_constraints =
+        List.map
+          (fun c ->
+             Language.Specification.
+               { clock = []; integer = []; duration = [ c ]; probabilistic = [] })
+          duration
+      in
+      let skip acc _ = acc in
+      let save acc x = x :: acc in
+      let tag spec = Language.Specification.fold skip save save save save skip [] spec in
+      let constraints =
+        List.append
+          clock_constraints
+          (List.append integer_constraints duration_constraints)
+      in
+      let component_index =
+        List.fold_left (NumVarComponents.add ~tag) NumVarComponents.empty constraints
+      in
+      let components = NumVarComponents.components component_index in
+      let components =
+        Seq.map Language.Specification.(List.fold_left merge empty) components
+      in
+      let diagrams =
+        Seq.map
+          (fun spec ->
+             let now, m, index = Literal.of_spec spec in
+             let diag, index = Diagram.acceptance_diagram now m index in
+             diag, index)
+          components
+      in
+      Array.of_seq diagrams
+    ;;
+
+    let accept_trace (acceptors : repr) (trace : trace)
+      : ( state array * Diagram.parameters
+          , (state * Diagram.atom_satisfaction_index option) array )
+          result
+          Seq.t
+      =
+      let states = Array.init (Array.length acceptors) (fun _ -> default_state) in
+      let combine _ _ _ =
+        failwith
+          "ParallelAcceptance.accept_trace: not possible to have 2 parameter derivations"
+      in
+      Seq.scanr
+        (fun (states, _) step ->
+           let results =
+             Array.map2 (fun r s -> Acceptance.transit r s step) acceptors states
+           in
+           let all_ok = Array.for_all Result.is_ok results in
+           if all_ok
+           then (
+             let params, states =
+               Array.fold_left_map
+                 (fun (pints, prats) -> function
+                    | Ok (state, (ints, rats)) ->
+                      ( (VarMap.union combine pints ints, VarMap.union combine prats rats)
+                      , state )
+                    | Error _ -> failwith "all results are ok, should not be possible")
+                 (VarMap.empty, VarMap.empty)
+                 results
+             in
+             Ok (states, params))
+           else
+             Error
+               (Array.map
+                  (function
+                    | Ok (state, _) -> state, None
+                    | Error (state, index) -> state, Some index)
+                  results))
+        (Ok (states, (VarMap.empty, VarMap.empty)))
+        trace
+    ;;
+
+    let satisfied_by (r : repr) (trace : trace) =
+      Option.map_or ~default:true Result.is_ok @@ Seq.last_opt (accept_trace r trace)
     ;;
   end
 

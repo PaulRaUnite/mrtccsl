@@ -7,3 +7,4 @@ module Interface = Interface
 module Interval = Interval
 module Stats = Stats
 module Trace = Trace
+module Relation = Relation
