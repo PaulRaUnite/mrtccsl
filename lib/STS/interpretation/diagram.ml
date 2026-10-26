@@ -1004,13 +1004,17 @@ let rec derive_num_inputs
      | None, None -> None)
 ;;
 
-type parameters = int VarMap.t * Common.Number.Rational.t VarMap.t
+type 'a sample = Sample of 'a
+
+let to_sample x = Sample x
+
+type parameter_samples = int sample VarMap.t * Common.Number.Rational.t sample VarMap.t
 
 let accept_solution
       { now; atoms; guard; assignments; threshold1; threshold2 }
       state
       (clock_assignments, time)
-  : (state * parameters) option
+  : (state * parameter_samples) option
   =
   let input_int =
     { rational = (fun _ -> failwith "accept_solution: rational inputs should not be used")
@@ -1043,7 +1047,7 @@ let accept_solution
     VarMap.merge
       (fun _ marked value ->
          match marked, value with
-         | Some (), Some value -> RI.as_singleton value
+         | Some (), Some value -> Option.map to_sample (RI.as_singleton value)
          | _ -> None)
       !required_rats
       q
@@ -1052,7 +1056,7 @@ let accept_solution
     VarMap.merge
       (fun _ marked value ->
          match marked, value with
-         | Some (), Some value -> NI.as_singleton value
+         | Some (), Some value -> Option.map to_sample (NI.as_singleton value)
          | _ -> None)
       !required_ints
       z
@@ -1063,16 +1067,22 @@ let accept_solution
   in
   if all_sampled
   then (
-    let all_rationals = VarMap.add now time rationals in
+    let all_rationals = VarMap.add now (Sample time) rationals in
     let input_int =
       { integer =
           (fun v ->
-            try VarMap.find v integers with
-            | Not_found -> failwithf "not found: %s" v)
+            let (Sample x) =
+              try VarMap.find v integers with
+              | Not_found -> failwithf "not found: %s" v
+            in
+            x)
       ; rational =
           (fun v ->
-            try VarMap.find v all_rationals with
-            | Not_found -> failwithf "not found: %s" v)
+            let (Sample x) =
+              try VarMap.find v all_rationals with
+              | Not_found -> failwithf "not found: %s" v
+            in
+            x)
       ; bool = (fun v -> VarMap.value ~default:false v clock_assignments)
       }
     in

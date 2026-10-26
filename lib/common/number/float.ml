@@ -62,3 +62,4 @@ let truncated_exponential_rvs ~a ~b ~rate =
 ;;
 
 let exponential_rvs ~rate = Owl.Stats.exponential_rvs ~lambda:rate
+let pow2 x = pow x 2.0

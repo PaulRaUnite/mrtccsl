@@ -108,7 +108,7 @@ let trace_arg =
     & pos_right 0 non_dir_file []
     & info
         []
-        ~doc:"The trace to extract reaction time from."
+        ~doc:"The traces to extract reaction time from."
         ~docv:"TRACE"
         ~absent:"Uses stdin")
 ;;

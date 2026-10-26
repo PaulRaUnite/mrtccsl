@@ -68,7 +68,8 @@ let of_positive_string s =
     let len_after_zero = String.length decimal in
     let decimal = of_frac decimal_num (Int.pow 10 len_after_zero) in
     add whole decimal
-  | [ whole ] -> of_int (int_of_string whole)
+  | [ whole ] ->
+    of_int (int_of_string whole)
   | _ -> failwithf "wrong decimal number: %s" s
 ;;
 
@@ -78,7 +79,6 @@ let of_decimal_string s =
   | Some positive -> neg @@ of_positive_string positive
   | None -> of_positive_string s
 ;;
-
 
 let%test_unit "parsing" =
   [%test_eq: t] (of_decimal_string "0.0") zero;

@@ -19,6 +19,7 @@ let cmd =
     ; View.cmd
     ; Debug.cmd
     ; Compare.cmd
+    ; Conform.cmd
     ]
 ;;
 

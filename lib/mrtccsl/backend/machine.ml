@@ -788,7 +788,7 @@ module Diagram = struct
     ;;
 
     let accept_trace (r : repr) (trace : trace)
-      : (state * Diagram.parameters, state * Diagram.atom_satisfaction_index) result Seq.t
+      : (state * Diagram.parameter_samples, state * Diagram.atom_satisfaction_index) result Seq.t
       =
       let state = default_state in
       let state =
@@ -858,7 +858,7 @@ module Diagram = struct
     ;;
 
     let accept_trace (acceptors : repr) (trace : trace)
-      : ( state array * Diagram.parameters
+      : ( state array * Diagram.parameter_samples
           , (state * Diagram.atom_satisfaction_index option) array )
           result
           Seq.t

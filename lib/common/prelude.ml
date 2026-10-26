@@ -31,6 +31,12 @@ let read_to_string filename =
   s
 ;;
 
+(** Converts a string into an integer. *)
+let int_of_string s =
+  try int_of_string s with
+  | _ -> failwithf "int_of_string failed on \"%s\"" s
+;;
+
 module Fun = struct
   include Fun
 
@@ -865,6 +871,16 @@ end
 
 module Map = struct
   include Map
+
+  module type S = sig
+    include Map.S
+
+    val entry : default:'v -> ('v -> 'v) -> key -> 'v t -> 'v t
+    val entry_mut : default:(unit -> 'v) -> ('v -> 'v) -> key -> 'v t -> 'v t
+    val value : default:'v -> key -> 'v t -> 'v
+    val value_mut : default:(unit -> 'v) -> key -> 'v t -> 'v t * 'v
+    val to_iter : 'v t -> (key * 'v -> unit) -> unit
+  end
 
   module Make (K : OrderedType) = struct
     include Make (K)

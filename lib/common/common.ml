@@ -8,3 +8,4 @@ module Interval = Interval
 module Stats = Stats
 module Trace = Trace
 module Relation = Relation
+module Histogram = Histogram

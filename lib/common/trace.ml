@@ -96,9 +96,9 @@ let sequalize_trace ~label_to_seq trace =
 ;;
 
 module MakeIO (N : Timestamp) (L : Label) = struct
-  include Generic
+  type trace = (L.t, N.t) t
 
-  type nonrec trace = (L.t, N.t) t
+  include Generic
 
   let until ~horizon trace =
     let was_cut = ref false in
@@ -194,8 +194,7 @@ module MakeIO (N : Timestamp) (L : Label) = struct
             | 6 -> "#"
             | _ -> failwith "unreachable")
         in
-        let module TMap =
-          Map.Make (struct
+        let module TMap = Map.Make (struct
             type t = L.E.t * L.E.t * L.E.t * L.E.t
 
             let compare = Tuple.compare_same4 L.E.compare
@@ -459,8 +458,14 @@ module MakeIO (N : Timestamp) (L : Label) = struct
       , csv
         |> Csv.Rows.iter
         |> Iter.from_labelled_iter
+        |> Iter.filter (not << List.is_empty << Csv.Row.to_list)
         |> Iter.map (fun row ->
-          let timestamp = N.of_string (Csv.Row.find row timestamp_column) in
+          let timestamp = Csv.Row.find row timestamp_column in
+          if String.is_empty timestamp
+          then
+            failwith
+              "timestamp is not found in the row; the column should be named \"t\"!";
+          let timestamp = N.of_string timestamp in
           let label =
             row
             |> Csv.Row.to_assoc

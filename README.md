@@ -26,12 +26,12 @@ The project provides the following features:
     - [ ] liveness
     - [ ] inclusion testing
 - [ ] symbolic
-    - [ ] definitions of CCSL
-        - [ ] core constraints
-        - [ ] real-time constraints
+    - [x] definitions of CCSL
+        - [x] core constraints
+        - [x] real-time constraints
         - [ ] stochastic constraints
     - [ ] encoding
-        - [ ] BDD?
+        - [x] BDD
         - [ ] MTBDD?
         - [ ] polyhedra?
 - [x] textual interface
