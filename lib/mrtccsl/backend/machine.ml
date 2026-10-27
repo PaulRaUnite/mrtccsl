@@ -767,7 +767,7 @@ module Diagram = struct
       | Some (state, parameters) -> Ok (state, parameters)
       | None ->
         Printf.printf
-          "--- step no accepted ---\ntime: %s\nclocks: %s\nstate:\n%s\n"
+          "--- step not accepted ---\ntime: %s\nclocks: %s\nstate:\n%s\n"
           (Rational.to_string time)
           (VarMap.to_string ~sep:", " Fun.id Bool.to_string label)
           (show_state state);
@@ -788,7 +788,10 @@ module Diagram = struct
     ;;
 
     let accept_trace (r : repr) (trace : trace)
-      : (state * Diagram.parameter_samples, state * Diagram.atom_satisfaction_index) result Seq.t
+      : ( state * Diagram.parameter_samples
+          , state * Diagram.atom_satisfaction_index )
+          result
+          Seq.t
       =
       let state = default_state in
       let state =
@@ -864,9 +867,11 @@ module Diagram = struct
           Seq.t
       =
       let states = Array.init (Array.length acceptors) (fun _ -> default_state) in
-      let combine _ _ _ =
-        failwith
-          "ParallelAcceptance.accept_trace: not possible to have 2 parameter derivations"
+      let combine var _ _ =
+        failwithf
+          "ParallelAcceptance.accept_trace: not possible to have 2 parameter derivations \
+           of %s"
+          var
       in
       Seq.scanr
         (fun (states, _) step ->

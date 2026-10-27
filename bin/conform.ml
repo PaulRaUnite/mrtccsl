@@ -50,7 +50,7 @@ let convert_trace trace =
     trace
 ;;
 
-let insert_sample (module H : Histogram.S) acc (samples : H.bin Diagram.sample VarMap.t) =
+let insert_sample (module H : Frequency.S) acc (samples : H.bin Diagram.sample VarMap.t) =
   VarMap.merge
     (fun _ hist sample ->
        match hist, sample with
@@ -62,7 +62,7 @@ let insert_sample (module H : Histogram.S) acc (samples : H.bin Diagram.sample V
     samples
 ;;
 
-let merge_samples (module H : Histogram.S) acc1 acc2 =
+let merge_samples (module H : Frequency.S) acc1 acc2 =
   VarMap.union (fun _ h1 h2 -> Some (H.sum h1 h2)) acc1 acc2
 ;;
 
@@ -72,12 +72,12 @@ let int_stats params =
   VarMap.iter
     (fun var hist ->
        let mean =
-         Histogram.mean (module Histogram.Discrete) (module Histogram.Discrete.STDN) hist
+         Frequency.mean (module Frequency.Discrete) (module Frequency.Discrete.STDN) hist
        in
        let std =
-         Histogram.std
-           (module Histogram.Discrete)
-           (module Histogram.Discrete.STDN)
+         Frequency.std
+           (module Frequency.Discrete)
+           (module Frequency.Discrete.STDN)
            ~mean
            hist
        in
@@ -89,15 +89,15 @@ let rat_stats params =
   VarMap.iter
     (fun var hist ->
        let mean =
-         Histogram.mean
-           (module Histogram.Continuous)
-           (module Histogram.Continuous.STDN)
+         Frequency.mean
+           (module Frequency.ContinuousExact)
+           (module Frequency.ContinuousExact.STDN)
            hist
        in
        let std =
-         Histogram.std
-           (module Histogram.Continuous)
-           (module Histogram.Continuous.STDN)
+         Frequency.std
+           (module Frequency.ContinuousExact)
+           (module Frequency.ContinuousExact.STDN)
            ~mean
            hist
        in
@@ -105,19 +105,17 @@ let rat_stats params =
     params
 ;;
 
-let write (module H : Histogram.S) output_dirname params =
+let write (module H : Frequency.S) output_dirname params =
   let filename var = Printf.sprintf "%s/%s" output_dirname var in
   VarMap.iter
     (fun var hist ->
-       let file = open_out (filename var) in
-       Histogram.write (module H) file hist;
-       flush file;
-       close_out file)
+       let filename = filename var in
+       Sys.write_file ~filename (fun file -> Frequency.write (module H) file hist))
     params
 ;;
 
 let derive_parameters ~acceptor trace
-  : Histogram.Discrete.t VarMap.t * Histogram.Continuous.t VarMap.t
+  : Frequency.Discrete.t VarMap.t * Frequency.ContinuousExact.t VarMap.t
   =
   let open Mrtccsl.Backend.Machine.Diagram in
   let check_seq = ParallelAcceptance.accept_trace acceptor trace in
@@ -127,8 +125,8 @@ let derive_parameters ~acceptor trace
          let open Result.Syntax in
          let* _, (intparams, ratparams) = r in
          Ok
-           ( insert_sample (module Histogram.Discrete) intacc intparams
-           , insert_sample (module Histogram.Continuous) ratacc ratparams ))
+           ( insert_sample (module Frequency.Discrete) intacc intparams
+           , insert_sample (module Frequency.ContinuousExact) ratacc ratparams ))
       (Ok (VarMap.empty, VarMap.empty))
       check_seq
   in
@@ -153,15 +151,15 @@ let check_traces ~spec_filename ~trace_files ~output_dir =
   let int_params, rat_params =
     List.fold_left
       (fun (inttotal, rattotal) (intparams, ratparams) ->
-         ( merge_samples (module Histogram.Discrete) inttotal intparams
-         , merge_samples (module Histogram.Continuous) rattotal ratparams ))
+         ( merge_samples (module Frequency.Discrete) inttotal intparams
+         , merge_samples (module Frequency.ContinuousExact) rattotal ratparams ))
       (VarMap.empty, VarMap.empty)
       params
   in
   int_stats int_params;
   rat_stats rat_params;
-  write (module Histogram.Discrete) output_dir int_params;
-  write (module Histogram.Continuous) output_dir rat_params
+  write (module Frequency.Discrete) output_dir int_params;
+  write (module Frequency.ContinuousExact) output_dir rat_params
 ;;
 
 let cmd =

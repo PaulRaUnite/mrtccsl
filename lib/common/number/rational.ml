@@ -68,8 +68,7 @@ let of_positive_string s =
     let len_after_zero = String.length decimal in
     let decimal = of_frac decimal_num (Int.pow 10 len_after_zero) in
     add whole decimal
-  | [ whole ] ->
-    of_int (int_of_string whole)
+  | [ whole ] -> of_int (int_of_string whole)
   | _ -> failwithf "wrong decimal number: %s" s
 ;;
 
@@ -230,4 +229,20 @@ let do_op op l r =
   | `Sub -> sub l r
   | `Mul -> mul l r
   | `Div -> div l r
+;;
+
+let to_exact_string n =
+  let num, denom = Mpqf.to_mpzf2 n in
+  let num = Mpzf.to_string num
+  and denom = Mpzf.to_string denom in
+  Printf.sprintf "%s/%s" num denom
+;;
+
+let of_exact_string s =
+  match String.split_on_char '/' s with
+  | [ num; denom ] ->
+    let num = Mpzf.of_string num
+    and denom = Mpzf.of_string denom in
+    Mpqf.of_mpz2 num denom
+  | _ -> failwithf "Rational.of_exact_string: expected x/y, got \"%s\"" s
 ;;

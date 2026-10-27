@@ -353,14 +353,16 @@ module Seq = struct
 
   let last seq = Option.unwrap ~expect:"Seq.last: sequence is empty" @@ last_opt seq
 
-  let rec scanr f s seq =
-    fun () ->
+  let rec scanr f s seq : 'a Seq.t =
     match s with
     | Ok s ->
-      (match seq () with
-       | Seq.Cons (x, tail) -> scanr f (f s x) tail ()
-       | Seq.Nil -> Seq.Nil)
-    | Error _ -> Seq.return s ()
+      fun () ->
+        (match seq () with
+         | Seq.Cons (x, tail) ->
+           let state = f s x in
+           Seq.Cons (state, scanr f state tail)
+         | Seq.Nil -> Seq.Nil)
+    | Error _ -> Seq.return s
   ;;
 end
 

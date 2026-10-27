@@ -95,7 +95,7 @@ let traces_arg =
   Arg.(
     value
     & opt int 1
-    & info [ "t"; "traces" ] ~doc:"Number of traces (>= 1) to be generated." ~docv:"CORES")
+    & info [ "t"; "traces" ] ~doc:"Number of traces (>= 1) to be generated." ~docv:"TRACES")
 ;;
 
 let horizon_arg =
