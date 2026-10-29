@@ -1,6 +1,7 @@
 (** ROBDD-based backend for the symbolic transition systems. *)
-open Common.Prelude
+open Common
 
+open Prelude
 open Def
 
 module Order = struct
@@ -472,32 +473,14 @@ let acceptance_diagram now mach index : _ acc_repr * atom_index =
   of_machine ~order:Order.state_bool_now_numeric now mach, index
 ;;
 
-(* TODO: refactor out and probably use in the native backend too *)
-type 'n num_generator =
-  { mutable value : 'n
-  ; update : 'n num_generator -> unit
-  }
-
-type 'n generators = 'n num_generator VarMap.t
-
-let get_value generators var = (VarMap.find var generators).value
-
-let update_value generators var =
-  let gen = VarMap.find var generators in
-  gen.update gen
-;;
-
-let make_gen zero rvs =
-  let update record = record.value <- rvs () in
-  let gen = { value = zero; update } in
-  update gen;
-  gen
-;;
+module GenMap = struct
+  include Distribution.IIDSeqMap (VarMap)
+end
 
 type ('sv, 'iv) sim_repr =
   { diagram : ('sv, 'iv) t
-  ; int_gens : int generators
-  ; rat_gens : Common.Number.Rational.t generators
+  ; int_gens : int GenMap.t
+  ; rat_gens : Common.Number.Rational.t GenMap.t
   ; clocks : 'iv array
   }
 
@@ -731,8 +714,8 @@ let gen_step
   =
   let state_int = state_to_interface state in
   let partial_input_int =
-    { rational = get_value rat_gens
-    ; integer = get_value int_gens
+    { rational = GenMap.get_value rat_gens
+    ; integer = GenMap.get_value int_gens
     ; bool =
         (fun _ -> failwith "do_step: Boolean inputs are supposed to be chosen by the ")
     }
@@ -760,16 +743,17 @@ let gen_step
     in
     let time = bound_strategy bound in
     let input_int =
-      { rational = (fun v -> if String.equal now v then time else get_value rat_gens v)
-      ; integer = get_value int_gens
+      { rational =
+          (fun v -> if String.equal now v then time else GenMap.get_value rat_gens v)
+      ; integer = GenMap.get_value int_gens
       ; bool = (fun v -> VarMap.find v clock_assignments)
       }
     in
     let new_state =
       Transition.apply_assignments state_int input_int default_state assignments
     in
-    List.iter (update_value rat_gens) rat_updates;
-    List.iter (update_value int_gens) int_updates;
+    List.iter (GenMap.update rat_gens) rat_updates;
+    List.iter (GenMap.update int_gens) int_updates;
     Some (new_state, (clock_assignments, time)))
 ;;
 

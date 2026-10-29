@@ -11,6 +11,8 @@ module DiagramBackend = struct
   module Backend = struct
     include Backend.Machine.Diagram.Acceptance
 
+    let accept_of_spec = of_spec
+
     let accept_trace m trace =
       let convert_step =
         let open Trace in

@@ -4,7 +4,7 @@ open Language
 open Cstr
 
 (**Specifies the distribution of the time variable. *)
-type ('v, 't) dist_binding = 'v * 't distribution [@@deriving map]
+type ('v, 't) dist_binding = 'v * 't Distribution.Continuous.t [@@deriving map]
 
 module type ID = sig
   open Interface
@@ -179,44 +179,7 @@ struct
     ;;
   end
 
-  module II = struct
-    include Interval.MakeDebug (Number.Integer)
-
-    let of_var_rel = function
-      | NumRelation (v, rel, Const c) ->
-        let cond_f =
-          match rel with
-          | `Less -> ninf_strict
-          | `LessEq -> ninf
-          | `More -> pinf_strict
-          | `MoreEq -> pinf
-          | `Eq -> return
-          | `Neq ->
-            failwith "non-equality is irrepresentable in interval domain, not convex"
-        in
-        let cond = cond_f c in
-        v, cond
-      | _ -> failwith "numeric relations between integer variables are not implemented"
-    ;;
-
-    let to_nonstrict = function
-      | Bound (left, right) ->
-        let left =
-          match left with
-          | Include left -> left
-          | Exclude left -> succ left
-          | Inf -> failwith "to_nonstrict: [-oo, x] is not bound"
-        and right =
-          match right with
-          | Include right -> right
-          | Exclude right -> pred right
-          | Inf -> failwith "to_nonstrict: [x, +oo] is not bound"
-        in
-        left, right
-      | Empty -> failwith "to_nonstrict: interval is empty"
-    ;;
-  end
-
+  module II = Interval.Int
   module CMap = Map.Make (C)
 
   type label = L.t
@@ -226,100 +189,6 @@ struct
   type sol_strategy = guard -> solution option
   type trace = (L.t, N.t) Trace.t
 
-  module VarSeq = struct
-    type 'v t =
-      { bounds : 'v
-      ; process : 'v -> 'v
-      ; mutable suppress : bool
-      ; mutable instances : (int, 'v * int) Hashtbl.t
-      ; mutable subscribers : int
-      }
-
-    type 'v container = { mutable vars : 'v t CMap.t }
-
-    let empty_container () = { vars = CMap.empty }
-
-    let declare_variable container var (bounds, process) =
-      container.vars
-      <- CMap.add
-           var
-           { bounds
-           ; process
-           ; suppress = false
-           ; instances = Hashtbl.create 0
-           ; subscribers = 0
-           }
-           container.vars
-    ;;
-
-    let suppress container = CMap.iter (fun _ seq -> seq.suppress <- true) container.vars
-
-    let unsuppress container =
-      CMap.iter (fun _ seq -> seq.suppress <- false) container.vars
-    ;;
-
-    let subscribe container var =
-      let seq = CMap.find var container.vars in
-      seq.subscribers <- seq.subscribers + 1;
-      seq
-    ;;
-
-    let peek_value seq index =
-      let v, _ =
-        Hashtbl.value_mut
-          ~default:(fun () ->
-            let value = if seq.suppress then seq.bounds else seq.process seq.bounds in
-            value, 0)
-          index
-          seq.instances
-      in
-      v
-    ;;
-
-    let pop_value seq index =
-      let v, consumptions = Hashtbl.find seq.instances index in
-      let consumptions = consumptions + 1 in
-      if consumptions = seq.subscribers
-      then Hashtbl.remove seq.instances index
-      else Hashtbl.add seq.instances index (v, consumptions)
-    ;;
-
-    type 'v handle =
-      { seq : 'v t
-      ; mutable current : int
-      }
-
-    let current { seq; current } = peek_value seq current
-
-    let consume h =
-      let { seq; current } = h in
-      pop_value seq current;
-      h.current <- current + 1
-    ;;
-
-    let get_handle container var =
-      let seq = subscribe container var in
-      let h = { seq; current = 0 } in
-      (fun () -> current h), fun () -> consume h
-    ;;
-
-    let get_handle_param return container = function
-      | Var v -> get_handle container v
-      | Const c ->
-        let c = return c in
-        (fun () -> c), fun () -> ()
-    ;;
-
-    let to_string value_to_string { vars } =
-      CMap.to_string
-        C.to_string
-        (fun v ->
-           Hashtbl.to_seq v.instances
-           |> Seq.to_string (fun (_, (v, _)) -> value_to_string v))
-        vars
-    ;;
-  end
-
   type t =
     { name : string
     ; guard : N.t -> guard
@@ -328,11 +197,30 @@ struct
     ; print_state : unit -> string
     }
 
-  type repr =
-    { durations : NI.t VarSeq.container
-    ; integers : II.t VarSeq.container
-    ; automata : t list
-    }
+  module GenMap = struct
+    include Distribution.IIDSeqMap (CMap)
+
+    let get_handle_param return container = function
+      | Var v -> get_handle container v
+      | Const c ->
+        let c = return c in
+        (fun () -> c), fun () -> ()
+    ;;
+  end
+
+  type sim =
+    | Sim of
+        { durations : NI.t GenMap.t
+        ; integers : II.t GenMap.t
+        ; automata : t list
+        }
+
+  type accept =
+    | Accept of
+        { durations : NI.t GenMap.t
+        ; integers : II.t GenMap.t
+        ; automata : t list
+        }
 
   open Sexplib0.Sexp_conv
 
@@ -356,11 +244,20 @@ struct
     }
   ;;
 
-  let empty_sim : repr =
-    { durations = VarSeq.empty_container ()
-    ; integers = VarSeq.empty_container ()
-    ; automata = []
-    }
+  let empty_sim =
+    Sim
+      { durations = GenMap.empty ~default:NI.inf
+      ; integers = GenMap.empty ~default:II.inf
+      ; automata = []
+      }
+  ;;
+
+  let empty_accept =
+    Accept
+      { durations = GenMap.empty ~default:NI.inf
+      ; integers = GenMap.empty ~default:II.inf
+      ; automata = []
+      }
   ;;
 
   let variant_to_string (label, cond) =
@@ -550,7 +447,7 @@ struct
         stateless l
       | RTdelay { out = b; arg = a; delay } ->
         let current_delay, consume_delay =
-          VarSeq.get_handle_param NI.return durations delay
+          GenMap.get_handle_param NI.return durations delay
         in
         let module Heap = Heap (struct
             include NI
@@ -594,9 +491,9 @@ struct
         g, t, p
       | CumulPeriodic { out; period; error; offset } ->
         let current_offset, consume_offset =
-          VarSeq.get_handle_param NI.return durations offset
+          GenMap.get_handle_param NI.return durations offset
         and current_error, consume_error =
-          VarSeq.get_handle_param NI.return durations error
+          GenMap.get_handle_param NI.return durations error
         in
         let last = ref None in
         let g _ =
@@ -631,9 +528,9 @@ struct
         g, t, p
       | AbsPeriodic { out; period; error; offset } ->
         let current_offset, consume_offset =
-          VarSeq.get_handle_param NI.return durations offset
+          GenMap.get_handle_param NI.return durations offset
         and current_error, consume_error =
-          VarSeq.get_handle_param NI.return durations error
+          GenMap.get_handle_param NI.return durations error
         in
         let last = ref None in
         let g _ =
@@ -672,7 +569,7 @@ struct
         g, t, p
       | Sporadic { out = c; at_least; strict } ->
         let current_delay, consume_delay =
-          VarSeq.get_handle_param NI.return durations at_least
+          GenMap.get_handle_param NI.return durations at_least
         in
         let last = ref None in
         let g now =
@@ -703,10 +600,10 @@ struct
         g, t, p
       | Periodic { out; base; period; error; offset } ->
         let current_offset, consume_offset =
-          VarSeq.get_handle_param II.return integers offset
+          GenMap.get_handle_param II.return integers offset
         in
         let current_error, consume_error =
-          VarSeq.get_handle_param II.return integers error
+          GenMap.get_handle_param II.return integers error
         in
         let labels_eqp = label_array [ [ base; out ]; [] ] in
         let labels_nondet = label_array [ [ base; out ]; [ base ]; [] ] in
@@ -769,7 +666,7 @@ struct
         g, t, p
       | Delay { out; arg; delay; base } ->
         let current_delay, consume_delay =
-          VarSeq.get_handle_param II.return integers delay
+          GenMap.get_handle_param II.return integers delay
         in
         (* let _ = assert (d1 <= d2) in *)
         let diff_base = C.compare base arg <> 0 in
@@ -1124,82 +1021,28 @@ struct
 
   let debug_automata a = { a with guard = debug_g a.name a.guard }
 
-  let discr_dist_value ratios interval =
-    let left, right = II.to_nonstrict interval in
-    let available =
-      List.filter (fun (value, _) -> left <= value && value <= right) ratios
-    in
-    let sum = List.fold_left (fun acc (_, ratio) -> acc + ratio) 0 available in
-    let choice = Random.int sum in
-    let chosen, _ =
-      List.fold_left
-        (fun (chosen, choice) (value, ratio) ->
-           match chosen with
-           | Some _ as x -> x, choice
-           | None ->
-             let choice = choice - ratio in
-             if choice < 0 then Some value, choice else None, choice)
-        (None, choice)
-        available
-    in
-    Option.get chosen
-  ;;
-
-  let rec repeat_if_equal rand value =
-    let rvs = rand () in
-    if N.equal rvs value then repeat_if_equal rand value else rvs
-  ;;
-
-  let rec repeat_if_equal2 rand v1 v2 =
-    let rvs = rand () in
-    if N.equal rvs v1
-    then repeat_if_equal2 rand v1 v2
-    else if N.equal rvs v2
-    then repeat_if_equal2 rand v1 v2
-    else (
-      print_endline (N.to_string rvs);
-      rvs)
-  ;;
-
-  let cont_dist_value =
-    let open Number in
+  let var_rel_to_interval =
+    let open II in
     function
-    | Uniform ->
-      fun cond ->
-        NI.(
-          (match cond with
-           | Bound (Include lower, Include upper) -> N.random lower upper
-           | Bound (Include lower, Exclude upper) ->
-             repeat_if_equal (fun () -> N.random lower upper) upper
-           | Bound (Exclude lower, Include upper) ->
-             repeat_if_equal (fun () -> N.random lower upper) lower
-           | Bound (Exclude lower, Exclude upper) ->
-             repeat_if_equal2 (fun () -> N.random lower upper) lower upper
-           | _ -> failwith "uniform distribution is undefined on infinite intervals"))
-    | Normal { mean; deviation } ->
-      let mu = N.to_float mean in
-      let sigma = N.to_float deviation in
-      fun cond ->
-        let bounds =
-          Option.unwrap ~expect:"gaussian distribution is undefined on exclusive bounds"
-          @@ NI.constant_bounds cond
-        in
-        let a, b = Tuple.map2 N.to_float bounds in
-        let sample = Float.truncated_guassian_rvs ~a ~b ~mu ~sigma in
-        N.of_float sample
-    | Exponential { rate } ->
-      let rate = N.to_float rate in
-      fun cond ->
-        (match NI.constant_bounds cond with
-         | None -> N.of_float @@ Float.exponential_rvs ~rate
-         | Some bounds ->
-           let a, b = Tuple.map2 N.to_float bounds in
-           let sample = Float.truncated_exponential_rvs ~a ~b ~rate in
-           N.of_float sample)
+    | NumRelation (v, rel, Const c) ->
+      let cond_f =
+        match rel with
+        | `Less -> ninf_strict
+        | `LessEq -> ninf
+        | `More -> pinf_strict
+        | `MoreEq -> pinf
+        | `Eq -> return
+        | `Neq ->
+          failwith "non-equality is irrepresentable in interval domain, not convex"
+      in
+      let cond = cond_f c in
+      v, cond
+    | _ -> failwith "numeric relations between integer variables are not implemented"
   ;;
 
-  (** Creates automata from specification. CORRECTNESS: should be run sequentially with other [of_spec].*)
-  let of_spec ?(debug = false) spec : repr =
+  module ContDist = Distribution.Continuous.Make (N) (NI)
+
+  let get_bounds spec =
     let duration_bounds =
       Language.Specification.(spec.duration)
       |> List.map NI.of_var_rel
@@ -1208,40 +1051,74 @@ struct
            CMap.empty
     and integer_bounds =
       Language.Specification.(spec.integer)
-      |> List.map II.of_var_rel
+      |> List.map var_rel_to_interval
       |> List.fold_left
            (fun acc (v, rel) -> CMap.entry ~default:rel (II.inter rel) v acc)
            CMap.empty
-    and integer_dists, duration_dists =
-      List.partition_map
-        (function
-          | DiscreteValued { name; ratios } -> Either.Left (name, discr_dist_value ratios)
-          | ContinuousValued { name; dist } -> Either.Right (name, cont_dist_value dist))
-        spec.probabilistic
     in
-    let integer_dists, duration_dists =
-      CMap.of_list integer_dists, CMap.of_list duration_dists
+    duration_bounds, integer_bounds
+  ;;
+
+  let convert_discr_dists dists bounds =
+    let open Distribution in
+    CMap.merge
+      (fun _ ratios bounds ->
+         let* rvs =
+           match ratios, bounds with
+           | Some ratios, Some bounds -> Some (II.return << Discrete.to_rvs ratios bounds)
+           | None, Some bounds -> Some (fun () -> bounds)
+           | Some ratios, None -> Some Discrete.(II.return << rvs @@ compile { ratios })
+           | None, None -> None
+         in
+         Some (IIDSeq.make rvs))
+      dists
+      bounds
+  ;;
+
+  let convert_cont_dists dists bounds =
+    let rat_gens =
+      CMap.merge
+        (fun _ dist bounds ->
+           let* rvs =
+             match dist, bounds with
+             | Some dist, Some bounds -> Some (NI.return << ContDist.to_rvs dist bounds)
+             | Some dist, None -> Some (NI.return << ContDist.to_rvs dist NI.inf)
+             | None, Some bounds -> Some (fun () -> bounds)
+             | _ -> None
+           in
+           Some (Distribution.IIDSeq.make rvs))
+        dists
+        bounds
     in
-    let durations = VarSeq.empty_container ()
-    and integers = VarSeq.empty_container () in
-    let process_combination inf return _ bounds dist =
-      let bounds = Option.value ~default:inf bounds
-      and process =
-        Option.map_or ~default:Fun.id (fun dist cond -> return @@ dist cond) dist
-      in
-      Some (bounds, process)
-    in
-    CMap.merge (process_combination NI.inf NI.return) duration_bounds duration_dists
-    |> CMap.iter (VarSeq.declare_variable durations);
-    CMap.merge (process_combination II.inf II.return) integer_bounds integer_dists
-    |> CMap.iter (VarSeq.declare_variable integers);
+    rat_gens
+  ;;
+
+  (** Creates automata for simulation from specification. CORRECTNESS: should be run sequentially with other [sim_of_spec] because of internal hashmap.*)
+  let sim_of_spec ?(debug = false) spec : sim =
+    let duration_bounds, integer_bounds = get_bounds spec in
+    let integers = convert_discr_dists (CMap.of_list spec.discrete) integer_bounds
+    and durations = convert_cont_dists (CMap.of_list spec.continuous) duration_bounds in
+    let integers = GenMap.make ~default:II.inf @@ integers
+    and durations = GenMap.make ~default:NI.inf @@ durations in
     let constraints =
       List.map (of_constr (integers, durations)) Language.Specification.(spec.clock)
     in
-    { durations
-    ; integers
-    ; automata = (if debug then List.map debug_automata constraints else constraints)
-    }
+    let automata = if debug then List.map debug_automata constraints else constraints in
+    Sim { integers; durations; automata }
+  ;;
+
+  (** Creates automata for acceptance checking from specification, ignores distributions. CORRECTNESS: should be run sequentially with other [accept_of_spec] because of internal hashmap.*)
+  let accept_of_spec ?(debug = false) spec : accept =
+    let duration_bounds, integer_bounds = get_bounds spec in
+    let integers = CMap.map Distribution.IIDSeq.of_const integer_bounds
+    and durations = CMap.map Distribution.IIDSeq.of_const duration_bounds in
+    let integers = GenMap.make ~default:II.inf integers
+    and durations = GenMap.make ~default:NI.inf durations in
+    let constraints =
+      List.map (of_constr (integers, durations)) Language.Specification.(spec.clock)
+    in
+    let automata = if debug then List.map debug_automata constraints else constraints in
+    Accept { integers; durations; automata }
   ;;
 
   let next_step strat (a : t list) now : solution option =
@@ -1253,23 +1130,22 @@ struct
       if sync_transitions a now sol then Some sol else None
   ;;
 
-  let gen_trace (sol_strat : sol_strategy) { automata; integers; durations } : trace =
-    VarSeq.unsuppress integers;
-    VarSeq.unsuppress durations;
+  let gen_trace (sol_strat : sol_strategy) (Sim { integers; durations; automata }) : trace
+    =
     Seq.unfold
       (fun now ->
          match next_step sol_strat automata now with
          | Some (l, now) -> Some (Trace.{ label = l; time = now }, now)
          | None ->
            print_endline "all integers";
-           print_endline @@ VarSeq.to_string II.to_string integers;
+           print_endline @@ GenMap.to_string C.to_string II.to_string integers;
            print_endline "all durations";
-           print_endline @@ VarSeq.to_string NI.to_string durations;
+           print_endline @@ GenMap.to_string C.to_string NI.to_string durations;
            None)
       (N.neg N.one)
   ;;
 
-  let bisimulate s { automata = a1; _ } { automata = a2; _ } : trace =
+  let bisimulate s (Sim { automata = a1; _ }) (Accept { automata = a2; _ }) : trace =
     (*TODO: investigate relation between the vrel1 and vrel2. *)
     Seq.unfold
       (fun now ->
@@ -1280,9 +1156,7 @@ struct
       N.zero
   ;;
 
-  let accept_trace { automata; integers; durations } (t : trace) =
-    VarSeq.suppress integers;
-    VarSeq.suppress durations;
+  let accept_trace (Accept { automata; _ }) (t : trace) =
     let step a n sol = sync_transitions a n sol in
     let result =
       Seq.fold_left
@@ -1298,9 +1172,10 @@ struct
 
   let proj_trace clocks trace = Iter.map (fun (l, n) -> L.inter clocks l, n) trace
   let skip_empty trace = Iter.filter (fun (l, _) -> not (L.is_empty l)) trace
-  let to_string { automata; _ } = print_state automata ()
+  let sim_to_string (Sim { automata; _ }) = print_state automata ()
+  let accept_to_string (Accept { automata; _ }) = print_state automata ()
 
-  let try_force_clock { automata; _ } now clock =
+  let try_force_clock (Sim { automata; _ }) now clock =
     let clock_automaton =
       { guard = (fun _ -> Iter.singleton (L.singleton clock, NI.inf))
       ; transition = (fun _ (l, _) -> L.mem clock l)
@@ -1353,17 +1228,17 @@ let%test_module _ =
     open Specification
 
     let%test _ =
-      let a = A.of_spec @@ clock_constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
+      let a = A.sim_of_spec @@ clock_constraints_only @@ [ Coincidence [ "a"; "b" ] ] in
       not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let a = A.sim_of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
       not (Trace.is_empty (A.gen_trace slow_strat a))
     ;;
 
     let%test _ =
-      let a = A.of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
+      let a = A.sim_of_spec @@ clock_constraints_only [ Coincidence [ "a"; "b" ] ] in
       let trace = A.gen_trace random_strat a in
       not (Trace.is_empty trace)
     ;;
@@ -1379,13 +1254,13 @@ let%test_module _ =
 
     let%test _ =
       let empty1 =
-        A.of_spec
+        A.sim_of_spec
         @@ clock_constraints_only
              [ Coincidence [ "a"; "b" ]
              ; Exclusion { args = [ "a"; "b" ]; choice = None }
              ]
       in
-      let empty2 = A.empty_sim in
+      let empty2 = A.empty_accept in
       let steps = 10 in
       let trace = A.bisimulate slow_strat empty1 empty2 |> Trace.take ~steps in
       (* match trace with
@@ -1396,12 +1271,12 @@ let%test_module _ =
 
     let%test _ =
       let sampling1 =
-        A.of_spec
+        A.sim_of_spec
         @@ clock_constraints_only
              [ Delay { out = "o"; arg = "i"; delay = Const 0; base = "b" } ]
       in
       let sampling2 =
-        A.of_spec
+        A.accept_of_spec
         @@ clock_constraints_only [ Sample { out = "o"; arg = "i"; base = "b" } ]
       in
       let steps = 10 in
@@ -1414,7 +1289,8 @@ let%test_module _ =
 
     let%test _ =
       let a =
-        A.of_spec @@ clock_constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
+        A.sim_of_spec
+        @@ clock_constraints_only [ Precedence { cause = "a"; conseq = "b" } ]
       in
       let trace = A.gen_trace slow_strat a |> Trace.take ~steps:10 in
       (* let g, _, _ = a in *)

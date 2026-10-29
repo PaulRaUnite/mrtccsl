@@ -882,6 +882,7 @@ module Map = struct
     val value : default:'v -> key -> 'v t -> 'v
     val value_mut : default:(unit -> 'v) -> key -> 'v t -> 'v t * 'v
     val to_iter : 'v t -> (key * 'v -> unit) -> unit
+    val to_string : ?sep:string -> (key -> string) -> ('a -> string) -> 'a t -> string
   end
 
   module Make (K : OrderedType) = struct

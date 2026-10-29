@@ -407,6 +407,7 @@ let into_module { assumptions; structure; assertions } =
   let compile_duration (Second { value; scale }) = Number.Rational.mul value scale in
   let compile_distribution =
     let open Ast in
+    let open Distribution.Continuous in
     function
     | DUniform -> Uniform
     | DNormal { mean; deviation } ->
@@ -656,7 +657,7 @@ let into_module { assumptions; structure; assertions } =
       let* context, var =
         Context.add_anon_variable ~context ~prefix:scope ~var_type:`Int location
       in
-      Builder.probab builder @@ DiscreteValued { name = var; ratios };
+      Builder.discrete builder @@ (var, ratios);
       Ok (context, var))
   in
   let rec compile_stmt ~context ~scope ~builder stmt =
@@ -783,16 +784,14 @@ let into_module { assumptions; structure; assertions } =
         (let values = Loc.unwrap values
          and ratios = Loc.unwrap ratios in
          let* context, name = Context.resolve ~context ~scope ~expect:`Int var in
-         Builder.probab builder
-         @@ DiscreteValued { name; ratios = List.combine values ratios };
+         Builder.discrete builder (name, List.combine values ratios);
          Ok context)
     | ContinuousValued { var; dist } ->
       error_recover
         ~context
         ~errors:[]
         (let* context, name = Context.resolve ~context ~scope ~expect:`Duration var in
-         Builder.probab builder
-         @@ ContinuousValued { name; dist = compile_distribution (Loc.unwrap dist) };
+         Builder.continuous builder (name, compile_distribution (Loc.unwrap dist));
          Ok context)
     | Pool (n, pairs) ->
       (*TODO: make it mutex only *)
@@ -811,7 +810,7 @@ let into_module { assumptions; structure; assertions } =
         ~context
         ~builder
         statements
-    | Allow { clocks;  interval = { left_strict; left; right; right_strict }} ->
+    | Allow { clocks; interval = { left_strict; left; right; right_strict } } ->
       error_recover
         ~context
         ~errors:[]
@@ -822,9 +821,10 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Allow { args = clocks; left; right ;left_strict ; right_strict};
+         Builder.logical builder
+         @@ Allow { args = clocks; left; right; left_strict; right_strict };
          Ok context)
-    | Forbid { clocks;  interval = { left_strict; left; right; right_strict }} ->
+    | Forbid { clocks; interval = { left_strict; left; right; right_strict } } ->
       error_recover
         ~context
         ~errors:[]
@@ -835,7 +835,8 @@ let into_module { assumptions; structure; assertions } =
          let* context, right =
            compile_clock_expr ~context ~scope ~builder ~result_variable:None right
          in
-         Builder.logical builder @@ Forbid { args = clocks; left; right ;left_strict ; right_strict};
+         Builder.logical builder
+         @@ Forbid { args = clocks; left; right; left_strict; right_strict };
          Ok context)
     | AdditiveUnion (v, u, e) ->
       error_recover

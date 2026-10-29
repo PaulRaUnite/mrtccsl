@@ -290,10 +290,30 @@ struct
   ;;
 end
 
+module Int = struct
+  include MakeDebug (Number.Integer)
+
+  let to_nonstrict = function
+    | Bound (left, right) ->
+      let left =
+        match left with
+        | Include left -> left
+        | Exclude left -> succ left
+        | Inf -> failwith "to_nonstrict: [-oo, x] is not bound"
+      and right =
+        match right with
+        | Include right -> right
+        | Exclude right -> pred right
+        | Inf -> failwith "to_nonstrict: [x, +oo] is not bound"
+      in
+      left, right
+    | Empty -> failwith "to_nonstrict: interval is empty"
+  ;;
+end
+
 let%test_module _ =
   (module struct
-    module II = Make (Number.Integer)
-    open II
+    open Int
 
     let%test_unit _ = [%test_eq: t] (-1 =-= 1) (inter (pinf (-1)) (ninf 1))
     let%test _ = subset (-1 =-= 1) inf

@@ -99,13 +99,14 @@ let diagram_leap =
 let trace_length = 10000
 
 let from_naive_to_diagram name spec =
+  print_endline "naive->diagram";
   let clocks = List.sort_uniq String.compare @@ CCSL.Language.Specification.clocks spec in
-  let naive = NaiveBackend.of_spec spec in
+  let naive = NaiveBackend.sim_of_spec spec in
   let trace = NaiveBackend.gen_trace (random_strat ~rounding_error ~upper_bound) naive in
   let trace = Seq.take 10000 trace in
   let trace = Trace.persist ~size_hint:10000 trace in
-  print_endline "trace generated";
-  if Seq.length trace <> trace_length
+  print_endline "naive trace generated";
+  if Trace.length trace <> trace_length
   then (
     print_endline "naive trace is short";
     Trace.CSV.write
@@ -115,7 +116,7 @@ let from_naive_to_diagram name spec =
   let diagram = DiagramBackend.Acceptance.of_spec spec in
   print_endline "diagram built";
   let accepted = Seq.last @@ DiagramBackend.Acceptance.accept_trace diagram trace in
-  Printf.printf "naive->diagram : %b\n" (Result.is_ok accepted);
+  Printf.printf "correct? : %b\n" (Result.is_ok accepted);
   match accepted with
   | Error (_, atom_index) ->
     Trace.CSV.write
@@ -133,10 +134,13 @@ let from_naive_to_diagram name spec =
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_accept.dot" name))
       graph
-  | _ -> ()
+  | _ ->
+    ();
+    flush stdout
 ;;
 
 let from_diagram_to_naive name spec =
+  print_endline "diagram->naive";
   let clocks = List.sort_uniq String.compare @@ CCSL.Language.Specification.clocks spec in
   let diagram = List.hd @@ DiagramBackend.Simulation.sim_of_spec spec in
   print_endline "diagram built";
@@ -151,9 +155,9 @@ let from_diagram_to_naive name spec =
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_diagram.trace" name))
       clocks
       trace);
-  let naive = NaiveBackend.of_spec spec in
+  let naive = NaiveBackend.accept_of_spec spec in
   let accepted = NaiveBackend.accept_trace naive trace in
-  Printf.printf "diagram->naive : %b\n" accepted;
+  Printf.printf "correct? : %b\n" accepted;
   if not accepted
   then (
     Trace.CSV.write
@@ -166,7 +170,8 @@ let from_diagram_to_naive name spec =
     in
     STS.Interpretation.Diagram.Dot.output_graph
       (open_out (Printf.sprintf "test/bisimulation/debug/%s_simulate.dot" name))
-      graph)
+      graph);
+  flush stdout
 ;;
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)

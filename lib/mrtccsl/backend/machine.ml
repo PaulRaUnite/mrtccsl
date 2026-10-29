@@ -819,19 +819,34 @@ module Diagram = struct
         List.map
           (fun c ->
              Language.Specification.
-               { clock = [ c ]; integer = []; duration = []; probabilistic = [] })
+               { clock = [ c ]
+               ; integer = []
+               ; duration = []
+               ; discrete = []
+               ; continuous = []
+               })
           clock
       and integer_constraints =
         List.map
           (fun c ->
              Language.Specification.
-               { clock = []; integer = [ c ]; duration = []; probabilistic = [] })
+               { clock = []
+               ; integer = [ c ]
+               ; duration = []
+               ; discrete = []
+               ; continuous = []
+               })
           integer
       and duration_constraints =
         List.map
           (fun c ->
              Language.Specification.
-               { clock = []; integer = []; duration = [ c ]; probabilistic = [] })
+               { clock = []
+               ; integer = []
+               ; duration = [ c ]
+               ; discrete = []
+               ; continuous = []
+               })
           duration
       in
       let skip acc _ = acc in
@@ -911,92 +926,56 @@ module Diagram = struct
   module Simulation = struct
     module RI = Interval.Make (Rational)
 
-    module II = struct
-      include Interval.Make (Integer)
-
-      let to_nonstrict = function
-        | Bound (left, right) ->
-          let left =
-            match left with
-            | Include left -> left
-            | Exclude left -> succ left
-            | Inf -> failwith "to_nonstrict: [-oo, x] is not bound"
-          and right =
-            match right with
-            | Include right -> right
-            | Exclude right -> pred right
-            | Inf -> failwith "to_nonstrict: [x, +oo] is not bound"
-          in
-          left, right
-        | Empty -> failwith "to_nonstrict: interval is empty"
-      ;;
-    end
-
     type repr = (var, var) Diagram.sim_repr * atom_index
 
-    let discr_dist_value ratios interval =
-      let open Stdlib in
-      let left, right = II.to_nonstrict interval in
-      let available =
-        List.filter (fun (value, _) -> left <= value && value <= right) ratios
-      in
-      let sum = List.fold_left (fun acc (_, ratio) -> acc + ratio) 0 available in
-      let rvs () =
-        let choice = Random.int sum in
-        let chosen, _ =
-          List.fold_left
-            (fun (chosen, choice) (value, ratio) ->
-               match chosen with
-               | Some _ as x -> x, choice
-               | None ->
-                 let choice = choice - ratio in
-                 if choice < 0 then Some value, choice else None, choice)
-            (None, choice)
-            available
-        in
-        Option.get chosen
-      in
-      Diagram.make_gen 0 rvs
+    module ContDist = Distribution.Continuous.Make (Rational) (RI)
+
+    let convert_discr_dists dists bounds =
+      let open Distribution in
+      VarMap.merge
+        (fun _ ratios bounds ->
+           let* rvs =
+             match ratios, bounds with
+             | Some ratios, Some bounds -> Some (Discrete.to_rvs ratios bounds)
+             | None, Some bounds ->
+               let l, r =
+                 Option.unwrap ~expect:"bounds have to be defined for integer variables"
+                 @@ Interval.Int.constant_bounds bounds
+               in
+               let open Stdlib in
+               let ratios = List.init (r - l + 1) (fun i -> i + l, 1) in
+               Some (Discrete.to_rvs ratios bounds)
+             | Some ratios, None -> Some Discrete.(rvs @@ compile { ratios })
+             | None, None -> None
+           in
+           Some (IIDSeq.make rvs))
+        dists
+        bounds
     ;;
 
-    (* TODO: refactor this bulshit, this needs to be unified with the native backend *)
-    let cont_dist_value dist cond =
-      let open Language.Cstr in
-      let open Number in
-      let rvs =
-        match dist with
-        | Uniform ->
-          let lower, upper =
-            Option.unwrap
-              ~expect:"uniform distribution is undefined on exclusive intervals"
-            @@ RI.constant_bounds cond
-          in
-          fun () -> Rational.random lower upper
-        | Normal { mean; deviation } ->
-          let mu = Rational.to_float mean in
-          let sigma = Rational.to_float deviation in
-          let bounds =
-            Option.unwrap ~expect:"gaussian distribution is undefined on exclusive bounds"
-            @@ RI.constant_bounds cond
-          in
-          let a, b = Tuple.map2 Rational.to_float bounds in
-          fun () ->
-            let sample = Float.truncated_guassian_rvs ~a ~b ~mu ~sigma in
-            Rational.of_float sample
-        | Exponential { rate } ->
-          let rate = Rational.to_float rate in
-          (match RI.constant_bounds cond with
-           | None -> fun () -> Rational.of_float @@ Float.exponential_rvs ~rate
-           | Some bounds ->
-             let a, b = Tuple.map2 Rational.to_float bounds in
-             fun () -> Rational.of_float @@ Float.truncated_exponential_rvs ~a ~b ~rate)
+    (* Difference to native version: when distribution is missing, it is uniform, in native the bounds are propagated into the solving and so may shrink from conflicts. *)
+    let convert_cont_dists dists bounds =
+      let rat_gens =
+        VarMap.merge
+          (fun _ dist bounds ->
+             let* rvs =
+               match dist, bounds with
+               | Some dist, Some bounds -> Some (ContDist.to_rvs dist bounds)
+               | Some dist, None -> Some (ContDist.to_rvs dist RI.inf)
+               | None, Some bounds -> Some (ContDist.to_rvs Uniform bounds)
+               | _ -> None
+             in
+             Some (Distribution.IIDSeq.make rvs))
+          dists
+          bounds
       in
-      Diagram.make_gen Rational.zero rvs
+      rat_gens
     ;;
 
     let sim_of_spec ?debug:_ ?(instances = 1) spec : repr list =
       let now, m, index =
-        Literal.of_spec { spec with integer = []; duration = []; probabilistic = [] }
+        Literal.of_spec
+          { spec with integer = []; duration = []; discrete = []; continuous = [] }
       in
       let clocks = List.sort_uniq String.compare @@ Language.Specification.clocks spec in
       let duration_bounds =
@@ -1010,54 +989,21 @@ module Diagram = struct
       and integer_bounds =
         Language.Specification.(spec.integer)
         |> List.map (function
-          | Language.Cstr.NumRelation (v, rel, Const c) -> v, II.of_rel rel c
+          | Language.Cstr.NumRelation (v, rel, Const c) -> v, Interval.Int.of_rel rel c
           | _ -> failwith "uncertainty relations between variables are not supported")
         |> List.fold_left
-             (fun acc (v, rel) -> VarMap.entry ~default:rel (II.inter rel) v acc)
+             (fun acc (v, rel) ->
+                VarMap.entry ~default:rel (Interval.Int.inter rel) v acc)
              VarMap.empty
       in
       let diag, index = Diagram.simulation_diagram now m clocks index in
       List.init instances (fun _ ->
-        let int_gens, rat_gens =
-          List.partition_map
-            Language.Cstr.(
-              function
-              | DiscreteValued { name; ratios } ->
-                Either.Left
-                  (name, discr_dist_value ratios (VarMap.find name integer_bounds))
-              | ContinuousValued { name; dist } ->
-                Either.Right
-                  (name, cont_dist_value dist (VarMap.find name duration_bounds)))
-            spec.probabilistic
-        in
-        let int_gens = VarMap.of_list int_gens
-        and rat_gens = VarMap.of_list rat_gens in
-        let int_gens =
-          VarMap.merge
-            (fun _ gen bound ->
-               match gen, bound with
-               | Some gen, _ -> Some gen
-               | _, Some bound ->
-                 let l, r =
-                   Option.unwrap ~expect:"bounds have to be defined for integer variables"
-                   @@ II.constant_bounds bound
-                 in
-                 let open Stdlib in
-                 let ratios = List.init (r - l + 1) (fun i -> i + l, 1) in
-                 Some (discr_dist_value ratios bound)
-               | _ -> failwith "unreachable")
-            int_gens
-            integer_bounds
-        and rat_gens =
-          VarMap.merge
-            (fun _ gen bound ->
-               match gen, bound with
-               | Some gen, _ -> Some gen
-               | _, Some bound -> Some (cont_dist_value Uniform bound)
-               | _ -> failwith "unreachable")
-            rat_gens
-            duration_bounds
-        in
+        let int_dists = VarMap.of_list spec.discrete
+        and rat_dists = VarMap.of_list spec.continuous in
+        let int_gens = convert_discr_dists int_dists integer_bounds
+        and rat_gens = convert_cont_dists rat_dists duration_bounds in
+        let int_gens = Diagram.GenMap.make ~default:0 int_gens
+        and rat_gens = Diagram.GenMap.make ~default:Rational.zero rat_gens in
         ( Diagram.{ diagram = diag; rat_gens; int_gens; clocks = Array.of_list clocks }
         , index ))
     ;;
@@ -1072,14 +1018,8 @@ module Diagram = struct
              Printf.printf
                "generation stopped in state %s\nint params: %s\nrat params: %s\n"
                (show_state state)
-               (VarMap.to_string
-                  Fun.id
-                  (fun g -> Integer.to_string Diagram.(g.value))
-                  repr.int_gens)
-               (VarMap.to_string
-                  Fun.id
-                  (fun g -> Rational.to_string Diagram.(g.value))
-                  repr.rat_gens);
+               (Diagram.GenMap.to_string Fun.id Integer.to_string repr.int_gens)
+               (Diagram.GenMap.to_string Fun.id Rational.to_string repr.rat_gens);
              None)
         state
     ;;

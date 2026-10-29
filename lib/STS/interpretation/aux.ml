@@ -9,6 +9,12 @@ module VarMap = struct
   include Map.Make (String)
   open Sexplib0.Sexp_conv
 
+  let find k m =
+    match find_opt k m with
+    | Some v -> v
+    | None -> failwithf "value for key %s is not found" k
+  ;;
+
   let t_of_sexp conv s = list_of_sexp (pair_of_sexp string_of_sexp conv) s |> of_list
   let sexp_of_t conv m = to_list m |> sexp_of_list (sexp_of_pair sexp_of_string conv)
 
@@ -38,7 +44,10 @@ module Queue = struct
 
   let t_of_sexp conv s = list_of_sexp conv s
   let sexp_of_t conv q = sexp_of_list conv q
-  let pp pp fmt = Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ", ") pp fmt
+
+  let pp pp fmt =
+    Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ", ") pp fmt
+  ;;
 end
 
 open Sexplib0.Sexp_conv

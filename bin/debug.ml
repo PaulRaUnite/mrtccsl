@@ -40,7 +40,7 @@ let debug_trace spec_filename trace clock =
   if not (List.mem clock clocks)
   then print_endline "clock is not found in trace, check spelling"
   else (
-    let a = A.of_spec spec in
+    let a = A.accept_of_spec spec in
     let result = A.accept_trace a trace in
     Printf.printf "result %b" result
     (* Option.iter

@@ -177,27 +177,11 @@ module Cstr = struct
   [@@deriving map, show, fold]
   (* TODO: remove the argument part? we do not allow it anyway. *)
 
-  (** Variants of continuous-valued distributions that can be used in a simulation. *)
-  type 'n distribution =
-    | Uniform
-    | Normal of
-        { mean : 'n
-        ; deviation : 'n
-        }
-    | Exponential of { rate : 'n }
-  [@@deriving map, show, fold]
+  (** Constraint that binds a discrete (int) distribution to variable ['v]. *)
+  type 'v discrete_constr = 'v * (int * int) list [@@deriving map, show, fold]
 
-  (** Constraint that binds a distribution to variable ['iv] or ['tv]. *)
-  type ('iv, 'tv, 't) probability_constr =
-    | DiscreteValued of
-        { name : 'iv
-        ; ratios : (int * int) list
-        }
-      (* ratios provide the distribution function *)
-    | ContinuousValued of
-        { name : 'tv
-        ; dist : 't distribution
-        }
+  (** Constraint that binds a continuous ['t] distribution to variable ['v]. *)
+  type ('v, 't) continuous_constr = 'v * 't Distribution.Continuous.t
   [@@deriving map, show, fold]
 
   (** Clock constraint name. *)
@@ -255,11 +239,6 @@ module Cstr = struct
 
   (** Maps only the time constants in a logical constraint. *)
   let map_time_const f = map_clock_constr Fun.id Fun.id Fun.id f
-
-  type ('c, 'tp, 'ip, 'tv, 'iv, 't) cstr =
-    | ClockConstraint of ('c, 'tp, 'ip, 'tv, 'iv, 't) clock_constr
-    | RealTimeConstraint of ('tv, 't) numeric_rel_constr
-    | IntegerConstraint of ('iv, int) numeric_rel_constr
 end
 
 (** Module of specifications. *)
@@ -269,19 +248,21 @@ module Specification = struct
   (** Specification type, lists all types of constraints. *)
   type ('c, 'tp, 'ip, 'tv, 'iv, 't) t =
     { duration : ('tv, 't) numeric_rel_constr list
-    ; probabilistic : ('iv, 'tv, 't) probability_constr list
+    ; discrete : 'iv discrete_constr list
+    ; continuous : ('tv, 't) continuous_constr list
     ; clock : ('c, 'tp, 'ip, 'tv, 'iv, 't) clock_constr list
     ; integer : ('iv, int) numeric_rel_constr list
     }
   [@@deriving map, show, fold]
 
   (** Empty specification. *)
-  let empty = { duration = []; probabilistic = []; clock = []; integer = [] }
+  let empty = { duration = []; discrete = []; continuous = []; clock = []; integer = [] }
 
   (** Merges two specifications, the corresponding constraints are simply listed together. *)
   let merge a b =
     { duration = List.append a.duration b.duration
-    ; probabilistic = List.append a.probabilistic b.probabilistic
+    ; discrete = List.append a.discrete b.discrete
+    ; continuous = List.append a.continuous b.continuous
     ; clock = List.append a.clock b.clock
     ; integer = List.append a.integer b.integer
     }
@@ -291,16 +272,17 @@ module Specification = struct
   let clocks s = List.flat_map clocks s.clock
 
   (** Number of constraints (of any type) in the specification. *)
-  let length { duration; probabilistic; clock; integer } =
+  let length { duration; discrete; continuous; clock; integer } =
     List.length duration
-    + List.length probabilistic
+    + List.length discrete
+    + List.length continuous
     + List.length clock
     + List.length integer
   ;;
 
   (** Adds only the clock constraints in the specification. *)
   let clock_constraints_only constraints =
-    { clock = constraints; duration = []; probabilistic = []; integer = [] }
+    { clock = constraints; duration = []; discrete = []; continuous = []; integer = [] }
   ;;
 
   (** Helper module for constructing specifications in imperative style. *)
@@ -321,8 +303,11 @@ module Specification = struct
     (** Adds time duration relation constraint to the specification. *)
     let duration b c = b.spec <- { b.spec with duration = c :: b.spec.duration }
 
-    (** Adds probabilistic constraint to the specification. *)
-    let probab b c = b.spec <- { b.spec with probabilistic = c :: b.spec.probabilistic }
+    (** Adds discrete constraint to the specification. *)
+    let discrete b c = b.spec <- { b.spec with discrete = c :: b.spec.discrete }
+
+    (** Adds continuous constraint to the specification. *)
+    let continuous b c = b.spec <- { b.spec with continuous = c :: b.spec.continuous }
 
     (** Adds integer relation constraint to the specification. *)
     let integer b c = b.spec <- { b.spec with integer = c :: b.spec.integer }
@@ -330,7 +315,8 @@ module Specification = struct
     (** Returns specification with the added constraints in the push order. *)
     let get b =
       { duration = List.rev b.spec.duration
-      ; probabilistic = List.rev b.spec.probabilistic
+      ; discrete = List.rev b.spec.discrete
+      ; continuous = List.rev b.spec.continuous
       ; clock = List.rev b.spec.clock
       ; integer = List.rev b.spec.integer
       }

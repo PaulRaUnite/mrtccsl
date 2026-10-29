@@ -300,7 +300,7 @@ struct
         (system_spec : _ Language.Specification.t)
         (chain : C.t Chain.t)
     =
-    let env = A.of_spec ~debug system_spec in
+    let env = A.sim_of_spec ~debug system_spec in
     let trace, cut =
       A.gen_trace s env |> Trace.take ~steps:n |> Trace.until ~horizon:time
     in

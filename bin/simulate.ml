@@ -195,7 +195,7 @@ let generate_trace ~config clocks env i =
   in
   let deadlocked = if !was_cut then false else !size < config.steps in
   Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" deadlocked !was_cut !size;
-  if deadlocked then print_endline @@ A.to_string env
+  if deadlocked then print_endline @@ A.sim_to_string env
 ;;
 
 let simulate ~config m =
@@ -243,7 +243,7 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
-  let simulations = Array.init config.traces (fun _ -> A.of_spec ~debug:false spec) in
+  let simulations = Array.init config.traces (fun _ -> A.sim_of_spec ~debug:false spec) in
   ignore @@ processor @@ fun i -> generate_trace ~config clocks simulations.(i) i
 ;;
 

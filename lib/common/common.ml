@@ -10,3 +10,4 @@ module Trace = Trace
 module Relation = Relation
 module Frequency = Frequency
 module Histogram = Histogram
+module Distribution = Distribution

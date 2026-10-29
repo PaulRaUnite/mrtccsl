@@ -2,6 +2,7 @@ open Prelude
 
 type ('c, 'n) record = ('c * 'n) list * 'n
 
+(* TODO: move to frequency-histogram hierarchy *)
 module Make
     (Category : sig
        include Map.OrderedType

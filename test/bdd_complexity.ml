@@ -1,5 +1,6 @@
-open Common.Prelude
-open Common.Number
+open Common
+open Prelude
+open Number
 
 let jitter i = Printf.sprintf "j_%i" i
 let out i = Printf.sprintf "out_%i" i
@@ -25,16 +26,17 @@ let make_spec size =
         ; NumRelation (offset i, `MoreEq, Const (Rational.of_int 0))
         ])
   in
-  let probabilistic =
+  let continuous =
     List.flatten
     @@ List.init size (fun i ->
       Mrtccsl.CCSL.Language.Cstr.
-        [ ContinuousValued { name = jitter i; dist = Uniform }
-        ; ContinuousValued { name = offset i; dist = Uniform }
+        [ jitter i, Distribution.Continuous.Uniform
+        ; offset i, Distribution.Continuous.Uniform
         ])
   in
   let spec =
-    Mrtccsl.CCSL.Language.Specification.{ clock; duration; integer = []; probabilistic }
+    Mrtccsl.CCSL.Language.Specification.
+      { clock; duration; integer = []; continuous; discrete = [] }
   in
   spec
 ;;
@@ -55,7 +57,7 @@ let convert_step =
 ;;
 
 let generate_traces ~duplicates ~length spec =
-  let simulations = List.init duplicates (fun _ -> Sim.of_spec spec) in
+  let simulations = List.init duplicates (fun _ -> Sim.sim_of_spec spec) in
   let traces =
     List.map
       (fun sim ->
