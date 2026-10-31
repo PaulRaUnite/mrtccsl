@@ -58,7 +58,7 @@ module Continuous = struct
         ; deviation : 'n
         }
     | Exponential of { rate : 'n }
-    | Histogram of { resolution : 'n option }
+    | Histogram of { resolution : 'n }
     | Kernel of
         { bandwidth : 'n
         ; kernel : kernel
@@ -85,6 +85,7 @@ module Continuous = struct
        end)
       (NI : Interval.I with type num = N.t) =
   struct
+
     type num = N.t
     type bound = NI.t
 
@@ -104,7 +105,7 @@ module Continuous = struct
         rvs)
     ;;
 
-    let to_rvs def bounds =
+    let to_rvs ~load_histogram_rvs name def bounds =
       let open Number in
       match def with
       | Uniform ->
@@ -138,7 +139,8 @@ module Continuous = struct
            fun () ->
              let sample = Float.truncated_exponential_rvs ~a ~b ~rate in
              N.of_float sample)
-      | _ -> failwith "not implemented"
+      | Histogram { resolution } -> load_histogram_rvs name resolution
+      | _ -> failwith "Kernel density estimation is not implemented"
     ;;
   end
 end

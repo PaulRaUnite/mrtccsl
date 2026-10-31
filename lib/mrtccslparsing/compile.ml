@@ -414,6 +414,7 @@ let into_module { assumptions; structure; assertions } =
       Normal { mean = compile_duration mean; deviation = compile_duration deviation }
     | DExponential { mean } ->
       Exponential { rate = Rational.(one / compile_duration mean) }
+    | DHistogram { resolution } -> Histogram { resolution = compile_duration resolution }
   in
   let compile_duration_expr ~context ~scope expr =
     match Loc.unwrap expr with

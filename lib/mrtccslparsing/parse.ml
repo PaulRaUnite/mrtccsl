@@ -87,6 +87,7 @@ let string_token =
   | OR_EQ -> "OR_EQ"
   | XOR_EQ -> "XOR_EQ"
   | EXPONENTIAL -> "EXPONENTIAL"
+  | HISTOGRAM -> "HISTOGRAM"
 ;;
 
 let test_tokens =

@@ -954,15 +954,18 @@ module Diagram = struct
     ;;
 
     (* Difference to native version: when distribution is missing, it is uniform, in native the bounds are propagated into the solving and so may shrink from conflicts. *)
-    let convert_cont_dists dists bounds =
+    let convert_cont_dists ~load_histogram_rvs dists bounds =
       let rat_gens =
         VarMap.merge
-          (fun _ dist bounds ->
+          (fun name dist bounds ->
              let* rvs =
                match dist, bounds with
-               | Some dist, Some bounds -> Some (ContDist.to_rvs dist bounds)
-               | Some dist, None -> Some (ContDist.to_rvs dist RI.inf)
-               | None, Some bounds -> Some (ContDist.to_rvs Uniform bounds)
+               | Some dist, Some bounds ->
+                 Some (ContDist.to_rvs ~load_histogram_rvs name dist bounds)
+               | Some dist, None ->
+                 Some (ContDist.to_rvs ~load_histogram_rvs name dist RI.inf)
+               | None, Some bounds ->
+                 Some (ContDist.to_rvs ~load_histogram_rvs name Uniform bounds)
                | _ -> None
              in
              Some (Distribution.IIDSeq.make rvs))
@@ -972,7 +975,13 @@ module Diagram = struct
       rat_gens
     ;;
 
-    let sim_of_spec ?debug:_ ?(instances = 1) spec : repr list =
+    let default_loader name : _ -> unit -> _ =
+      failwithf "Histogram loader is not provided, %s cannot be loaded" name
+    ;;
+
+    let sim_of_spec ?debug:_ ?(instances = 1) ?(load_histogram_rvs = default_loader) spec
+      : repr list
+      =
       let now, m, index =
         Literal.of_spec
           { spec with integer = []; duration = []; discrete = []; continuous = [] }
@@ -1001,7 +1010,7 @@ module Diagram = struct
         let int_dists = VarMap.of_list spec.discrete
         and rat_dists = VarMap.of_list spec.continuous in
         let int_gens = convert_discr_dists int_dists integer_bounds
-        and rat_gens = convert_cont_dists rat_dists duration_bounds in
+        and rat_gens = convert_cont_dists ~load_histogram_rvs rat_dists duration_bounds in
         let int_gens = Diagram.GenMap.make ~default:0 int_gens
         and rat_gens = Diagram.GenMap.make ~default:Rational.zero rat_gens in
         ( Diagram.{ diagram = diag; rat_gens; int_gens; clocks = Array.of_list clocks }

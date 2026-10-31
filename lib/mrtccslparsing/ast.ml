@@ -20,6 +20,7 @@ type 'n distribution =
       ; deviation : 'n
       }
   | DExponential of { mean : 'n }
+  | DHistogram of { resolution : 'n }
 
 type 'a interval =
   { left_strict : bool

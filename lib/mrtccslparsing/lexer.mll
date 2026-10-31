@@ -102,6 +102,7 @@ rule read =
   | "in" { IN }
   | "first" {FIRST}
   | "last" {LAST}
+  | "histogram" {HISTOGRAM}
   (* time scales and units *)
   | "year" { SECOND(365*24*60*60, 1) }
   | "month" { SECOND(30*24*60*60, 1) }

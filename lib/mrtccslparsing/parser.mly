@@ -17,7 +17,7 @@
 %token VAR (* variable declaration *)
 %token ARROWRIGHT NEXT FASTEST SLOWEST DOLLAR SAMPLE ON ALTERNATES DELAY BY SKIP EVERY PERIODIC OFFSET MUTEX POOL SUBCLOCKS SPORADIC AND OR XOR COINCIDENCE PRECEDES CAUSES SHARP EXCEPT WITH JITTER DRIFT STRICT ALLOW FORBID FIRST LAST IN (*constraints*)
 %token OR_EQ XOR_EQ (*additive constraints*)
-%token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM EXPONENTIAL SIM
+%token DISCRETE CONTINUOUS PROCESS NORMAL UNIFORM EXPONENTIAL HISTOGRAM SIM
 %token LESS LESSEQ MORE MOREEQ EQUAL NOTEQUAL  (* variable relations *)
  (*expressions *)
 %token PLUS MINUS STAR SLASH OF PERCENT PLUSMINUS PPM
@@ -103,6 +103,7 @@ contdist0 :
 | NORMAL ; LPAREN ; mean=duration ; COMMA ; deviation=duration ; RPAREN { DNormal {mean; deviation}}
 | UNIFORM { DUniform }
 | EXPONENTIAL ; LPAREN ; mean=duration ; RPAREN { DExponential {mean} }
+| HISTOGRAM ; LPAREN ; resolution=duration ; RPAREN { DHistogram {resolution} }
 
 duration_expr : duration_expr0 {Loc.make $symbolstartpos $endpos $1}
 %inline delim_duration_expr0 : 

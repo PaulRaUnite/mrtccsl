@@ -2,6 +2,7 @@ open Common
 open Mrtccsl
 open Prelude
 open Number
+open Simulate
 
 module Trace =
   Common.Trace.MakeIO (Number.Rational) (STS.Interpretation.Diagram.VarMap.Label)
@@ -18,16 +19,6 @@ let diagram_leap ~upper_bound ~rounding_error =
     ~floor:(Rational.round_down rounding_error)
     ~rand:Rational.random
 ;;
-
-type 'n config =
-  { steps : int
-  ; horizon : 'n option
-  ; output_dir : string
-  ; cores : int
-  ; traces : int
-  ; rounding_error : 'n
-  ; default_upper_bound : 'n
-  }
 
 open Cmdliner
 open Cmdliner.Term.Syntax
@@ -64,7 +55,7 @@ let generate_trace ~config clocks repr i =
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
 
-let simulate ~config m =
+let simulate2 ~config m =
   let processor =
     if config.cores <> 1
     then (
@@ -108,14 +99,18 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
+  let load_histogram_rvs =
+    Option.map Simulate.load_histogram_rvs_builder config.histograms
+  in
   let simulations =
     Array.of_list
-    @@ Backend.Machine.Diagram.Simulation.sim_of_spec ~instances:config.traces spec
+    @@ Backend.Machine.Diagram.Simulation.sim_of_spec
+         ~instances:config.traces
+         ?load_histogram_rvs
+         spec
   in
   ignore @@ processor @@ fun i -> generate_trace ~config clocks simulations.(i) i
 ;;
-
-open Simulate
 
 let cmd =
   Cmd.v
@@ -131,7 +126,8 @@ let cmd =
      and+ steps = steps_arg
      and+ traces = traces_arg
      and+ default_upper_bound = default_upper_bound_arg
-     and+ rounding_error = rounding_error_arg in
+     and+ rounding_error = rounding_error_arg
+     and+ histograms = histograms_arg in
      let _, m = Mrtccslparsing.load_with_string specification Format.err_formatter in
      let horizon = Option.map Number.Rational.of_decimal_string horizon in
      let default_upper_bound =
@@ -147,10 +143,18 @@ let cmd =
          rounding_error
      in
      let config =
-       { cores; output_dir; horizon; steps; traces; default_upper_bound; rounding_error }
+       { cores
+       ; output_dir
+       ; horizon
+       ; steps
+       ; traces
+       ; default_upper_bound
+       ; rounding_error
+       ; histograms
+       }
      in
      verify_config config;
-     `Ok (Ok (simulate ~config m))
+     `Ok (Ok (simulate2 ~config m))
 ;;
 
 let main () = Cmd.eval_result cmd

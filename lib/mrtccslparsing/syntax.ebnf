@@ -1,175 +1,149 @@
-addsub ::= PLUS
-         | MINUS
+<addsub> ::= PLUS
+           | MINUS
 
-binop ::= PLUS
-        | MINUS
-        | STAR
-        | SLASH
+<binop> ::= PLUS
+          | MINUS
+          | STAR
+          | SLASH
 
-num_rel ::= LESS
-          | LESSEQ
-          | EQUAL
-          | MORE
-          | MOREEQ
-          | NOTEQUAL
+<num_rel> ::= LESS
+            | LESSEQ
+            | EQUAL
+            | MORE
+            | MOREEQ
+            | NOTEQUAL
 
-var_type ::= INTEGER
-           | DURATION
-           | CLOCK
+<var_type> ::= INTEGER
+             | DURATION
+             | CLOCK
 
-id ::= ID
+<dangling_list(sep, X)> ::= [<non_empty_dangling_list(sep, X)>]
 
-path ::= ID (DOT ID)*
+<non_empty_dangling_list(sep, X)> ::= X [sep]
+                                    | X sep <non_empty_dangling_list(sep, X)>
 
-var ::= located_0
+<located(X)> ::= X
 
-percentage ::= DECIMAL PERCENT
+<id> ::= ID
 
-duration ::= DECIMAL SECOND
-           | INT SECOND
+<path> ::= ID (DOT ID)*
 
-clock_rel ::= COINCIDENCE
-            | SHARP
-            | STRICT? ALTERNATES
-            | SUBCLOCKS (LBRACKET percentage RBRACKET)?
-            | PRECEDES
-            | CAUSES
+<var> ::= <located(<path>)>
 
-contdist ::= located_1
+<percentage> ::= DECIMAL PERCENT
 
-contdist0 ::= NORMAL LPAREN duration COMMA duration RPAREN
-            | UNIFORM
-            | EXPONENTIAL LPAREN duration RPAREN
+<duration> ::= DECIMAL SECOND
+             | INT SECOND
 
-duration_expr ::= duration_expr0
+<interval(X)> ::= LBRACKET X COMMA X RBRACKET
+                | RBRACKET X COMMA X RBRACKET
+                | LBRACKET X COMMA X LBRACKET
+                | RBRACKET X COMMA X LBRACKET
 
-delim_duration_expr0 ::= LPAREN duration_expr0 RPAREN
-                       | var
-                       | duration
+<numeric_interval(X)> ::= <interval(X)>
+                        | X PLUSMINUS X
 
-delim_duration_expr ::= delim_duration_expr0
+<clock_rel> ::= COINCIDENCE
+              | SHARP
+              | [STRICT] ALTERNATES
+              | SUBCLOCKS [LBRACKET <percentage> RBRACKET]
+              | PRECEDES
+              | CAUSES
 
-duration_expr0 ::= delim_duration_expr0
-                 | duration_expr addsub duration_expr
-                 | DECIMAL STAR delim_duration_expr
-                 | MINUS delim_duration_expr
-                 | QUESTION
+<contdist> ::= <located(<contdist0>)>
 
-int_expr ::= int_expr0
+<contdist0> ::= NORMAL LPAREN <duration> COMMA <duration> RPAREN
+              | UNIFORM
+              | EXPONENTIAL LPAREN <duration> RPAREN
+              | HISTOGRAM LPAREN <duration> RPAREN
 
-int_expr0 ::= INT
-            | var
-            | int_expr binop int_expr
-            | MINUS int_expr
-            | QUESTION
+<duration_expr> ::= <duration_expr0>
 
-offset ::= OFFSET duration_expr
+<delim_duration_expr0> ::= LPAREN <duration_expr0> RPAREN
+                         | <var>
+                         | <duration>
 
-skip ::= SKIP inline_relation_0
+<delim_duration_expr> ::= <delim_duration_expr0>
 
-clock_expr ::= clock_expr0
+<duration_expr0> ::= <delim_duration_expr0>
+                   | <duration_expr> <addsub> <duration_expr>
+                   | DECIMAL STAR <delim_duration_expr>
+                   | MINUS <delim_duration_expr>
+                   | QUESTION
 
-delim_clock_expr0 ::= LPAREN clock_expr0 RPAREN
-                    | var
+<int_expr> ::= <int_expr0>
 
-delim_clock_expr ::= delim_clock_expr0
+<int_expr0> ::= INT
+              | <var>
+              | <int_expr> <binop> <int_expr>
+              | MINUS <int_expr>
+              | QUESTION
 
-clock_expr0 ::= delim_clock_expr0
-              | delim_clock_expr (AND delim_clock_expr)+
-              | delim_clock_expr (OR delim_clock_expr)+
-              | delim_clock_expr (XOR delim_clock_expr)+ (LBRACKET var
-                RBRACKET)?
-              | delim_clock_expr DOLLAR inline_relation_0 (ON
-                delim_clock_expr)?
-              | NEXT delim_clock_expr
-              | skip? EVERY located_2 WITH JITTER inline_relation_0 OF
-                delim_clock_expr
-              | SAMPLE delim_clock_expr ON delim_clock_expr
-              | FIRST SAMPLE delim_clock_expr ON delim_clock_expr
-              | LAST SAMPLE delim_clock_expr ON delim_clock_expr
-              | delim_clock_expr EXCEPT delim_clock_expr+
-              | FASTEST OF delim_clock_expr+
-              | SLOWEST OF delim_clock_expr+
-              | PERIODIC duration WITH JITTER inline_relation_1 offset?
-              | PERIODIC duration WITH DRIFT inline_relation_1 offset?
-              | DELAY delim_clock_expr BY inline_relation_1
-              | STRICT? SPORADIC duration
+<inline_relation(X)> ::= X
+                       | <numeric_interval(X)>
 
-additive_union ::= OR_EQ
-                 | XOR_EQ
+<offset> ::= OFFSET <duration_expr>
 
-statement ::= statement0
+<skip> ::= SKIP <inline_relation(<int_expr>)>
 
-statement0 ::= VAR (id (COMMA id)* COLON var_type (COMMA id (COMMA id)* COLON
-               var_type)*)
-             | INTEGER COLON int_expr (num_rel int_expr)+
-             | DURATION COLON duration_expr (num_rel duration_expr)+
-             | clock_expr clock_rel clock_expr
-             | CONTINUOUS PROCESS var WITH contdist
-             | DISCRETE PROCESS var WITH located_3 SIM located_4
-             | MUTEX LBRACE dangling_list_0 RBRACE
-             | POOL INT LBRACE dangling_list_0 RBRACE
-             | ALLOW clock_expr+ IN interval_2
-             | FORBID clock_expr+ IN interval_2
-             | id LBRACE statements RBRACE
-             | var additive_union clock_expr
+<clock_expr> ::= <clock_expr0>
 
-statements ::= dangling_list_1
+<delim_clock_expr0> ::= LPAREN <clock_expr0> RPAREN
+                      | <var>
 
-top_module ::= mod_block_0* mod_block_1 mod_block_2* EOF
+<delim_clock_expr> ::= <delim_clock_expr0>
 
-located_1 ::= contdist0
+<clock_expr0> ::= <delim_clock_expr0>
+                | <delim_clock_expr> (AND <delim_clock_expr>)+
+                | <delim_clock_expr> (OR <delim_clock_expr>)+
+                | <delim_clock_expr> (XOR <delim_clock_expr>)+ [LBRACKET
+                  <var> RBRACKET]
+                | <delim_clock_expr> DOLLAR <inline_relation(<int_expr>)> [ON
+                  <delim_clock_expr>]
+                | NEXT <delim_clock_expr>
+                | [<skip>] EVERY <located(INT)> WITH JITTER
+                  <inline_relation(<int_expr>)> OF <delim_clock_expr>
+                | SAMPLE <delim_clock_expr> ON <delim_clock_expr>
+                | FIRST SAMPLE <delim_clock_expr> ON <delim_clock_expr>
+                | LAST SAMPLE <delim_clock_expr> ON <delim_clock_expr>
+                | <delim_clock_expr> EXCEPT <delim_clock_expr>+
+                | FASTEST OF <delim_clock_expr>+
+                | SLOWEST OF <delim_clock_expr>+
+                | PERIODIC <duration> WITH JITTER
+                  <inline_relation(<duration_expr>)> [<offset>]
+                | PERIODIC <duration> WITH DRIFT
+                  <inline_relation(<duration_expr>)> [<offset>]
+                | DELAY <delim_clock_expr> BY
+                  <inline_relation(<duration_expr>)>
+                | [STRICT] SPORADIC <duration>
 
-located_3 ::= INT+
+<additive_union> ::= OR_EQ
+                   | XOR_EQ
 
-located_4 ::= INT (COLON INT)*
+<statement> ::= <statement0>
 
-mod_block_2 ::= ASSERT LBRACE statements RBRACE
+<statement0> ::= VAR (<id> (COMMA <id>)* COLON <var_type> (COMMA <id> (COMMA
+                 <id>)* COLON <var_type>)*)
+               | INTEGER COLON <int_expr> (<num_rel> <int_expr>)+
+               | DURATION COLON <duration_expr> (<num_rel> <duration_expr>)+
+               | <clock_expr> <clock_rel> <clock_expr>
+               | CONTINUOUS PROCESS <var> WITH <contdist>
+               | DISCRETE PROCESS <var> WITH <located(INT+)> SIM <located(INT
+                 (COLON INT)*)>
+               | MUTEX LBRACE <dangling_list(COMMA, <clock_expr> ARROWRIGHT
+                 <clock_expr>)> RBRACE
+               | POOL INT LBRACE <dangling_list(COMMA, <clock_expr>
+                 ARROWRIGHT <clock_expr>)> RBRACE
+               | ALLOW <clock_expr>+ IN <interval(<clock_expr>)>
+               | FORBID <clock_expr>+ IN <interval(<clock_expr>)>
+               | <id> LBRACE <statements> RBRACE
+               | <var> <additive_union> <clock_expr>
 
-mod_block_1 ::= STRUCTURE LBRACE statements RBRACE
+<statements> ::= <dangling_list(SEMICOLON, <statement>)>
 
-located_2 ::= INT
+<mod_block(NAME)> ::= NAME LBRACE <statements> RBRACE
 
-non_empty_dangling_list_0 ::= clock_expr ARROWRIGHT clock_expr COMMA?
-                            | clock_expr ARROWRIGHT clock_expr COMMA
-                              non_empty_dangling_list_0
-
-numeric_interval_0 ::= interval_0
-                     | int_expr PLUSMINUS int_expr
-
-inline_relation_0 ::= int_expr
-                    | numeric_interval_0
-
-interval_2 ::= LBRACKET clock_expr COMMA clock_expr RBRACKET
-             | RBRACKET clock_expr COMMA clock_expr RBRACKET
-             | LBRACKET clock_expr COMMA clock_expr LBRACKET
-             | RBRACKET clock_expr COMMA clock_expr LBRACKET
-
-numeric_interval_1 ::= interval_1
-                     | duration_expr PLUSMINUS duration_expr
-
-inline_relation_1 ::= duration_expr
-                    | numeric_interval_1
-
-dangling_list_1 ::= non_empty_dangling_list_1?
-
-mod_block_0 ::= ASSUME LBRACE statements RBRACE
-
-non_empty_dangling_list_1 ::= statement SEMICOLON?
-                            | statement SEMICOLON non_empty_dangling_list_1
-
-interval_1 ::= LBRACKET duration_expr COMMA duration_expr RBRACKET
-             | RBRACKET duration_expr COMMA duration_expr RBRACKET
-             | LBRACKET duration_expr COMMA duration_expr LBRACKET
-             | RBRACKET duration_expr COMMA duration_expr LBRACKET
-
-interval_0 ::= LBRACKET int_expr COMMA int_expr RBRACKET
-             | RBRACKET int_expr COMMA int_expr RBRACKET
-             | LBRACKET int_expr COMMA int_expr LBRACKET
-             | RBRACKET int_expr COMMA int_expr LBRACKET
-
-located_0 ::= path
-
-dangling_list_0 ::= non_empty_dangling_list_0?
+<top_module> ::= <mod_block(ASSUME)>* <mod_block(STRUCTURE)>
+                 <mod_block(ASSERT)>* EOF
 
 

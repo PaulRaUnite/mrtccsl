@@ -5,6 +5,7 @@ module A = Backend.Naive.Make (String) (Number.Rational)
 module NumStrat = Backend.Strategy.Num (Number.Rational) (A.NI)
 module LabelStrat = Backend.Strategy.Solution (A.L) (A.NI)
 module Trace = Common.Trace.MakeIO (Number.Rational) (A.L)
+module Hist = Histogram.Binned (Frequency.ContinuousExact) (Number.Rational)
 open Number.Rational
 
 let priority_strategy priorities general_strategy =
@@ -57,6 +58,7 @@ type 'n config =
   ; traces : int
   ; rounding_error : 'n
   ; default_upper_bound : 'n
+  ; histograms : string option
   }
 
 module Opt = Mrtccsl.Optimization.Order.Make (String)
@@ -95,7 +97,10 @@ let traces_arg =
   Arg.(
     value
     & opt int 1
-    & info [ "t"; "traces" ] ~doc:"Number of traces (>= 1) to be generated." ~docv:"TRACES")
+    & info
+        [ "t"; "traces" ]
+        ~doc:"Number of traces (>= 1) to be generated."
+        ~docv:"TRACES")
 ;;
 
 let horizon_arg =
@@ -149,6 +154,13 @@ let steps_arg =
         ~docv:"STEPS")
 ;;
 
+let histograms_arg =
+  Arg.(
+    value
+    & opt (some dir) None
+    & info [ "hist" ] ~doc:"Path to directory with histograms." ~docv:"HIST")
+;;
+
 let verify_config config =
   if config.cores < 1
   then
@@ -198,6 +210,11 @@ let generate_trace ~config clocks env i =
   if deadlocked then print_endline @@ A.sim_to_string env
 ;;
 
+let load_histogram_rvs_builder dir name resolution =
+  let filename = Printf.sprintf "%s/%s.freq" dir name in
+  Hist.CDF.rvs @@ Hist.CDF.load filename resolution
+;;
+
 let simulate ~config m =
   verify_config config;
   let processor =
@@ -243,7 +260,11 @@ let simulate ~config m =
             Format.pp_print_string state s)
          spec)
   in
-  let simulations = Array.init config.traces (fun _ -> A.sim_of_spec ~debug:false spec) in
+  let load_histogram_rvs = Option.map load_histogram_rvs_builder config.histograms in
+  let simulations =
+    Array.init config.traces (fun _ ->
+      A.sim_of_spec ~debug:false ?load_histogram_rvs spec)
+  in
   ignore @@ processor @@ fun i -> generate_trace ~config clocks simulations.(i) i
 ;;
 
@@ -261,7 +282,8 @@ let cmd =
      and+ steps = steps_arg
      and+ traces = traces_arg
      and+ default_upper_bound = default_upper_bound_arg
-     and+ rounding_error = rounding_error_arg in
+     and+ rounding_error = rounding_error_arg
+     and+ histograms = histograms_arg in
      let _, m = Mrtccslparsing.load_with_string specification Format.err_formatter in
      let horizon = Option.map Number.Rational.of_decimal_string horizon in
      let default_upper_bound =
@@ -277,7 +299,15 @@ let cmd =
          rounding_error
      in
      let config =
-       { cores; output_dir; horizon; steps; traces; default_upper_bound; rounding_error }
+       { cores
+       ; output_dir
+       ; horizon
+       ; steps
+       ; traces
+       ; default_upper_bound
+       ; rounding_error
+       ; histograms
+       }
      in
      `Ok (Ok (simulate ~config m))
 ;;

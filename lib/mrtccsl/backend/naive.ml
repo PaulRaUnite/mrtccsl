@@ -1075,14 +1075,16 @@ struct
       bounds
   ;;
 
-  let convert_cont_dists dists bounds =
+  let convert_cont_dists ~load_histogram_rvs dists bounds =
     let rat_gens =
       CMap.merge
-        (fun _ dist bounds ->
+        (fun name dist bounds ->
            let* rvs =
              match dist, bounds with
-             | Some dist, Some bounds -> Some (NI.return << ContDist.to_rvs dist bounds)
-             | Some dist, None -> Some (NI.return << ContDist.to_rvs dist NI.inf)
+             | Some dist, Some bounds ->
+               Some (NI.return << ContDist.to_rvs ~load_histogram_rvs name dist bounds)
+             | Some dist, None ->
+               Some (NI.return << ContDist.to_rvs ~load_histogram_rvs name dist NI.inf)
              | None, Some bounds -> Some (fun () -> bounds)
              | _ -> None
            in
@@ -1093,11 +1095,20 @@ struct
     rat_gens
   ;;
 
+  let default_loader name : N.t -> unit -> N.t =
+    failwithf "Histogram loader is not provided, %s cannot be loaded" (C.to_string name)
+  ;;
+
   (** Creates automata for simulation from specification. CORRECTNESS: should be run sequentially with other [sim_of_spec] because of internal hashmap.*)
-  let sim_of_spec ?(debug = false) spec : sim =
+  let sim_of_spec ?(debug = false) ?(load_histogram_rvs = default_loader) spec : sim =
     let duration_bounds, integer_bounds = get_bounds spec in
     let integers = convert_discr_dists (CMap.of_list spec.discrete) integer_bounds
-    and durations = convert_cont_dists (CMap.of_list spec.continuous) duration_bounds in
+    and durations =
+      convert_cont_dists
+        ~load_histogram_rvs
+        (CMap.of_list spec.continuous)
+        duration_bounds
+    in
     let integers = GenMap.make ~default:II.inf @@ integers
     and durations = GenMap.make ~default:NI.inf @@ durations in
     let constraints =
