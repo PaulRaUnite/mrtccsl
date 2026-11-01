@@ -708,6 +708,12 @@ module List = struct
     | ((a, _) as pair) :: l ->
       if compare a x = 0 then l else pair :: remove_assoc_comp ~compare x l
   ;;
+
+  let cons_opt x l =
+    match x with
+    | Some x -> x :: l
+    | None -> l
+  ;;
 end
 
 module String = struct

@@ -126,11 +126,13 @@ module ContinuousDecimal = struct
   let bin_of_string = Rational.of_string
 
   module STDN = struct
-    include Float
+    include Rational
 
     type bin = Bins.key
 
-    let of_bin = Rational.to_float
+    let of_bin = Fun.id
+    let pow2 x = x * x
+    let sqrt x = Rational.of_float @@ Float.sqrt @@ Rational.to_float x
   end
 end
 

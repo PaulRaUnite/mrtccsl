@@ -10,6 +10,14 @@ module Cstr = struct
     | Const of 'n
   [@@deriving map, show, fold]
 
+  let unparse_arg ?suffix pp_v pp_n fmt = function
+    | Var v -> pp_v fmt v
+    | Const n ->
+      (match suffix with
+       | Some suffix -> Format.fprintf fmt "%a%s" pp_n n suffix
+       | None -> pp_n fmt n)
+  ;;
+
   (** Constructs variable/parameter argument. *)
   let var v = Var v
 
@@ -156,6 +164,55 @@ module Cstr = struct
       constr
   ;;
 
+  let unparse_clock_constr c _tp _ip tv _iv t fmt = function
+    | Precedence { cause; conseq } -> Format.fprintf fmt "%a precedes %a" c cause c conseq
+    | Causality { cause; conseq } -> Format.fprintf fmt "%a causes %a" c cause c conseq
+    | Exclusion { args = [ left; right ]; choice = None } ->
+      Format.fprintf fmt "%a # %a" c left c right
+    | Exclusion _ -> failwith "general exclusion is not yet supported"
+    | Coincidence [ left; right ] -> Format.fprintf fmt "%a = %a" c left c right
+    | Subclocking { sub; super; choice = None } ->
+      Format.fprintf fmt "%a subclocks %a" c sub c super
+    | Subclocking _ -> failwith "subclocking with choice is not supported"
+    | Minus { out; arg; except } ->
+      Format.fprintf
+        fmt
+        "%a = %a except %a"
+        c
+        out
+        c
+        arg
+        (Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt " ") c)
+        except
+    | CumulPeriodic { out; period; error; offset } ->
+      Format.fprintf
+        fmt
+        "%a = periodic %a with drift %a offset %a"
+        c
+        out
+        t
+        period
+        (unparse_arg tv t)
+        error
+        (unparse_arg tv t)
+        offset
+    | AbsPeriodic { out; period; error; offset } ->
+      Format.fprintf
+        fmt
+        "%a = periodic %a with jitter %a offset %a"
+        c
+        out
+        t
+        period
+        (unparse_arg tv t)
+        error
+        (unparse_arg tv t)
+        offset
+    | RTdelay { out; arg; delay } ->
+      Format.fprintf fmt "%a = delay %a by %a" c out c arg (unparse_arg tv t) delay
+    | _ -> failwith "other constraints are not yet supported to unparse"
+  ;;
+
   (* TODO: add some sort of universal assumptions on the constraint definition/arguments?
   Maybe it is possible to extract them from the bounds in Rocq?
   It also should be possible to translate them to the domain on which the constraints are actually defined. *)
@@ -177,12 +234,52 @@ module Cstr = struct
   [@@deriving map, show, fold]
   (* TODO: remove the argument part? we do not allow it anyway. *)
 
+  let unparse_rel_constr ~type_str pp_v pp_c fmt (NumRelation (v, rel, arg)) =
+    Format.fprintf
+      fmt
+      "%s : %a %s %a"
+      type_str
+      pp_v
+      v
+      (Expr.string_of_num_rel rel)
+      (unparse_arg pp_v pp_c)
+      arg
+  ;;
+
   (** Constraint that binds a discrete (int) distribution to variable ['v]. *)
   type 'v discrete_constr = 'v * (int * int) list [@@deriving map, show, fold]
+
+  let unparse_discrete_constr pp_v fmt (v, ratios) =
+    let values, freqs = List.split ratios in
+    Format.fprintf
+      fmt
+      "discrete process %a with %s ~ %s"
+      pp_v
+      v
+      (List.to_string ~sep:" " Int.to_string values)
+      (List.to_string ~sep:" " Int.to_string freqs)
+  ;;
 
   (** Constraint that binds a continuous ['t] distribution to variable ['v]. *)
   type ('v, 't) continuous_constr = 'v * 't Distribution.Continuous.t
   [@@deriving map, show, fold]
+
+  let unpase_continuous_constr pp_v pp_t t_inv fmt (v, dist) =
+    let pp_dist =
+      fun fmt ->
+      Distribution.Continuous.(
+        function
+        | Uniform -> Format.fprintf fmt "uniform"
+        | Normal { mean; deviation } ->
+          Format.fprintf fmt "normal ( %a , %a)" pp_t mean pp_t deviation
+        | Exponential { rate } ->
+          Format.fprintf fmt "exponential ( %a )" pp_t (t_inv rate)
+        | Histogram { resolution } ->
+          Format.fprintf fmt "histogram ( %a )" pp_t resolution
+        | Kernel _ -> failwith "no kernel unparsing as there is not syntax")
+    in
+    Format.fprintf fmt "continuous process %a with %a" pp_v v pp_dist dist
+  ;;
 
   (** Clock constraint name. *)
   let name = function
@@ -283,6 +380,32 @@ module Specification = struct
   (** Adds only the clock constraints in the specification. *)
   let clock_constraints_only constraints =
     { clock = constraints; duration = []; discrete = []; continuous = []; integer = [] }
+  ;;
+
+  let unparse pp_c pp_tp pp_ip pp_tv pp_iv pp_t t_inv fmt spec =
+    let pp_sep fmt () = Format.fprintf fmt "" in
+    let semi_suffix pp fmt x = Format.fprintf fmt "    %a;\n" pp x in
+    Format.fprintf
+      fmt
+      "%a\n%a\n%a\n%a\n%a"
+      (Format.pp_print_list
+         ~pp_sep
+         (semi_suffix (unparse_rel_constr ~type_str:"integer" pp_iv Format.pp_print_int)))
+      spec.integer
+      (Format.pp_print_list ~pp_sep (semi_suffix (unparse_discrete_constr pp_iv)))
+      spec.discrete
+      (Format.pp_print_list
+         ~pp_sep
+         (semi_suffix (unparse_rel_constr ~type_str:"duration" pp_tv pp_t)))
+      spec.duration
+      (Format.pp_print_list
+         ~pp_sep
+         (semi_suffix (unpase_continuous_constr pp_tv pp_t t_inv)))
+      spec.continuous
+      (Format.pp_print_list
+         ~pp_sep
+         (semi_suffix (unparse_clock_constr pp_c pp_tp pp_ip pp_tv pp_iv pp_t)))
+      spec.clock
   ;;
 
   (** Helper module for constructing specifications in imperative style. *)
@@ -387,5 +510,31 @@ module Module = struct
       Int.add
       0
       (List.map Specification.length ((structure :: assumptions) @ assertions))
+  ;;
+
+  let unparse
+        pp_c
+        pp_tp
+        pp_ip
+        pp_tv
+        pp_iv
+        pp_t
+        t_inv
+        fmt
+        { assumptions; structure; assertions }
+    =
+    let pp_spec = Specification.unparse pp_c pp_tp pp_ip pp_tv pp_iv pp_t t_inv in
+    let pp_block ~prefix fmt spec =
+      Format.fprintf fmt "%s {\n    %a \n} " prefix pp_spec spec
+    in
+    Format.fprintf
+      fmt
+      "%a%a%a\n"
+      (Format.pp_print_list (pp_block ~prefix:"assume"))
+      assumptions
+      (pp_block ~prefix:"structure")
+      structure
+      (Format.pp_print_list (pp_block ~prefix:"assert"))
+      assertions
   ;;
 end
