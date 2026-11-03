@@ -12,6 +12,8 @@ module type ID = sig
   include Stringable with type t := t
   include Parseable with type t := t
   include Sexplib0.Sexpable.S with type t := t
+
+  val hash : t -> int
 end
 
 module type Num = sig
@@ -459,16 +461,21 @@ struct
             ;;
           end)
         in
+        let zero = NI.return N.zero in
         let queue = Heap.create () in
         let g now =
           match Heap.peek queue with
           | None ->
-            if NI.subset (NI.return N.zero) (current_delay ())
+            let d = current_delay () in
+            if NI.subset zero d
             then
-              [| L.singleton a, NI.pinf_strict now
-               ; L.doubleton a b, NI.pinf_strict now
-               ; L.empty, NI.pinf_strict now
-              |]
+              if NI.equal zero d
+              then [| L.doubleton a b, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
+              else
+                [| L.singleton a, NI.pinf_strict now
+                 ; L.doubleton a b, NI.pinf_strict now
+                 ; L.empty, NI.pinf_strict now
+                |]
             else [| L.singleton a, NI.pinf_strict now; L.empty, NI.pinf_strict now |]
           | Some next ->
             [| L.singleton a, NI.ninf_strict (Option.get @@ NI.right_bound_opt next)
@@ -477,11 +484,18 @@ struct
              ; L.singleton b, next
             |]
         in
-        let t _ (l, n') =
+        let t now (l, n') =
           let _ =
             if L.mem a l
             then (
-              Heap.add queue (NI.shift_by (current_delay ()) n');
+              let d = current_delay () in
+              Printf.printf
+                "time: %s->%s delay %s label %s\n"
+                (N.to_string now)
+                (N.to_string n')
+                (NI.to_string d)
+                (L.to_string l);
+              Heap.add queue (NI.shift_by d n');
               consume_delay ())
           in
           let _ = if L.mem b l then ignore (Heap.pop_min queue) in
@@ -1095,7 +1109,7 @@ struct
     rat_gens
   ;;
 
-  let default_loader name : N.t -> unit -> N.t =
+  let default_loader ~bounds:_ name : N.t -> unit -> N.t =
     failwithf "Histogram loader is not provided, %s cannot be loaded" (C.to_string name)
   ;;
 
@@ -1132,8 +1146,8 @@ struct
     Accept { integers; durations; automata }
   ;;
 
-  let next_step strat (a : t list) now : solution option =
-    let possible = sync_guards a now in
+  let next_step ?(debug = false) strat (a : t list) now : solution option =
+    let possible = sync_guards ~debug a now in
     if Iter.is_empty possible
     then None
     else
@@ -1141,11 +1155,19 @@ struct
       if sync_transitions a now sol then Some sol else None
   ;;
 
-  let gen_trace (sol_strat : sol_strategy) (Sim { integers; durations; automata }) : trace
+  let gen_trace
+        ?(debug = false)
+        (sol_strat : sol_strategy)
+        (Sim { integers; durations; automata })
+    : trace
     =
     Seq.unfold
       (fun now ->
-         match next_step sol_strat automata now with
+         if debug
+         then (
+           Printf.printf "---\ntime: %s\n" (N.to_string now);
+           Printf.printf "%s\n\n" (print_state automata ()));
+         match next_step ~debug sol_strat automata now with
          | Some (l, now) -> Some (Trace.{ label = l; time = now }, now)
          | None ->
            print_endline "all integers";

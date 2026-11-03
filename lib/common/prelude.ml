@@ -792,6 +792,10 @@ module Hashtbl = struct
     let v = find_opt tbl key |> Option.value ~default in
     replace tbl key (f v)
   ;;
+  let entry_mut ~default f key tbl =
+    let v = find_opt tbl key |> Option.value_mut ~default in
+    replace tbl key (f v)
+  ;;
 
   (* TODO: continue work on proper Entry later
   module Entry : Entry = struct

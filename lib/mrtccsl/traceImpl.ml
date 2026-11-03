@@ -1,6 +1,12 @@
 open Common
 
 module Make (N : Trace.Timestamp) (L : Trace.Label) = struct
+  module HR = Microstep.HardRelation (struct
+      include L.E
+
+      let equal x y = compare x y = 0
+    end)
+
   module Serialize = struct
     (** [undefined] serializes the step in order defined by the label implementation.*)
     let undefined l = L.to_iter l
@@ -10,10 +16,7 @@ module Make (N : Trace.Timestamp) (L : Trace.Label) = struct
 
     (** [respect_microstep] serializes the step randomly while respecting partial ordering.*)
     let respect_microstep order_hints l =
-      l
-      |> L.to_iter
-      |> Microstep.HardRelation.arrange_randomly order_hints
-      |> Iter.of_list
+      l |> L.to_iter |> HR.arrange_randomly order_hints |> Iter.of_list
     ;;
   end
 

@@ -11,7 +11,8 @@ module Label = struct
 end
 
 module Export = Common.Trace.MakeIO (Rational) (Label)
-module CcslTrace = Mrtccsl.TraceImpl.Make(Rational)(Label)
+module CcslTrace = Mrtccsl.TraceImpl.Make (Rational) (Label)
+module HR = Mrtccsl.CCSL.MicroStep.HardRelation (Label.E)
 
 let input_arg =
   Arg.(
@@ -96,12 +97,9 @@ module Native = struct
           ~default:CcslTrace.Serialize.random
           (fun spec ->
              let microstep_order_rules =
-               Mrtccsl.CCSL.MicroStep.HardRelation.of_logical_spec
-                 Mrtccsl.CCSL.Language.Specification.(spec.clock)
+               HR.of_logical_spec Mrtccsl.CCSL.Language.Specification.(spec.clock)
              in
-             let compiled_microstep_rules =
-               Mrtccsl.CCSL.MicroStep.HardRelation.compile microstep_order_rules
-             in
+             let compiled_microstep_rules = CcslTrace.HR.compile microstep_order_rules in
              CcslTrace.Serialize.respect_microstep compiled_microstep_rules)
           sequalize
       in

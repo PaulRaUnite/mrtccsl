@@ -33,6 +33,7 @@ module type I = sig
   val subset : t -> t -> bool
 
   val compare : t -> t -> int
+  val equal : t -> t -> bool
   val is_empty : t -> bool
 
   (** Inclusion test. *)
@@ -64,13 +65,20 @@ module type Num = sig
 end
 
 module Make (N : Num) : I with type num = N.t = struct
+  module N = struct
+    include N
+
+    let equal x y = compare x y = 0
+  end
+
   type num = N.t
 
   type bound =
     | Exclude of N.t
     | Include of N.t
     | Inf
-  [@@deriving sexp]
+  [@@deriving sexp, equal]
+
 
   open Sexplib0.Sexp_conv
 
@@ -130,7 +138,8 @@ module Make (N : Num) : I with type num = N.t = struct
   type t =
     | Bound of bound * bound
     | Empty
-  [@@deriving sexp]
+  [@@deriving sexp, equal]
+
 
   let[@inline always] normalize i =
     let pass =

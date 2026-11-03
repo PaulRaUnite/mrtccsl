@@ -13,7 +13,8 @@
    ppx_compare
    ppx_deriving.map
    ppx_deriving.fold
-   ppx_deriving.show)))
+   ppx_deriving.show
+   )))
 
 (env
  (dev

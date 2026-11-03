@@ -22,6 +22,7 @@ module React =
     (Rational)
 
 module Stats = Stats.Make (String) (Rational)
+module HR = CCSL.MicroStep.HardRelation (String)
 open Aux
 
 let open_in_chan = function
@@ -52,15 +53,12 @@ let load_trace filename =
 ;;
 
 let microstep_sequalizer microstep_spec_filename =
-  let open CCSL.MicroStep in
   let contents = read_to_string microstep_spec_filename in
-  let spec =
-    HardRelation.spec_of_sexp Clock.t_of_sexp @@ Sexplib.Sexp.of_string contents
-  in
-  let compiled_spec = HardRelation.compile spec in
+  let spec = HR.spec_of_sexp Clock.t_of_sexp @@ Sexplib.Sexp.of_string contents in
+  let compiled_spec = HR.compile spec in
   let sequalizer label =
     let iter = L.to_iter label in
-    let randomized = HardRelation.arrange_randomly compiled_spec iter in
+    let randomized = HR.arrange_randomly compiled_spec iter in
     List.to_seq randomized
   in
   sequalizer

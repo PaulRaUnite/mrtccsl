@@ -14,6 +14,7 @@ module type N = sig
   val zero : t
   val add : t -> t -> t
   val random : t -> t -> t
+  val compare : t -> t -> int
 end
 
 exception FileNotFound of string
@@ -55,6 +56,16 @@ module Binned (F : Frequency.S) (N : N with type t = F.bin) = struct
     let make (Normalized { resolution; freqs }) =
       let total_samples = F.sample_cardinal freqs in
       let sample_map = Array.make total_samples N.zero in
+      ignore
+      @@ F.fold
+           (fun bin freqs i ->
+              let next_i = i + freqs in
+              for j = i to Int.pred next_i do
+                Array.set sample_map j bin
+              done;
+              next_i)
+           freqs
+           0;
       (*TODO: potential optimization, knowing GCD of frequencies should reduce the array by the gcd factor. *)
       Mapping { prob_to_sample = sample_map; resolution }
     ;;
@@ -72,6 +83,21 @@ module Binned (F : Frequency.S) (N : N with type t = F.bin) = struct
         | Not_found -> raise (FileNotFound filename)
       in
       make freqs
+    ;;
+
+    let filter lower upper (Mapping { resolution; prob_to_sample }) =
+      let prob_to_sample =
+        Array.of_list
+        @@ List.rev
+        @@ Array.fold_left
+             (fun l bin ->
+                if N.compare lower bin > 1 || N.compare N.(add bin resolution) upper > 1
+                then l
+                else bin :: l)
+             []
+             prob_to_sample
+      in
+      Mapping { resolution; prob_to_sample }
     ;;
   end
 end

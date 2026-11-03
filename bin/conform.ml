@@ -34,20 +34,44 @@ let spec_file_arg =
 let output_dir_arg =
   Arg.(
     value
-    & opt (some dir) None
+    & opt (some string) None
     & info [ "o"; "output" ] ~doc:"Path to output directory." ~docv:"OUT")
 ;;
 
-let modified_spec_arg =
+let resolution_arg =
+  Arg.(
+    value
+    & opt (some rational) None
+    & info
+        [ "r"; "resolution" ]
+        ~doc:
+          "Histogram resolution written into a modified specification, indicated by \
+           $(MODIFIED_HIST)."
+        ~docv:"OUT")
+;;
+
+let modified_hist_spec_arg =
   Arg.(
     value
     & opt (some string) None
     & info
-        [ "m"; "modified" ]
+        [ "modified_hist" ]
         ~doc:
           "Destination for the modified specification that accomodates the derived \
-           parameters."
-        ~docv:"MODIFIED")
+           parameters as histograms."
+        ~docv:"MODIFIED_HIST")
+;;
+
+let modified_norm_spec_arg =
+  Arg.(
+    value
+    & opt (some string) None
+    & info
+        [ "modified_norm" ]
+        ~doc:
+          "Destination for the modified specification that accomodates the derived \
+           parameters as normal distributions."
+        ~docv:"MODIFIED_NORM")
 ;;
 
 open Interpretation
@@ -113,7 +137,7 @@ let rat_stats params =
 ;;
 
 let write (module H : Frequency.S) output_dirname params =
-  let filename var = Printf.sprintf "%s/%s" output_dirname var in
+  let filename var = Printf.sprintf "%s/%s.freq" output_dirname var in
   VarMap.iter
     (fun var hist ->
        let filename = filename var in
@@ -141,38 +165,47 @@ let derive_parameters ~acceptor trace
   Result.get_ok r
 ;;
 
+let infinicent_difference = Rational.of_pair (1, 100000)
+
 let convert_trace trace =
+  let prev_time = ref Rational.minus_one in
+  let fix_time time =
+    let new_time =
+      if Rational.equal !prev_time time
+      then Rational.(time + infinicent_difference)
+      else time
+    in
+    prev_time := time;
+    new_time
+  in
   Seq.map
     (fun Trace.{ label; time } ->
        Trace.
          { label = label |> Label.to_seq |> Seq.map (fun c -> c, true) |> VarMap.of_seq
-         ; time
+         ; time = fix_time time
          })
     trace
 ;;
 
 open Mrtccsl.CCSL.Language
 
-(* TODO: do the integer params too *)
-let modify_spec rat_stats spec =
+let replace_with_hist ~resolution rat_stats spec =
   let Specification.{ clock; duration; integer; continuous; discrete } = spec in
-  let duration =
-    List.filter
-      Cstr.(fun (NumRelation (v, _, _)) -> not @@ VarMap.mem v rat_stats)
-      duration
-  and continuous =
+  let continuous =
     List.map
       Cstr.(
         fun (v, dist) ->
           if VarMap.mem v rat_stats
-          then
-            ( v
-            , Distribution.Continuous.Histogram
-                (* TODO: use some formula to compute the resolution*)
-                { resolution = Rational.of_pair (1, 10000) } )
+          then v, Distribution.Continuous.Histogram { resolution }
           else v, dist)
       continuous
   in
+  Specification.{ clock; duration; integer; continuous; discrete }
+;;
+
+(* TODO: do the integer params too *)
+let correct_spec rat_stats spec =
+  let Specification.{ clock; duration; integer; continuous; discrete } = spec in
   let clock, to_shift =
     List.fold_left
       (fun (clock, to_shift) c ->
@@ -183,7 +216,7 @@ let modify_spec rat_stats spec =
               | Some (mean, _) ->
                 ( Some error
                 , Cstr.AbsPeriodic
-                (* TODO: this is incorrect calibration *)
+                    (* TODO: this is incorrect calibration *)
                     { out; period = Rational.(period + mean); error = Var error; offset }
                 )
               | None -> None, Cstr.AbsPeriodic { out; period; error = Var error; offset })
@@ -206,13 +239,15 @@ let modify_spec rat_stats spec =
   , Specification.{ clock = List.rev clock; duration; integer; continuous; discrete } )
 ;;
 
-let modify_mod
+let modify_hist_mod
+      ~replace_with
       rat_stats
       Mrtccsl.CCSL.Language.Module.{ assertions; structure; assumptions }
   =
-  let assumption_shift, assumptions = List.split_map (modify_spec rat_stats) assumptions
-  and structure_shift, structure = modify_spec rat_stats structure
-  and assertions_shift, assertions = List.split_map (modify_spec rat_stats) assertions in
+  let modify_spec spec = correct_spec rat_stats (replace_with rat_stats spec) in
+  let assumption_shift, assumptions = List.split_map modify_spec assumptions
+  and structure_shift, structure = modify_spec structure
+  and assertions_shift, assertions = List.split_map modify_spec assertions in
   let assumption_shift = List.concat assumption_shift
   and assertions_shift = List.concat assertions_shift in
   let vars_to_shift =
@@ -234,34 +269,14 @@ let shift_parameters rat_stats rat_params vars_to_shift =
     vars_to_shift
 ;;
 
-let check_traces ~output_dir ~spec_filename ~trace_files ~modified_spec_path =
-  let open Mrtccsl.Backend.Machine.Diagram in
-  let traces =
-    List.map
-      (fun file ->
-         let _, trace = IO.CSV.read (open_in file) in
-         convert_trace trace)
-      trace_files
-  in
-  let _, m = Mrtccslparsing.load_with_string spec_filename Format.err_formatter in
-  (* TODO: maybe reconsider flattening *)
-  let spec = Mrtccsl.CCSL.Language.Module.flatten m in
-  let acceptor = ParallelAcceptance.of_spec spec in
-  let params = List.map (derive_parameters ~acceptor) traces in
-  let int_params, rat_params =
-    List.fold_left
-      (fun (inttotal, rattotal) (intparams, ratparams) ->
-         ( merge_samples (module Frequency.Discrete) inttotal intparams
-         , merge_samples (module Frequency.ContinuousExact) rattotal ratparams ))
-      (VarMap.empty, VarMap.empty)
-      params
-  in
-  int_stats int_params;
-  let rat_stats = rat_stats rat_params in
+let output_hist ~modified_hist_spec_path ~output_dir ~rat_stats ~rat_params ~resolution m =
+  let resolution = Option.value ~default:(Rational.of_pair (1, 1000000)) resolution in
   let m, rat_params =
-    if Option.is_some modified_spec_path
+    if Option.is_some modified_hist_spec_path
     then (
-      let shift_vars, m = modify_mod rat_stats m in
+      let shift_vars, m =
+        modify_hist_mod ~replace_with:(replace_with_hist ~resolution) rat_stats m
+      in
       m, shift_parameters rat_stats rat_params shift_vars)
     else m, rat_params
   in
@@ -270,17 +285,6 @@ let check_traces ~output_dir ~spec_filename ~trace_files ~modified_spec_path =
        (* write (module Frequency.Discrete) output_dir int_params; *)
        write (module Frequency.ContinuousExact) output_dir rat_params)
     output_dir;
-  Mrtccsl.CCSL.Language.Module.unparse
-    Format.pp_print_string
-    Format.pp_print_string
-    Format.pp_print_string
-    Format.pp_print_string
-    Format.pp_print_string
-    (fun fmt n -> Format.fprintf fmt "%as" Rational.pp n)
-    (fun rate -> Rational.div Rational.one rate)
-    Format.std_formatter
-    m;
-  Format.pp_print_flush Format.std_formatter ();
   Option.iter
     (fun filename ->
        Sys.write_file ~filename (fun ch ->
@@ -295,7 +299,115 @@ let check_traces ~output_dir ~spec_filename ~trace_files ~modified_spec_path =
            (fun rate -> Rational.div Rational.one rate)
            fmt
            m))
-    modified_spec_path
+    modified_hist_spec_path
+;;
+
+let replace_with_normal rat_stats spec =
+  let Specification.{ clock; duration; integer; continuous; discrete } = spec in
+  let continuous =
+    List.map
+      Cstr.(
+        fun (v, dist) ->
+          match VarMap.find_opt v rat_stats with
+          | Some (mean, deviation) ->
+            v, Distribution.Continuous.Normal { mean; deviation }
+          | None -> v, dist)
+      continuous
+  in
+  Specification.{ clock; duration; integer; continuous; discrete }
+;;
+
+let spec_add_normal_bounds rat_stats to_shift =
+  let module S = Set.Make (String) in
+  let to_shift = S.of_list to_shift in
+  let normal_bounds =
+    rat_stats
+    |> VarMap.to_seq
+    |> Seq.flat_map (fun (var, (mean, std)) ->
+      let std2 = Rational.(of_int 2 * std) in
+      if S.mem var to_shift
+      then (
+        let right_bound = Rational.(std2)
+        and left_bound = Rational.(-std2) in
+        let left_bound =
+          if Rational.less left_bound Rational.zero then Rational.zero else left_bound
+        in
+        List.to_seq
+          [ Cstr.NumRelation (var, `LessEq, Const right_bound)
+          ; Cstr.NumRelation (var, `MoreEq, Const left_bound)
+          ])
+      else (
+        let left_bound = Rational.(mean - std2)
+        and right_bound = Rational.(mean + std2) in
+        let left_bound =
+          if Rational.less left_bound Rational.zero then Rational.zero else left_bound
+        in
+        List.to_seq
+          [ Cstr.NumRelation (var, `LessEq, Const right_bound)
+          ; Cstr.NumRelation (var, `MoreEq, Const left_bound)
+          ]))
+    |> List.of_seq
+  in
+  Specification.{ empty with duration = normal_bounds }
+;;
+
+let mod_add_normal_bounds rat_stats to_shift m =
+  let bound_spec = spec_add_normal_bounds rat_stats to_shift in
+  Module.{ m with assumptions = bound_spec :: m.assumptions }
+;;
+
+let output_norm ~modified_norm_spec_path ~rat_stats m =
+  Option.iter
+    (fun filename ->
+       let to_shift, m = modify_hist_mod ~replace_with:replace_with_normal rat_stats m in
+       let m = mod_add_normal_bounds rat_stats to_shift m in
+       Sys.write_file ~filename (fun ch ->
+         let fmt = Format.formatter_of_out_channel ch in
+         Mrtccsl.CCSL.Language.Module.unparse
+           Format.pp_print_string
+           Format.pp_print_string
+           Format.pp_print_string
+           Format.pp_print_string
+           Format.pp_print_string
+           (fun fmt n -> Format.fprintf fmt "%as" Rational.pp n)
+           (fun rate -> Rational.div Rational.one rate)
+           fmt
+           m))
+    modified_norm_spec_path
+;;
+
+let check_traces
+      ~output_dir
+      ~spec_filename
+      ~trace_files
+      ~modified_hist_spec_path
+      ~modified_norm_spec_path
+      ~resolution
+  =
+  let open Mrtccsl.Backend.Machine.Diagram in
+  let traces =
+    List.map
+      (fun file ->
+         let _, trace = IO.CSV.read (open_in file) in
+         convert_trace trace)
+      trace_files
+  in
+  let _, m = Mrtccslparsing.load_with_string spec_filename Format.err_formatter in
+  let spec = Mrtccsl.CCSL.Language.Module.flatten m in
+  let acceptor = ParallelAcceptance.of_spec spec in
+  let params = List.map (derive_parameters ~acceptor) traces in
+  let int_params, rat_params =
+    List.fold_left
+      (fun (inttotal, rattotal) (intparams, ratparams) ->
+         ( merge_samples (module Frequency.Discrete) inttotal intparams
+         , merge_samples (module Frequency.ContinuousExact) rattotal ratparams ))
+      (VarMap.empty, VarMap.empty)
+      params
+  in
+  int_stats int_params;
+  let rat_stats = rat_stats rat_params in
+  output_hist ~modified_hist_spec_path ~output_dir ~rat_stats ~rat_params ~resolution m;
+  output_norm ~modified_norm_spec_path ~rat_stats m
 ;;
 
 let cmd =
@@ -315,11 +427,22 @@ let cmd =
   let+ spec_filename = spec_file_arg
   and+ trace_files = trace_arg
   and+ output_dir = output_dir_arg
-  and+ modified_spec_path = modified_spec_arg in
+  and+ modified_hist_spec_path = modified_hist_spec_arg
+  and+ modified_norm_spec_path = modified_norm_spec_arg
+  and+ resolution = resolution_arg in
   let traces = if List.length trace_files = 0 then [ "-" ] else trace_files in
   if traces |> List.filter (String.equal "-") |> List.length > 1
   then `Error (false, "can read stdin only once")
-  else `Ok (Ok (check_traces ~output_dir ~spec_filename ~trace_files ~modified_spec_path))
+  else
+    `Ok
+      (Ok
+         (check_traces
+            ~output_dir
+            ~spec_filename
+            ~trace_files
+            ~modified_hist_spec_path
+            ~modified_norm_spec_path
+            ~resolution))
 ;;
 
 let main () = Cmd.eval_result cmd

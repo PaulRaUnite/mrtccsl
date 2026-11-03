@@ -32,6 +32,8 @@ module type Element = sig
   include Interface.Stringable
   include Interface.TotalOrder with type t := t
   include Interface.Parseable with type t := t
+
+  val hash : t -> int
 end
 
 module type Label = sig

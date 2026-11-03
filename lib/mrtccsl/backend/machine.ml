@@ -975,7 +975,7 @@ module Diagram = struct
       rat_gens
     ;;
 
-    let default_loader name : _ -> unit -> _ =
+    let default_loader ~bounds:_ name : _ -> unit -> _ =
       failwithf "Histogram loader is not provided, %s cannot be loaded" name
     ;;
 

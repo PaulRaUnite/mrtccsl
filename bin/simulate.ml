@@ -157,7 +157,7 @@ let steps_arg =
 let histograms_arg =
   Arg.(
     value
-    & opt (some dir) None
+    & opt (some string) None
     & info [ "hist" ] ~doc:"Path to directory with histograms." ~docv:"HIST")
 ;;
 
@@ -188,7 +188,7 @@ let generate_trace ~config clocks env i =
       ~rounding_error:config.rounding_error
       ~upper_bound:config.default_upper_bound
   in
-  let trace = A.gen_trace strategy env |> Trace.take ~steps:config.steps in
+  let trace = A.gen_trace ~debug:true strategy env |> Trace.take ~steps:config.steps in
   let trace, was_cut =
     match config.horizon with
     | Some horizon -> Trace.until ~horizon trace
@@ -207,12 +207,19 @@ let generate_trace ~config clocks env i =
   in
   let deadlocked = if !was_cut then false else !size < config.steps in
   Printf.printf "deadlocked: %b, was_cut: %b, size: %i\n" deadlocked !was_cut !size;
-  if deadlocked then print_endline @@ A.sim_to_string env
+  if deadlocked then (print_endline @@ A.sim_to_string env; flush stdout)
 ;;
 
-let load_histogram_rvs_builder dir name resolution =
+let load_histogram_rvs_builder dir ~bounds name resolution =
   let filename = Printf.sprintf "%s/%s.freq" dir name in
-  Hist.CDF.rvs @@ Hist.CDF.load filename resolution
+  let hist = Hist.CDF.load filename resolution in
+  let hist =
+    Option.map_or
+      ~default:hist
+      (fun (lower, upper) -> Hist.CDF.filter lower upper hist)
+      bounds
+  in
+  Hist.CDF.rvs hist
 ;;
 
 let simulate ~config m =

@@ -1,7 +1,15 @@
 open Common
 open Prelude
 
-module HardRelation = struct
+module type K = sig
+  include Map.OrderedType
+
+  val to_string : t -> string
+  val hash : t -> int
+  val equal : t -> t -> bool
+end
+
+module HardRelation (K : K) = struct
   (** Type denoting relation [x before y]. *)
   type 'id t = 'id * 'id [@@deriving sexp]
 
@@ -23,42 +31,48 @@ module HardRelation = struct
     Sexplib0.Sexp_conv.sexp_of_list (sexp_of_t sexp_of_id) sexp
   ;;
 
-  type 'a compiled = ('a, ('a, 'a) Either.t list) Hashtbl.t
+  module G = Graph.Persistent.Digraph.Concrete (K)
+  module O = Graph.Oper.P (G)
 
-  let compile relations : _ compiled =
-    List.fold_left
-      (fun tbl (cause, conseq) ->
-         Hashtbl.entry (List.cons (Either.Left conseq)) ~default:[] cause tbl;
-         Hashtbl.entry (List.cons (Either.Right cause)) ~default:[] conseq tbl;
-         tbl)
-      (Hashtbl.create 16)
-      relations
+  type compiled = G.t
+
+  let compile relations : compiled =
+    let g = G.empty in
+    let g = List.fold_left (fun g (cause, conseq) -> G.add_edge g cause conseq) g relations in 
+    O.transitive_closure g
   ;;
 
   (** Orders present causaly-related clocks inside the [label] as indicated in [restrictions], thus the information about causality should be supplied per step basis.*)
-  let arrange_randomly (comp_rel : _ compiled) label =
-    let module I = Interval.Make (Number.Integer) in
+  let arrange_randomly (comp_rel : compiled) label =
+    let module M = Map.Make (K) in
+    let module I = Interval.Int in
     let label, _ =
       Iter.foldi
         (fun (ordered_label, index) len event ->
-           let placement_hints =
-             Option.value ~default:[] (Hashtbl.find_opt comp_rel event)
-           in
+           let basic_interval = I.make_include 0 len in
            let allowed_interval =
-             List.fold_left
-               (fun interval hint ->
+             G.fold_succ
+               (fun conseq interval ->
                   let placement =
-                    match hint with
-                    | Either.Left event ->
-                      let* i = Hashtbl.find_opt index event in
-                      Some (I.ninf i)
-                    | Either.Right event ->
-                      let* i = Hashtbl.find_opt index event in
-                      Some (I.pinf (i + 1))
+                    let* i = M.find_opt conseq index in
+                    Some (I.ninf i)
                   in
                   Option.map_or ~default:interval (I.inter interval) placement)
-               (I.make_include 0 len)
-               placement_hints
+               comp_rel
+               event
+               basic_interval
+           in
+           let allowed_interval =
+             G.fold_pred
+               (fun cause interval ->
+                  let placement =
+                    let* i = M.find_opt cause index in
+                    Some (I.pinf (i + 1))
+                  in
+                  Option.map_or ~default:interval (I.inter interval) placement)
+               comp_rel
+               event
+               allowed_interval
            in
            let min, max =
              I.constant_bounds allowed_interval
@@ -66,12 +80,9 @@ module HardRelation = struct
            in
            let insert_index = Random.int_in_range ~min ~max in
            let ordered_label = List.insert ordered_label event insert_index
-           and index =
-             Hashtbl.map_v (fun i -> if i >= insert_index then i + 1 else i) index
-           in
-           Hashtbl.add index event insert_index;
-           ordered_label, index)
-        ([], Hashtbl.create 16)
+           and index = M.map (fun i -> if i >= insert_index then i + 1 else i) index in
+           ordered_label, M.add event insert_index index)
+        ([], M.empty)
         label
     in
     label
