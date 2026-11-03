@@ -331,9 +331,9 @@ module Make (B : BackendS) = struct
             [ "(abc)"; "(iab)"; "i" ] )
       ; ( "mutex"
         , order_test
-            (cco [ Pool (1, [("a","b");("c","d")]) ])
+            (cco [ Pool (1, [ "a", "b"; "c", "d" ]) ])
             [ "abcd"; "a(bc)d" ]
-            [ "(ab)"; "a(ac)"; "c(abd)" ; "a(bcd)"; "(abcd)"; "c(abcd)"] )
+            [ "(ab)"; "a(ac)"; "c(abd)"; "a(bcd)"; "(abcd)"; "c(abcd)" ] )
       ; ( "rt-delay-const"
         , rtime_test
             (cco [ RTdelay { arg = "i"; out = "o"; delay = const 4 } ])
@@ -343,7 +343,7 @@ module Make (B : BackendS) = struct
         , rtime_test
             (cco [ RTdelay { arg = "i"; out = "o"; delay = const 0 } ])
             [ "(io)", [ 4; 8 ] ]
-            [ "io", [ 1; 2 ] ] )
+            [ "io", [ 1; 2 ]; "i", [ 1 ] ] )
       ; ( "rt-delay"
         , rtime_test
             (of_decl (fun b ->
